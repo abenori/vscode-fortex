@@ -1,0 +1,65 @@
+{
+  "name": "vscode-fortex",
+  "displayName": "vscode-fortex",
+  "description": "",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:latex"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "latex",
+        "aliases" : [
+          "LaTeX"
+        ],
+        "extensions": [
+          ".tex"
+        ]
+      }
+    ],
+    "commands": [
+      {
+        "command": "vscode-fortex.build",
+        "title": "Build LaTeX Project"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "vscode-fortex.build",
+        "key": "ctrl+t t",
+        "when": "editorTextFocus && editorLangId == latex"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/cross-spawn": "^6.0.6",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "20.x",
+    "@types/vscode": "^1.100.0",
+    "@typescript-eslint/eslint-plugin": "^8.31.1",
+    "@typescript-eslint/parser": "^8.31.1",
+    "@vscode/test-cli": "^0.0.10",
+    "@vscode/test-electron": "^2.5.2",
+    "eslint": "^9.25.1",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "cross-spawn": "^7.0.6"
+  }
+}
