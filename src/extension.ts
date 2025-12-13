@@ -7,10 +7,14 @@ const taskType = "fortex";
 
 async function build(){
   let proj = new LaTeXProject(vscode.window.activeTextEditor?.document.fileName || "", true);
-  let compile = new LaTeXCompile(proj);
+  if(!proj.valid){
+    Log.error("Cannot find the main file.");
+    return;
+  }
   if(LaTeXCompile.working){
     const statusBarItem = vscode.window.setStatusBarMessage("$(sync~spin) Compilation is in progress. Please wait until it finishes.", 5000);
   } else {
+    let compile = new LaTeXCompile(proj);
     let result = await compile.build();
     if(!result){
       const statusBarItem = vscode.window.setStatusBarMessage("$(warning) Compilation failed due to errors. Please check the output for details.", 5000);
@@ -27,8 +31,6 @@ export function activate(context: vscode.ExtensionContext) {
     build();
   }));
   const disp = vscode.workspace.onDidSaveTextDocument((doc) => {
-    Log.debug_log("onDidSaveTextDocument: ");
-    Log.debug_log(doc.languageId)
     if(doc.languageId === 'latex'){
       build();
     }

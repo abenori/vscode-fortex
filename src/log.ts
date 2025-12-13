@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 const LOG_PANEL = vscode.window.createOutputChannel('fortex-vscode');
 
 
-export default class LaTeXProject {
+export default class Log {
   public static log(message: string, ...args: any[]) {
     if (args.length > 0) {
       message = message.replace(/%s/g, () => args.shift());

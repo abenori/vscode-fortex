@@ -78,7 +78,7 @@ export default class TeXToPDF {
       }
     }
     Log.debug_log("class file = " + cls + ", class option = " + clsopt + ", guessed command: " + cmd);
-    return [cmd, ["-halt-on-error", "-synctex=1"]];
+    return [cmd, ["-interaction=nonstopmode","-halt-on-error", "-synctex=1"]];
   }
 
   private make_bibtex_command(): [string, string[]] {
@@ -111,9 +111,9 @@ export default class TeXToPDF {
     }else if(latex_cmd[0].indexOf("pdf") >= 0 || latex_cmd[0] === "context"){
       output_pdf = true;
     }
-    Log.log(`(${runCount}) Running ${latex_cmd[0]} on ${TeXToPDF.change_extension(mainfile,".tex")}`);
     let dir = path.dirname(mainfile);
     let base = path.basename(mainfile);
+    Log.log(`(${runCount}) Executing: ${latex_cmd[0]} ${latex_cmd[1].join(" ")} ${TeXToPDF.change_extension(base,".tex")}${dir ? `\n   in directory ${dir}` : ''}`);
     try{
       let result = await Process.execute(latex_cmd[0], [...latex_cmd[1], TeXToPDF.change_extension(base,".tex")], dir, false);
       if(result != 0){
@@ -146,7 +146,7 @@ export default class TeXToPDF {
         ignore_error = true;
         this.forcelatex = true;
       } else { break; }
-      Log.log(`(${runCount}) Running ${cmd[0] + " " + cmd[1].join(" ")} on ${target}`);
+      Log.log(`(${runCount}) Executing: ${cmd[0]} ${cmd[1].join(" ")}${dir ? `\n   in directory ${dir}` : ''}`);
       try{
         let result = await Process.execute(cmd[0], [...cmd[1], target], dir, false);
         if (result === null || result !== 0) {

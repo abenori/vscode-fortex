@@ -34,27 +34,34 @@ export default class LaTeXCompile {
 
   public async build() : Promise<boolean>{
     if(LaTeXCompile.working){ return false; }
-    LaTeXCompile.working = true;
-    Log.clear_process_message();
-    Log.debug_log("Current directory: " + path.dirname(this.LaTeXProject.mainfile));
-    let actions : Action[] = [];
-    if(this.LaTeXProject.percent_sharp("!") && this.LaTeXProject.percent_sharp("!")!.startsWith(" ")){
-      actions = LaTeXCompile.parse_action(this.LaTeXProject.percent_sharp("!")!.trimStart());
-    }else{
-      actions = [new CommandAction("TeXToPDF", "")];
-    }
-    for(let i = 0 ; i < actions.length ; ++i){
-      Log.debug_log("Executing action: " + JSON.stringify(actions[i]));
-      let result = await this.execute_action(actions[i]);
-      if(!result){
-        LaTeXCompile.working = false;
-        return false;
+    try{
+      LaTeXCompile.working = true;
+      Log.clear_process_message();
+      Log.debug_log("Current directory: " + path.dirname(this.LaTeXProject.mainfile));
+      let actions : Action[] = [];
+      if(this.LaTeXProject.percent_sharp("!") && this.LaTeXProject.percent_sharp("!")!.startsWith(" ")){
+        actions = LaTeXCompile.parse_action(this.LaTeXProject.percent_sharp("!")!.trimStart());
+      }else{
+        actions = [new CommandAction("TeXToPDF", "")];
       }
-      Log.debug_log("action done");
+      for(let i = 0 ; i < actions.length ; ++i){
+        Log.debug_log("Executing action: " + JSON.stringify(actions[i]));
+        let result = await this.execute_action(actions[i]);
+        if(!result){
+          LaTeXCompile.working = false;
+          return false;
+        }
+        Log.debug_log("action done");
+      }
+      Log.log("LaTeX compile done");
+      Log.debug_log("LaTeX compile done");
+      Log.scroll_to_last_process_message();
     }
-    Log.log("LaTeX compile done");
-    Log.debug_log("LaTeX compile done");
-    Log.scroll_to_last_process_message();
+    catch(e){
+      Log.error("Exception during LaTeX compilation: " + e);
+      LaTeXCompile.working = false;
+      return false;
+    }
     LaTeXCompile.working = false;
     return true;
   }
@@ -72,7 +79,9 @@ export default class LaTeXCompile {
         return false;
       }
     } else if (action instanceof ExecuteAction){
-      for(let j = 0 ; j < action.commands.length ; ++j){
+      for(let j = 0 ; j < action.commands.length ; j++){
+        //Log.process_message(`(%s) Executing command: %s\n`, j + 1, action.commands[j]);
+        Log.process_message(`Executing command: %s\n`, action.commands[j]);
         let res = await Process.execute(action.commands[j], [], path.dirname(this.LaTeXProject.mainfile), true);  
       }
     }

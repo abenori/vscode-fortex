@@ -41,7 +41,17 @@ export default class LaTeXProject {
     }
     this.filelist_ = [];
     if(main_from_percent_sharp){
+      main_from_percent_sharp = main_from_percent_sharp.trim();      
       this.mainfile_ = this.to_resalfilename(main_from_percent_sharp, path.dirname(file));
+      if(!fs.existsSync(this.mainfile_)){
+        Log.debug_log("Cannot find main file");
+        Log.error("The main file specified in %# main directive does not exist: %s", this.mainfile_);
+        this.valid_ = false;
+        this.classfile_ = "";
+        this.classoption_ = "";
+        this.mainfile_ = "";
+        return;
+      }
       let editor = vscode.window.activeTextEditor;
       let cls = (editor && this.isthesamefile(this.mainfile_, editor.document.fileName)) ? 
         this.get_classfile(editor.document.getText()) : this.get_classfile(fs.readFileSync(this.mainfile_, 'utf8'));
@@ -53,7 +63,7 @@ export default class LaTeXProject {
         if(editor){
           file = editor.document.fileName;
         }else {
-          Log.debug_log("Cannot get main file");
+          Log.debug_log("Cannot get the main file");
           this.valid_ = false;
           this.classfile_ = "";
           this.classoption_ = "";
@@ -78,9 +88,14 @@ export default class LaTeXProject {
   
   // file1とfile2が同じファイルかどうかを調べる
   private isthesamefile(file1: string, file2: string): boolean {
-    let f1 = fs.realpathSync(file1);
-    let f2 = fs.realpathSync(file2);
-    return f1 === f2;
+    try{
+      let f1 = fs.realpathSync(file1);
+      let f2 = fs.realpathSync(file2);
+      return f1 === f2;
+    }
+    catch(e){
+      return false;
+    }
   }
   
   // [class,option]を返す
