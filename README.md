@@ -1,4 +1,4 @@
-# vscode-forte
+# vscode-fortex
 
 ## What is this?
 
