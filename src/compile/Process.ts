@@ -6,7 +6,7 @@ export default class Process{
     Log.debug_log("Executing process: " + cmd + " " + options.join(" ") + (dir ? (" in directory " + dir) : ""));
     return new Promise<number | null>((resolve, rejects) => {
       let child = spawn.spawn(cmd,options,{
-        stdio: 'pipe',
+        stdio: ['ignore', 'pipe', 'pipe'],
         shell: shell,
         cwd: dir || undefined
       });

@@ -39,10 +39,13 @@ export default class LaTeXCompile {
       Log.clear_process_message();
       Log.debug_log("Current directory: " + path.dirname(this.LaTeXProject.mainfile));
       let actions : Action[] = [];
-      if(this.LaTeXProject.percent_sharp("!") && this.LaTeXProject.percent_sharp("!")!.startsWith(" ")){
-        actions = LaTeXCompile.parse_action(this.LaTeXProject.percent_sharp("!")!.trimStart());
-      }else{
-        actions = [new CommandAction("TeXToPDF", "")];
+      let ps = this.LaTeXProject.percent_sharp("!");
+      actions = [new CommandAction("TeXToPDF", "")];
+      if(ps){
+        ps = ps.trimStart();
+        if(ps.indexOf(" ") >= 0) {
+          actions  = LaTeXCompile.parse_action(ps.trimEnd());
+        }
       }
       for(let i = 0 ; i < actions.length ; ++i){
         Log.debug_log("Executing action: " + JSON.stringify(actions[i]));

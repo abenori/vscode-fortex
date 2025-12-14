@@ -19,11 +19,11 @@ export default class TeXToPDF {
   options: { [key: string] : string } = {};
       
   constructor(proj: LaTeXProject, option: string | undefined) {
-    if(option != undefined && option != ""){
+    if(option !== undefined && option !== ""){
       let opt = option.split(";");
       for(const s of opt){
         let r = s.indexOf("=");
-        if(r == -1) { this.options[s] = ""; }
+        if(r === -1) { this.options[s] = ""; }
         else { this.options[s.substring(0,r)] = s.substring(r + 1); } 
       }
     }
@@ -39,8 +39,10 @@ export default class TeXToPDF {
     let cls = this.LaTeXProject.classfile;
     let clsopt = this.LaTeXProject.classoption;
     let cmd = "";
-    if(this.LaTeXProject.percent_sharp("!") && !this.LaTeXProject.percent_sharp("!")!.startsWith(" ")){
-      cmd = this.LaTeXProject.percent_sharp("!")!;
+    let ps = this.LaTeXProject.percent_sharp("!");
+    if(ps){
+      ps = ps.trimStart();
+      if(ps.indexOf(" ") < 0) { cmd = ps; }
     }else{
       switch(cls){
         case "article":
@@ -116,7 +118,7 @@ export default class TeXToPDF {
     Log.log(`(${runCount}) Executing: ${latex_cmd[0]} ${latex_cmd[1].join(" ")} ${TeXToPDF.change_extension(base,".tex")}${dir ? `\n   in directory ${dir}` : ''}`);
     try{
       let result = await Process.execute(latex_cmd[0], [...latex_cmd[1], TeXToPDF.change_extension(base,".tex")], dir, false);
-      if(result != 0){
+      if(result !== 0){
         return false;
       }
     }
