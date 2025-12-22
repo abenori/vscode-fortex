@@ -16,33 +16,38 @@ class BuildManeger{
     }
   }
   public async build(){
-    let proj = new LaTeXProject(vscode.window.activeTextEditor?.document.fileName || "", true);
-    if(!proj.valid){
-      Log.error("Cannot find the main file.");
-      return;
-    }
+    let editor = vscode.window.activeTextEditor;
+    if(!editor) { return; }
+
     if(LaTeXCompile.working){
       const statusBarItem = vscode.window.setStatusBarMessage("$(sync~spin) Compilation is in progress. Please wait until it finishes.", 5000);
     } else {
-      this.clearProgress();
-      let compile = new LaTeXCompile(proj);
-      vscode.window.withProgress({
-        location: vscode.ProgressLocation.Notification,
-        //title: "Compiling LaTeX document...",
-        cancellable: false
-      }, async (progress, token) => {
-        progress.report({ message: "Compiling LaTeX document..." });
-        let result = await compile.build();
-        if(!result){
-          progress.report({ increment: 100, message: "❌ Compilation failed due to errors. Please check the output for details." });
-          await new Promise<void>((resolve) => {
-            this.resolveNotification = resolve;
-            token.onCancellationRequested(() => resolve());
-          });
-        }else{
-          new Promise<void>((resolve) => {resolve();});
-        }
-      });
+      try{
+        this.clearProgress();
+        let proj = new LaTeXProject(
+          await LaTeXProject.generate_project(editor.document.uri, true)
+        );
+        let compile = new LaTeXCompile(proj);
+        await vscode.window.withProgress({
+          location: vscode.ProgressLocation.Notification,
+          //title: "Compiling LaTeX document...",
+          cancellable: false
+        }, async (progress, token) => {
+          progress.report({ message: "Compiling LaTeX document..." });
+          let result = await compile.build();
+          if(!result){
+            progress.report({ increment: 100, message: "❌ Compilation failed due to errors. Please check the output for details." });
+            await new Promise<void>((resolve) => {
+              this.resolveNotification = resolve;
+              token.onCancellationRequested(() => resolve());
+            });
+          }else{
+            new Promise<void>((resolve) => {resolve();});
+          }
+        });
+      }catch(e){
+        this.clearProgress();
+      }
     }
   }
 }

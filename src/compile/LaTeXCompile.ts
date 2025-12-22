@@ -37,7 +37,7 @@ export default class LaTeXCompile {
     try{
       LaTeXCompile.working = true;
       Log.clear_process_message();
-      Log.debug_log("Current directory: " + path.dirname(this.LaTeXProject.mainfile));
+      Log.debug_log("Current directory: " + path.dirname(this.LaTeXProject.mainfile.fsPath));
       let actions : Action[] = [];
       let ps = this.LaTeXProject.percent_sharp("!");
       actions = [new CommandAction("TeXToPDF", "")];
@@ -73,7 +73,7 @@ export default class LaTeXCompile {
     if (action instanceof CommandAction) {
       if(action.action.toLowerCase() === "textopdf"){
         let textopdf = new TeXToPDF(this.LaTeXProject, action.option);
-        let result = await textopdf.build(this.LaTeXProject.mainfile);
+        let result = await textopdf.build();
         if(!result){
           return false;
         }
@@ -85,7 +85,7 @@ export default class LaTeXCompile {
       for(let j = 0 ; j < action.commands.length ; j++){
         //Log.process_message(`(%s) Executing command: %s\n`, j + 1, action.commands[j]);
         Log.process_message(`Executing command: %s\n`, action.commands[j]);
-        let res = await Process.execute(action.commands[j], [], path.dirname(this.LaTeXProject.mainfile), true);  
+        let res = await Process.execute(action.commands[j], [], path.dirname(this.LaTeXProject.mainfile.fsPath), true);  
       }
     }
     return true;

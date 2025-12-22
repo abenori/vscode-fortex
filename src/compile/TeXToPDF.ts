@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import * as vscode from 'vscode';
 import LaTeXProject from './LaTeXProject';
 import Log from '../log';
 import Process from './Process';
@@ -17,8 +18,13 @@ export default class TeXToPDF {
   file_list: string[] = [];
   readonly extensions = [".aux", ".toc", ".lot", ".lof"];
   options: { [key: string] : string } = {};
+  mainfile: string = "";
+
+  constructor(proj: LaTeXProject, ooption: string){ 
+    this.LaTeXProject = proj;
+  }
       
-  constructor(proj: LaTeXProject, option: string | undefined) {
+  public init (option: string | undefined) {
     if(option !== undefined && option !== ""){
       let opt = option.split(";");
       for(const s of opt){
@@ -27,11 +33,12 @@ export default class TeXToPDF {
         else { this.options[s.substring(0,r)] = s.substring(r + 1); } 
       }
     }
-    this.LaTeXProject = proj;
-    this.file_list.push(this.LaTeXProject.mainfile);
-    for (const file of this.LaTeXProject.filelist) {
-      if (file[1] === LaTeXProject.LaTeXFileType.include) {
-        this.file_list.push(file[0]);
+    if(this.LaTeXProject.mainfile){
+      this.file_list.push(this.LaTeXProject.mainfile.fsPath);
+      for (const file of this.LaTeXProject.filelist) {
+        if (file[1] === LaTeXProject.LaTeXFileType.include) {
+          this.file_list.push(file[0].fsPath);
+        }
       }
     }
   }
@@ -98,7 +105,7 @@ export default class TeXToPDF {
     return [prog, []];
   }
   
-  async build(mainfile: string) : Promise<boolean> {
+  async build() : Promise<boolean> {
     let runCount = 1;
     this.read_status();
     let latex_cmd  = this.make_latex_command();
@@ -113,8 +120,8 @@ export default class TeXToPDF {
     }else if(latex_cmd[0].indexOf("pdf") >= 0 || latex_cmd[0] === "context"){
       output_pdf = true;
     }
-    let dir = path.dirname(mainfile);
-    let base = path.basename(mainfile);
+    let dir = path.dirname(this.LaTeXProject.mainfile.fsPath);
+    let base = path.basename(this.LaTeXProject.mainfile.fsPath);
     Log.log(`(${runCount}) Executing: ${latex_cmd[0]} ${latex_cmd[1].join(" ")} ${TeXToPDF.change_extension(base,".tex")}${dir ? `\n   in directory ${dir}` : ''}`);
     try{
       let result = await Process.execute(latex_cmd[0], [...latex_cmd[1], TeXToPDF.change_extension(base,".tex")], dir, false);
@@ -265,7 +272,7 @@ export default class TeXToPDF {
   }
 
   private makeindex_check(): boolean {
-    let f = TeXToPDF.change_extension(this.LaTeXProject.mainfile, ".idx");
+    let f = TeXToPDF.change_extension(this.LaTeXProject.mainfile.fsPath, ".idx");
     if(fs.existsSync(f)){
       this.makeindex = true;
       this.forcelatex = true;
@@ -280,6 +287,46 @@ export default class TeXToPDF {
 
   private static remove_extension(file: string): string {
     return path.join(path.dirname(file), path.basename(file, path.extname(file)));
+  }
+
+  private static async analyze_errors(logfile: string, dir: string): Promise<[vscode.Range, string][]> {
+    let txt = await fs.readFileSync(logfile, "utf8");
+    let lines = txt.split(/\r?\n/);
+    let errors: [vscode.Range, string][] = [];
+    const error_line_reg = /^([^:]*)?:(\d+):\s?(.*)$/;
+    const next_error_line_reg = /l\.(\d+)\s(.*)/; 
+    for(let i = 0 ; i < lines.length; ++i){ 
+      let m = error_line_reg.exec(lines[i]);
+      if(m){
+        let line = Number(m[1]);
+        if(isNaN(line)) { continue; }
+        let error_file = m[2];
+        if(!path.isAbsolute(error_file)){
+          error_file = path.join(dir, error_file);
+        }
+        let editor = vscode.window.activeTextEditor;
+        if(m[3] === "Undefined control sequence."){
+          if(i + 1 >= lines.length) { continue; }
+          let mm = next_error_line_reg.exec(lines[i + 1]);
+          if(!mm) { continue; }
+          var error_string = mm[2];
+          if(error_string.substring(0,3) === "..."){
+            error_string = error_string.substring(3);
+          }
+          
+          if(editor && fs.realpathSync(editor.document.fileName) === fs.realpathSync(error_file)){
+            let target_line_txt = editor.document.lineAt(line - 1).text;
+
+            
+          }
+
+        }
+
+      }
+
+
+    }
+    return [];
   }
  
   private static eqSet<T>(a: Set<T>, b: Set<T>): boolean {

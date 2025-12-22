@@ -4,6 +4,7 @@ const LOG_PANEL = vscode.window.createOutputChannel('fortex-vscode');
 
 
 export default class Log {
+  static readonly DEBUG = true;
   public static log(message: string, ...args: any[]) {
     if (args.length > 0) {
       message = message.replace(/%s/g, () => args.shift());
