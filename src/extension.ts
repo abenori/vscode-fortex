@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import LaTeXCompile from './compile/LaTeXCompile';
 import LaTeXProject from './compile/LaTeXProject';
 import Log from './log';
+import ErrorManager from './compile/ErrorManager';
 
 const taskType = "fortex";
 
@@ -36,6 +37,7 @@ class BuildManeger{
           progress.report({ message: "Compiling LaTeX document..." });
           let result = await compile.build();
           if(!result){
+            
             progress.report({ increment: 100, message: "❌ Compilation failed due to errors. Please check the output for details." });
             await new Promise<void>((resolve) => {
               this.resolveNotification = resolve;
@@ -68,6 +70,8 @@ export function activate(context: vscode.ExtensionContext) {
     }
   });
   context.subscriptions.push(disp);
+
+  ErrorManager.init(context);
 }
 
 

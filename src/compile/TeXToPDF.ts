@@ -87,7 +87,7 @@ export default class TeXToPDF {
       }
     }
     Log.debug_log("class file = " + cls + ", class option = " + clsopt + ", guessed command: " + cmd);
-    return [cmd, ["-interaction=nonstopmode","-halt-on-error", "-synctex=1"]];
+    return [cmd, ["-interaction=nonstopmode","-halt-on-error", "-synctex=1", "-file-line-error"]];
   }
 
   private make_bibtex_command(): [string, string[]] {
@@ -289,18 +289,25 @@ export default class TeXToPDF {
     return path.join(path.dirname(file), path.basename(file, path.extname(file)));
   }
 
-  private static async analyze_errors(logfile: string, dir: string): Promise<[vscode.Range, string][]> {
-    let txt = await fs.readFileSync(logfile, "utf8");
+  private static escapeRegExp(s: string): string {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  static async analyze_errors(main: vscode.Uri): Promise<[vscode.Uri,vscode.Range, string][]> {
+    let dir = path.dirname(main.fsPath);
+    let logfile = vscode.Uri.file(TeXToPDF.change_extension(main.fsPath,".log"));
+    let txt = Buffer.from(await vscode.workspace.fs.readFile(logfile)).toString("utf8");
     let lines = txt.split(/\r?\n/);
-    let errors: [vscode.Range, string][] = [];
-    const error_line_reg = /^([^:]*)?:(\d+):\s?(.*)$/;
+    let errors: [vscode.Uri, vscode.Range, string][] = [];
+    // <ファイル名>:<行番号>: エラーメッセージ
+    const error_line_reg = /^([^:]*):(\d+):\s?(.*)$/;
     const next_error_line_reg = /l\.(\d+)\s(.*)/; 
     for(let i = 0 ; i < lines.length; ++i){ 
       let m = error_line_reg.exec(lines[i]);
       if(m){
-        let line = Number(m[1]);
+        let line = Number(m[2]);
         if(isNaN(line)) { continue; }
-        let error_file = m[2];
+        let error_file = m[1];
         if(!path.isAbsolute(error_file)){
           error_file = path.join(dir, error_file);
         }
@@ -308,25 +315,47 @@ export default class TeXToPDF {
         if(m[3] === "Undefined control sequence."){
           if(i + 1 >= lines.length) { continue; }
           let mm = next_error_line_reg.exec(lines[i + 1]);
+          let next_line = (i + 2 >= lines.length) ? "" : lines[i + 2];
           if(!mm) { continue; }
           var error_string = mm[2];
           if(error_string.substring(0,3) === "..."){
             error_string = error_string.substring(3);
           }
-          
-          if(editor && fs.realpathSync(editor.document.fileName) === fs.realpathSync(error_file)){
-            let target_line_txt = editor.document.lineAt(line - 1).text;
-
-            
+          if(next_line.slice(-3) === "..."){
+            next_line = next_line.slice(0,-3);
+          }
+          error_string = error_string.trimEnd();
+          let r = error_string.lastIndexOf(" ");
+          let cs = "";
+          if(r !== -1){
+            cs = error_string.substring(r + 1);
+            error_string = error_string.substring(0, r).trimEnd();
+          }else{
+            cs = error_string.trimEnd();
+            error_string = "";
           }
 
+          if(editor && fs.realpathSync(editor.document.fileName) === fs.realpathSync(error_file)){
+            let target_line_txt = editor.document.lineAt(line - 1).text;
+            let regstr = TeXToPDF.escapeRegExp(error_string) + `\\s+` + `(` + TeXToPDF.escapeRegExp(cs) + `)\\s+` + TeXToPDF.escapeRegExp(next_line.trim());
+            Log.debug_log("RegExp for undefined control sequence: " + regstr);
+            let reg = new RegExp(regstr, 'd');
+            let m = reg.exec(target_line_txt);
+            if(m){
+              let strat = new vscode.Position(line - 1,
+                m.indices ? m.indices[1][0] : 0);
+              let end = new vscode.Position(line - 1,
+                m.indices ? m.indices[1][1] : target_line_txt.length);
+              errors.push([
+                vscode.Uri.file(error_file),
+                new vscode.Range(strat, end),
+                `Undefined control sequence: \\${cs}`]);
+            }
+          }
         }
-
       }
-
-
     }
-    return [];
+    return errors;
   }
  
   private static eqSet<T>(a: Set<T>, b: Set<T>): boolean {

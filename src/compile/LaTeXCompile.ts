@@ -3,6 +3,7 @@ import Process from './Process';
 import LaTeXProject from './LaTeXProject';
 import TeXToPDF from './TeXToPDF';
 import Log from '../log';
+import ErrorManager from './ErrorManager';
 
 class Action{}
 class CommandAction extends Action{
@@ -75,6 +76,10 @@ export default class LaTeXCompile {
         let textopdf = new TeXToPDF(this.LaTeXProject, action.option);
         let result = await textopdf.build();
         if(!result){
+          let errors = await TeXToPDF.analyze_errors(this.LaTeXProject.mainfile);
+          for(let i = 0 ; i < errors.length ; i++){
+            ErrorManager.adderror(errors[i][0], errors[i][1], errors[i][2]);
+          }
           return false;
         }
       }else{

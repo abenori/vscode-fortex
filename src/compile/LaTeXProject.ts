@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import Log from '../log';
 
+
 type LaTeXFileType = typeof LaTeXProject.LaTeXFileType[keyof typeof LaTeXProject.LaTeXFileType];
 
 export default class LaTeXProject {
@@ -26,22 +27,19 @@ export default class LaTeXProject {
 
   // こんな感じで使うつもり．
   // proj = new LaTeXProject(LaTeXProject.generate_project(...))
-  // await proj.get_percent_sharp()
 
-
-  constructor(a: [vscode.Uri, string, string]) {
+  constructor(a: [vscode.Uri, string, string, { [key: string]: string }]) {
     this.mainfile_ = a[0];
     this.classfile_ = a[1];
     this.classoption_ = a[2];
+    this.percent_sharp_ = a[3];
     this.make_filelist();
-    
-  }
-  public async get_percent_sharp() {
-    this.percent_sharp_ = await this.parse_percent_sharp();
   }
 
-  public static async generate_project(f: vscode.Uri | null, guess_parent: boolean): Promise<[vscode.Uri, string, string]> {
+  // [main,class,option,percent_sharps]
+  public static async generate_project(f: vscode.Uri | null, guess_parent: boolean): Promise<[vscode.Uri, string, string, { [key: string]: string }]> {
     let main_from_percent_sharp: string | null = null;
+    // 指定されたファイル or 現在開いているファイル
     let file = f ?? (() => {
       const editor = vscode.window.activeTextEditor;
       if (editor) {
@@ -50,6 +48,7 @@ export default class LaTeXProject {
         throw new Error("Cannot get the current file");
       }
     })();
+    // percent_sharpによるmain指定を読む．
     if (f === null) {
       const editor = vscode.window.activeTextEditor;
       if (editor) {
@@ -73,6 +72,8 @@ export default class LaTeXProject {
         throw new Error("The main file specified in %# main directive does not exist: " + mainfile.fsPath);
       }
 
+      // メインファイルからクラス名とオプションを読む．
+      // 現在開いているファイルと一致している場合はそっちの方から読む．
       let editor = vscode.window.activeTextEditor;
       let [cls, clsopt] = await (async (main: vscode.Uri) => {
         if (editor && (await LaTeXProject.isthesamefile(main, editor.document.uri))) {
@@ -81,7 +82,8 @@ export default class LaTeXProject {
           return LaTeXProject.get_classfile(Buffer.from(await vscode.workspace.fs.readFile(main)).toString('utf8'));
         }
       })(mainfile);
-      return [mainfile, cls, clsopt];
+      let ps = await LaTeXProject.parse_percent_sharp(mainfile);
+      return [mainfile, cls, clsopt, ps];
     } else {
       let mainfile: vscode.Uri | null = null;
       if (file === null) {
@@ -95,10 +97,12 @@ export default class LaTeXProject {
       if (guess_parent) {
         let res = await LaTeXProject.guess_mainfile(file);
         if (res) {
-          return res;
+          let ps = await LaTeXProject.parse_percent_sharp(res[0]);
+          return [...res, ps];
         }
       }
       if (!mainfile) {
+        // どうしても見つからない場合は最初に指定されたファイルをメインとする
         mainfile = file;
       }
       let editor = vscode.window.activeTextEditor;
@@ -109,7 +113,8 @@ export default class LaTeXProject {
           return LaTeXProject.get_classfile(Buffer.from(await vscode.workspace.fs.readFile(file)).toString('utf8'));
         }
       })(mainfile);
-      return [mainfile, cls, clsopt];
+      let ps = await LaTeXProject.parse_percent_sharp(mainfile);
+      return [mainfile, cls, clsopt, ps];
     }
   }
 
@@ -265,10 +270,8 @@ export default class LaTeXProject {
     catch (e) { return null; }
   }
   private make_filelist() {
-    if (this.mainfile_) {
-      this.filelist_ = [[this.mainfile_, LaTeXProject.LaTeXFileType.main]];
-      this.make_filelist_from_file(this.mainfile_);
-    }
+    this.filelist_ = [[this.mainfile_, LaTeXProject.LaTeXFileType.main]];
+    this.make_filelist_from_file(this.mainfile_);
   }
   private async make_filelist_from_file(file: vscode.Uri) {
     let [incfiles, a, b] = await LaTeXProject.included_files(file);
@@ -298,16 +301,15 @@ export default class LaTeXProject {
 
   }
 
-  private async parse_percent_sharp(): Promise<{ [key: string]: string }> {
+  private static async parse_percent_sharp(main: vscode.Uri): Promise<{ [key: string]: string }> {
     let rv: { [key: string]: string } = {};
     if (vscode.window.activeTextEditor) {
       rv = LaTeXProject.parse_percent_sharp_doc(vscode.window.activeTextEditor.document.getText());
     }
-    if (this.mainfile_ &&
-      (vscode.window.activeTextEditor) && ((vscode.window.activeTextEditor.document) &&
-        (await LaTeXProject.isthesamefile(this.mainfile_, vscode.window.activeTextEditor.document.uri))
+    if ((vscode.window.activeTextEditor) && ((vscode.window.activeTextEditor.document) &&
+        (await LaTeXProject.isthesamefile(main, vscode.window.activeTextEditor.document.uri))
       )) {
-      rv = { ...LaTeXProject.parse_percent_sharp_doc(Buffer.from(await vscode.workspace.fs.readFile(this.mainfile_)).toString("utf8")), ...rv };
+      rv = { ...LaTeXProject.parse_percent_sharp_doc(Buffer.from(await vscode.workspace.fs.readFile(main)).toString("utf8")), ...rv };
     }
     for (const a of Object.keys(rv)) {
       Log.debug_log("Parsed %# directive: " + a + " => " + rv[a]);
