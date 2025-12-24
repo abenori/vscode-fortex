@@ -312,7 +312,12 @@ export default class TeXToPDF {
           error_file = path.join(dir, error_file);
         }
         let editor = vscode.window.activeTextEditor;
-        if(m[3] === "Undefined control sequence."){
+        let errmsg = m[3];
+        if(
+          errmsg.startsWith("Undefined control sequence") ||
+          errmsg.startsWith("Double subscript") ||
+          errmsg.startsWith("Double superscript")
+        ){
           if(i + 1 >= lines.length) { continue; }
           let mm = next_error_line_reg.exec(lines[i + 1]);
           let next_line = (i + 2 >= lines.length) ? "" : lines[i + 2];
@@ -337,7 +342,7 @@ export default class TeXToPDF {
 
           if(editor && fs.realpathSync(editor.document.fileName) === fs.realpathSync(error_file)){
             let target_line_txt = editor.document.lineAt(line - 1).text;
-            let regstr = TeXToPDF.escapeRegExp(error_string) + `\\s+` + `(` + TeXToPDF.escapeRegExp(cs) + `)\\s+` + TeXToPDF.escapeRegExp(next_line.trim());
+            let regstr = TeXToPDF.escapeRegExp(error_string) + `\\s*` + `(` + TeXToPDF.escapeRegExp(cs) + `)\\s*` + TeXToPDF.escapeRegExp(next_line.trim());
             Log.debug_log("RegExp for undefined control sequence: " + regstr);
             let reg = new RegExp(regstr, 'd');
             let m = reg.exec(target_line_txt);
@@ -346,12 +351,19 @@ export default class TeXToPDF {
                 m.indices ? m.indices[1][0] : 0);
               let end = new vscode.Position(line - 1,
                 m.indices ? m.indices[1][1] : target_line_txt.length);
+              errmsg = errmsg + (errmsg.startsWith("Undefined control sequence") ? `: \\${cs}` : "");
               errors.push([
                 vscode.Uri.file(error_file),
                 new vscode.Range(strat, end),
-                `Undefined control sequence: \\${cs}`]);
+                errmsg]);
             }
           }
+        }else{
+          errors.push([
+            vscode.Uri.file(error_file),
+            new vscode.Range(new vscode.Position(line - 1, 0),
+              new vscode.Position(line - 1, Number.MAX_SAFE_INTEGER)),
+            errmsg]);
         }
       }
     }

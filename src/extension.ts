@@ -57,11 +57,9 @@ class BuildManeger{
 let buildmanager = new BuildManeger();
 
 export function activate(context: vscode.ExtensionContext) {
-	//console.log('Congratulations, your extension "vscode-fortex" is now active!');
-  Log.debug_log("Activate vscode-fortex extension");
+	Log.debug_log("Activate vscode-fortex extension");
 
 	context.subscriptions.push(vscode.commands.registerCommand('vscode-fortex.build', async () => {
-    // The code you place here will be executed every time your command is executed
     buildmanager.build();
   }));
   const disp = vscode.workspace.onDidSaveTextDocument((doc) => {
@@ -74,7 +72,4 @@ export function activate(context: vscode.ExtensionContext) {
   ErrorManager.init(context);
 }
 
-
-
-// This method is called when your extension is deactivated
 export function deactivate() {}

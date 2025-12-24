@@ -36,6 +36,7 @@ export default class LaTeXCompile {
   public async build() : Promise<boolean>{
     if(LaTeXCompile.working){ return false; }
     try{
+      ErrorManager.clear();
       LaTeXCompile.working = true;
       Log.clear_process_message();
       Log.debug_log("Current directory: " + path.dirname(this.LaTeXProject.mainfile.fsPath));
