@@ -45,6 +45,7 @@ export default class TeXToPDF {
   private make_latex_command(): [string, string[]] {
     let cls = this.LaTeXProject.classfile;
     let clsopt = this.LaTeXProject.classoption;
+    let clsopt_nospace = "," + clsopt.replace(/\s+/g, "") + ",";
     let cmd = "";
     let ps = this.LaTeXProject.percent_sharp("!");
     if(ps){
@@ -70,7 +71,7 @@ export default class TeXToPDF {
         case "jsarticle":
         case "jsbook":
         case "jsreport":
-          cmd = (clsopt.indexOf("uplatex") >= 0 ? "uplatex" : "platex");
+          cmd = (clsopt_nospace.indexOf(",uplatex,") >= 0 ? "uplatex" : "platex");
           break;
         case "ltjsarticle":
         case "ltjsbook":
@@ -79,8 +80,8 @@ export default class TeXToPDF {
           break;
         case "jlreq":
           cmd = "uplatex";
-          if(clsopt.indexOf("platex") >= 0) { cmd = "platex"; }
-          else if(clsopt.indexOf("lualatex") >= 0) { cmd = "lualatex"; }
+          if(clsopt_nospace.indexOf(",platex,") >= 0) { cmd = "platex"; }
+          else if(clsopt_nospace.indexOf(",lualatex,") >= 0) { cmd = "lualatex"; }
           break;
         default:
           cmd = "pdflatex";
@@ -101,7 +102,10 @@ export default class TeXToPDF {
   }
   
   private make_dvipdfm_command() : [string, string[]] {
-    let prog = this.LaTeXProject.percent_sharp("dvipdfm") ?? "dvipdfmx";
+    //let clsopt_nospace = "," + this.LaTeXProject.classoption.replace(/\s+/g, "") + ",";
+    let prog = this.LaTeXProject.percent_sharp("dvipdfm") ?? 
+      //(clsopt_nospace.indexOf(",dvipdfmx,") >= 0 ? "dvipdfmx" : "dvips");
+      "dvipdfmx";
     return [prog, []];
   }
   

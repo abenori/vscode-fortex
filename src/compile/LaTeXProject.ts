@@ -12,6 +12,8 @@ export default class LaTeXProject {
     include: 1,
     input: 2,
   } as const;
+  private file_: vscode.Uri | null = null;
+  get file(): vscode.Uri | null { return this.file_; }
   private mainfile_: vscode.Uri;
   get mainfile(): vscode.Uri { return this.mainfile_; }
   private classfile_: string = "";
@@ -28,16 +30,17 @@ export default class LaTeXProject {
   // こんな感じで使うつもり．
   // proj = new LaTeXProject(LaTeXProject.generate_project(...))
 
-  constructor(a: [vscode.Uri, string, string, { [key: string]: string }]) {
-    this.mainfile_ = a[0];
-    this.classfile_ = a[1];
-    this.classoption_ = a[2];
-    this.percent_sharp_ = a[3];
+  constructor(a: [vscode.Uri | null, vscode.Uri, string, string, { [key: string]: string }]) {
+    this.file_ = a[0];
+    this.mainfile_ = a[1];
+    this.classfile_ = a[2];
+    this.classoption_ = a[3];
+    this.percent_sharp_ = a[4];
     this.make_filelist();
   }
 
   // [main,class,option,percent_sharps]
-  public static async generate_project(f: vscode.Uri | null, guess_parent: boolean): Promise<[vscode.Uri, string, string, { [key: string]: string }]> {
+  public static async generate_project(f: vscode.Uri | null, guess_parent: boolean): Promise<[vscode.Uri | null,vscode.Uri, string, string, { [key: string]: string }]> {
     let main_from_percent_sharp: string | null = null;
     // 指定されたファイル or 現在開いているファイル
     let file = f ?? (() => {
@@ -83,7 +86,7 @@ export default class LaTeXProject {
         }
       })(mainfile);
       let ps = await LaTeXProject.parse_percent_sharp(mainfile);
-      return [mainfile, cls, clsopt, ps];
+      return [f, mainfile, cls, clsopt, ps];
     } else {
       let mainfile: vscode.Uri | null = null;
       if (file === null) {
@@ -98,7 +101,7 @@ export default class LaTeXProject {
         let res = await LaTeXProject.guess_mainfile(file);
         if (res) {
           let ps = await LaTeXProject.parse_percent_sharp(res[0]);
-          return [...res, ps];
+          return [f, ...res, ps];
         }
       }
       if (!mainfile) {
@@ -114,7 +117,7 @@ export default class LaTeXProject {
         }
       })(mainfile);
       let ps = await LaTeXProject.parse_percent_sharp(mainfile);
-      return [mainfile, cls, clsopt, ps];
+      return [f, mainfile, cls, clsopt, ps];
     }
   }
 
