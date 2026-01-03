@@ -16,11 +16,10 @@ class CommandAction extends Action{
   }
 }
 class ExecuteAction extends Action{
-  commands : string[] = [];
+  command : string;
   public constructor(cmd : string){
     super();
-    // 安直に;で分割
-    this.commands = cmd.split(";");
+    this.command = cmd;
   }
 }
 
@@ -88,32 +87,30 @@ export default class LaTeXCompile {
         return false;
       }
     } else if (action instanceof ExecuteAction){
-      for(let j = 0 ; j < action.commands.length ; j++){
-        //Log.process_message(`(%s) Executing command: %s\n`, j + 1, action.commands[j]);
-        let cmd = action.commands[j];
-        if(this.LaTeXProject.file){
-          cmd = cmd.replace(
-            "%f", this.LaTeXProject.file.fsPath
-          ).replace(
-            "%d", path.dirname(this.LaTeXProject.file.fsPath)
-          ).replace(
-            "%b", path.basename(this.LaTeXProject.file.fsPath, path.extname(this.LaTeXProject.file.fsPath))
-          ).replace(
-            "%k", path.extname(this.LaTeXProject.file.fsPath)
-          );
-        }
+      //Log.process_message(`(%s) Executing command: %s\n`, j + 1, action.commands[j]);
+      let cmd = action.command;
+      if(this.LaTeXProject.file){
         cmd = cmd.replace(
-          "%F", this.LaTeXProject.mainfile.fsPath
+          "%f", this.LaTeXProject.file.fsPath
         ).replace(
-          "%D", path.dirname(this.LaTeXProject.mainfile.fsPath)
+          "%d", path.dirname(this.LaTeXProject.file.fsPath)
         ).replace(
-          "%B", path.basename(this.LaTeXProject.mainfile.fsPath, path.extname(this.LaTeXProject.mainfile.fsPath))
+          "%b", path.basename(this.LaTeXProject.file.fsPath, path.extname(this.LaTeXProject.file.fsPath))
         ).replace(
-          "%K", path.extname(this.LaTeXProject.mainfile.fsPath)
+          "%k", path.extname(this.LaTeXProject.file.fsPath)
         );
-        Log.process_message(`Executing command: %s\n`, cmd);
-        let res = await Process.execute(cmd, [], path.dirname(this.LaTeXProject.mainfile.fsPath), true);  
       }
+      cmd = cmd.replace(
+        "%F", this.LaTeXProject.mainfile.fsPath
+      ).replace(
+        "%D", path.dirname(this.LaTeXProject.mainfile.fsPath)
+      ).replace(
+        "%B", path.basename(this.LaTeXProject.mainfile.fsPath, path.extname(this.LaTeXProject.mainfile.fsPath))
+      ).replace(
+        "%K", path.extname(this.LaTeXProject.mainfile.fsPath)
+      );
+      Log.process_message(`Executing command: %s\n`, cmd);
+      let res = await Process.execute(cmd, [], path.dirname(this.LaTeXProject.mainfile.fsPath), true);  
     }
     return true;
   }

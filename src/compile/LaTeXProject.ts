@@ -150,7 +150,7 @@ export default class LaTeXProject {
     const re = /\\documentclass(\[.*\])?\{(.*?)\}/g;
     let m = re.exec(txt);
     if (m) {
-      let opt = m[1] === undefined ? "" : m[1];
+      let opt = m[1] === undefined ? "" : m[1].slice(1,-1);
       let cls = m[2] === undefined ? "" : m[2];
       return [cls, opt];
     }
@@ -163,7 +163,7 @@ export default class LaTeXProject {
     if (!path.isAbsolute(f)) {
       f = path.normalize(path.join(dir, f));
     }
-    if (path.extname(file) !== ".tex") { return f + ".tex"; }
+    if (path.extname(file).toLowerCase() !== ".tex") { return f + ".tex"; }
     else { return f; }
   }
 
