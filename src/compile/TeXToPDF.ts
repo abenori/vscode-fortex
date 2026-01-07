@@ -20,11 +20,8 @@ export default class TeXToPDF {
   options: { [key: string]: string } = {};
   mainfile: string = "";
 
-  constructor(proj: LaTeXProject, ooption: string) {
+  constructor(proj: LaTeXProject, option: string | undefined) {
     this.LaTeXProject = proj;
-  }
-
-  public init(option: string | undefined) {
     if (option !== undefined && option !== "") {
       let opt = option.split(";");
       for (const s of opt) {
@@ -33,15 +30,14 @@ export default class TeXToPDF {
         else { this.options[s.substring(0, r)] = s.substring(r + 1); }
       }
     }
-    if (this.LaTeXProject.mainfile) {
-      this.file_list.push(this.LaTeXProject.mainfile.fsPath);
-      for (const file of this.LaTeXProject.filelist) {
-        if (file[1] === LaTeXProject.LaTeXFileType.include) {
-          this.file_list.push(file[0].fsPath);
-        }
+    this.file_list.push(this.LaTeXProject.mainfile.fsPath);
+    for (const file of this.LaTeXProject.filelist) {
+      if (file[1] === LaTeXProject.LaTeXFileType.include) {
+        this.file_list.push(file[0].fsPath);
       }
     }
   }
+
   private make_latex_command(): [string, string[]] {
     let cls = this.LaTeXProject.classfile;
     let clsopt = this.LaTeXProject.classoption;

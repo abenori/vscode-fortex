@@ -16,17 +16,14 @@ class BuildManeger{
       this.resolveNotification = undefined;
     }
   }
-  public async build(){
-    let editor = vscode.window.activeTextEditor;
-    if(!editor) { return; }
-
+  public async build(doc: vscode.TextDocument){
     if(LaTeXCompile.working){
       const statusBarItem = vscode.window.setStatusBarMessage("$(sync~spin) Compilation is in progress. Please wait until it finishes.", 5000);
     } else {
       try{
         this.clearProgress();
         let proj = new LaTeXProject(
-          await LaTeXProject.generate_project(editor.document.uri, true)
+          await LaTeXProject.generate_project(doc.uri, true)
         );
         let compile = new LaTeXCompile(proj);
         await vscode.window.withProgress({
@@ -57,14 +54,19 @@ class BuildManeger{
 let buildmanager = new BuildManeger();
 
 export function activate(context: vscode.ExtensionContext) {
-	Log.debug_log("Activate vscode-fortex extension");
+	//Log.debug_log("Activate vscode-fortex extension");
 
 	context.subscriptions.push(vscode.commands.registerCommand('vscode-fortex.build', async () => {
-    buildmanager.build();
+    let editor = vscode.window.activeTextEditor;
+    if(editor){
+      if(editor.document.languageId === "latex"){
+        buildmanager.build(editor.document);
+      }
+    }
   }));
   const disp = vscode.workspace.onDidSaveTextDocument((doc) => {
     if(doc.languageId === 'latex'){
-      buildmanager.build();
+      buildmanager.build(doc);
     }
   });
   context.subscriptions.push(disp);
