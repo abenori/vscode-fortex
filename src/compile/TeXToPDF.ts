@@ -402,7 +402,7 @@ export default class TeXToPDF {
     let lines = txt.split(/\r?\n/);
     let errors: [vscode.Uri, vscode.Range, string][] = [];
     // <ファイル名>:<行番号>: エラーメッセージ
-    const error_line_reg = /^([^:]*):(\d+):\s?(.*)$/;
+    const error_line_reg = /^(.*)?:(\d+):\s?(.*)$/;
     for (let i = 0; i < lines.length; ++i) {
       let m = error_line_reg.exec(lines[i]);
       if (m) {
@@ -413,6 +413,10 @@ export default class TeXToPDF {
           error_file = path.join(dir, error_file);
         }
         let errmsg = m[3];
+        let n = lines[i].length;
+        if(lines[i].length >= 79){
+          errmsg = errmsg + lines[i + 1];
+        }
         if (
           errmsg.startsWith("Undefined control sequence") ||
           errmsg.startsWith("Double subscript") ||
