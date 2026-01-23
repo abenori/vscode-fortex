@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import Log from '../log';
-
+import Config from "../Config";
 
 type LaTeXFileType = typeof LaTeXProject.LaTeXFileType[keyof typeof LaTeXProject.LaTeXFileType];
 
@@ -39,19 +39,29 @@ export default class LaTeXProject {
     this.make_filelist();
   }
 
-  // [main,class,option,percent_sharps]
-  public static async generate_project(f: vscode.Uri | null, guess_parent: boolean): Promise<[vscode.Uri | null,vscode.Uri, string, string, { [key: string]: string }]> {
-    let main_from_percent_sharp: string | null = null;
-    // 指定されたファイル or 現在開いているファイル
-    let file = f ?? (() => {
-      const editor = vscode.window.activeTextEditor;
-      if (editor) {
-        return editor.document.uri;
+  static async get_class_option_from_main(main: vscode.Uri): Promise<[string, string]> {
+    let editor = vscode.window.activeTextEditor;
+    let [cls, clsopt] = await (async (main: vscode.Uri) => {
+      if (editor && (await LaTeXProject.isthesamefile(main, editor.document.uri))) {
+        return LaTeXProject.get_classfile(editor.document.getText());
       } else {
-        throw new Error("Cannot get the current file");
+        return LaTeXProject.get_classfile(Buffer.from(await vscode.workspace.fs.readFile(main)).toString('utf8'));
       }
-    })();
-    // percent_sharpによるmain指定を読む．
+    })(main);
+    return [cls, clsopt];
+  }
+  static async exist_file(f: vscode.Uri, dir: vscode.Uri) : Promise<boolean> {
+    try {
+      await vscode.workspace.fs.stat(f); // 存在確認のため
+    } catch (e) {
+      return false;
+    }
+    return true;
+  }
+  // [main,class,option,percent_sharps]
+  static async get_main_from_percent_sharp(f: vscode.Uri): Promise<[vscode.Uri, string, string, { [key: string]: string }] | undefined> {
+    let main_from_percent_sharp: string | undefined = undefined;
+    let per = {};
     if (f === null) {
       const editor = vscode.window.activeTextEditor;
       if (editor) {
@@ -60,68 +70,70 @@ export default class LaTeXProject {
       }
     } else {
       let per = LaTeXProject.parse_percent_sharp_doc(
-        Buffer.from(await vscode.workspace.fs.readFile(file)).toString('utf8')
+        Buffer.from(await vscode.workspace.fs.readFile(f)).toString('utf8')
       );
       main_from_percent_sharp = per["main"];
     }
-    if (main_from_percent_sharp) {
-      main_from_percent_sharp = main_from_percent_sharp.trim();
-      let mainfile = path.isAbsolute(main_from_percent_sharp) ?
-        vscode.Uri.file(main_from_percent_sharp) :
-        vscode.Uri.file(path.join(path.dirname(file.fsPath), main_from_percent_sharp));
-      try {
-        await vscode.workspace.fs.stat(mainfile); // 存在確認のため
-      } catch (e) {
-        throw new Error("The main file specified in %# main directive does not exist: " + mainfile.fsPath);
-      }
-
-      // メインファイルからクラス名とオプションを読む．
-      // 現在開いているファイルと一致している場合はそっちの方から読む．
-      let editor = vscode.window.activeTextEditor;
-      let [cls, clsopt] = await (async (main: vscode.Uri) => {
-        if (editor && (await LaTeXProject.isthesamefile(main, editor.document.uri))) {
-          return LaTeXProject.get_classfile(editor.document.getText());
-        } else {
-          return LaTeXProject.get_classfile(Buffer.from(await vscode.workspace.fs.readFile(main)).toString('utf8'));
-        }
-      })(mainfile);
-      let ps = await LaTeXProject.parse_percent_sharp(mainfile);
-      return [f, mainfile, cls, clsopt, ps];
-    } else {
-      let mainfile: vscode.Uri | null = null;
-      if (file === null) {
-        const editor = vscode.window.activeTextEditor;
-        if (editor) {
-          file = editor.document.uri;
-        } else {
-          throw new Error("Cannot get the current file");
-        }
-      }
-      if (guess_parent) {
-        let res = await LaTeXProject.guess_mainfile(file);
-        if (res) {
-          let ps = await LaTeXProject.parse_percent_sharp(res[0]);
-          return [f, ...res, ps];
-        }
-      }
-      if (!mainfile) {
-        // どうしても見つからない場合は最初に指定されたファイルをメインとする
-        mainfile = file;
-      }
-      let editor = vscode.window.activeTextEditor;
-      let [cls, clsopt] = await (async (file: vscode.Uri) => {
-        if (editor && (await LaTeXProject.isthesamefile(file, editor.document.uri))) {
-          return LaTeXProject.get_classfile(editor.document.getText());
-        } else {
-          return LaTeXProject.get_classfile(Buffer.from(await vscode.workspace.fs.readFile(file)).toString('utf8'));
-        }
-      })(mainfile);
-      let ps = await LaTeXProject.parse_percent_sharp(mainfile);
-      return [f, mainfile, cls, clsopt, ps];
-    }
+    if(!main_from_percent_sharp) {return undefined; }
+    main_from_percent_sharp = main_from_percent_sharp.trim();
+    let main = path.isAbsolute(main_from_percent_sharp) ?
+      vscode.Uri.file(main_from_percent_sharp) :
+      vscode.Uri.file(path.join(path.dirname(f.fsPath), main_from_percent_sharp));
+    if(!await LaTeXProject.exist_file(main, vscode.Uri.file(path.dirname(f.fsPath)))) { return undefined; }
+    let [cls, clsopt] = await LaTeXProject.get_class_option_from_main(main);
+    return [main, cls, clsopt, per];
+  }
+  static async guess_main_file(f: vscode.Uri): Promise<[vscode.Uri, string, string, { [key: string]: string }] | undefined> {
+    let res = await LaTeXProject.guess_mainfile(f);
+    if (res) {
+      let ps = await LaTeXProject.parse_percent_sharp(f);
+      return [...res, ps];
+    }else {return undefined; }
   }
 
+  static async main_from_current_file(f: vscode.Uri): Promise<[vscode.Uri, string, string, { [key: string]: string }] | undefined> {
+    let [cls,clsopt] = await LaTeXProject.get_class_option_from_main(f);
+    let ps = await LaTeXProject.parse_percent_sharp(f);
+    return [f, cls, clsopt, ps];
+  }
 
+  public static async generate_project(f: vscode.Uri | null, guess_parent: boolean): Promise<[vscode.Uri | null,vscode.Uri, string, string, { [key: string]: string }]> {
+    let guess_tactics = [];
+    let main_order = Config.mainFileOrder();
+    for(let i = 0 ; i < main_order.length ; ++i){
+      switch(main_order[i]){
+        case "magic":
+          guess_tactics.push(LaTeXProject.get_main_from_percent_sharp);
+          break;
+        case "guess":
+          guess_tactics.push(LaTeXProject.guess_main_file);
+          break;
+        case "current":
+          guess_tactics.push(LaTeXProject.main_from_current_file);
+          break;
+      }
+    }
+
+    let file = f ?? (() => {
+      const editor = vscode.window.activeTextEditor;
+      if (editor) {
+        return editor.document.uri;
+      } else {
+        throw new Error("Cannot get the current file");
+      }
+    })();
+
+    let dir = vscode.Uri.file(path.dirname(file.fsPath));
+
+    for (let i = 0 ; i < main_order.length ; ++i){
+      let res = await guess_tactics[i](file);
+      if(res) {
+        let m = res[0];
+        if(await LaTeXProject.exist_file(m, dir)){ return [f, ...res]; }
+      }
+    }
+    throw new Error("The main cannot be found.");
+  }
 
   // file1とfile2が同じファイルかどうかを調べる
   private static async isthesamefile(file1: vscode.Uri, file2: vscode.Uri): Promise<boolean> {

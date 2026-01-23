@@ -37,6 +37,9 @@ class BuildManeger{
             
             progress.report({ increment: 100, message: "❌ Compilation failed due to errors. Please check the output for details." });
             await new Promise<void>((resolve) => {
+              if(this.resolveNotification){
+                this.resolveNotification();
+              }
               this.resolveNotification = resolve;
               token.onCancellationRequested(() => resolve());
             });

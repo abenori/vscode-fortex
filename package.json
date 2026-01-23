@@ -41,7 +41,19 @@
         "key": "ctrl+t t",
         "when": "editorTextFocus && editorLangId == latex"
       }
-    ]
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "vscode-fortex Configuration",
+      "properties": {
+        "vscode-fortex.mainFileOrder": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["magic", "guess", "current"],
+          "description": "Order of main files to be processed."
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
