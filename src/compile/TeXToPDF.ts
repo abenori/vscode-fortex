@@ -423,7 +423,7 @@ export default class TeXToPDF {
           errmsg.startsWith("Double superscript")
         ) {
           errors.push(...TeXToPDF.undef_double_subsup_errors(i, lines, line, errmsg, error_file)); 
-        } else if (errmsg.startsWith(" ==> Fatal error occurred, no output PDF file produced!")) {
+        } else if (errmsg.trimStart().startsWith("==> Fatal error occurred, no output PDF file produced!")) {
           errors.push([
             vscode.Uri.file(error_file),
             new vscode.Range(new vscode.Position(line - 1, Number.MAX_SAFE_INTEGER),
