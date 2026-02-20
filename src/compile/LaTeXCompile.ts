@@ -38,7 +38,7 @@ export default class LaTeXCompile {
       ErrorManager.clear();
       LaTeXCompile.working = true;
       Log.clear_process_message();
-      Log.debug_log("Current directory: " + path.dirname(this.LaTeXProject.mainfile.fsPath));
+      //Log.debug_log("Current directory: " + path.dirname(this.LaTeXProject.mainfile.fsPath));
       let actions : Action[] = [];
       let ps = this.LaTeXProject.percent_sharp("!");
       actions = [new CommandAction("TeXToPDF", "")];
@@ -49,16 +49,16 @@ export default class LaTeXCompile {
         }
       }
       for(let i = 0 ; i < actions.length ; ++i){
-        Log.debug_log("Executing action: " + JSON.stringify(actions[i]));
+        //Log.debug_log("Executing action: " + JSON.stringify(actions[i]));
         let result = await this.execute_action(actions[i]);
         if(!result){
           LaTeXCompile.working = false;
           return false;
         }
-        Log.debug_log("action done");
+        //Log.debug_log("action done");
       }
       Log.log("LaTeX compile done");
-      Log.debug_log("LaTeX compile done");
+      //Log.debug_log("LaTeX compile done");
       Log.scroll_to_last_process_message();
     }
     catch(e){
@@ -110,7 +110,8 @@ export default class LaTeXCompile {
         "%K", path.extname(this.LaTeXProject.mainfile.fsPath)
       );
       Log.process_message(`Executing command: %s\n`, cmd);
-      let res = await Process.execute(cmd, [], path.dirname(this.LaTeXProject.mainfile.fsPath), true);  
+      let process = new Process();
+      let res = await process.execute(cmd, [], path.dirname(this.LaTeXProject.mainfile.fsPath), true);  
     }
     return true;
   }

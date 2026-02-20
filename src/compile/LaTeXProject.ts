@@ -29,7 +29,6 @@ export default class LaTeXProject {
 
   // こんな感じで使うつもり．
   // proj = new LaTeXProject(LaTeXProject.generate_project(...))
-
   constructor(a: [vscode.Uri | null, vscode.Uri, string, string, { [key: string]: string }]) {
     this.file_ = a[0];
     this.mainfile_ = a[1];
@@ -59,21 +58,9 @@ export default class LaTeXProject {
     return true;
   }
   // [main,class,option,percent_sharps]
-  static async get_main_from_percent_sharp(f: vscode.Uri): Promise<[vscode.Uri, string, string, { [key: string]: string }] | undefined> {
+  static async get_main_from_percent_sharp(f: vscode.Uri, percent_sharp: { [key: string]: string }): Promise<[vscode.Uri, string, string, { [key: string]: string }] | undefined> {
     let main_from_percent_sharp: string | undefined = undefined;
-    let per = {};
-    if (f === null) {
-      const editor = vscode.window.activeTextEditor;
-      if (editor) {
-        let per = LaTeXProject.parse_percent_sharp_doc(editor.document.getText());
-        main_from_percent_sharp = per["main"];
-      }
-    } else {
-      let per = LaTeXProject.parse_percent_sharp_doc(
-        Buffer.from(await vscode.workspace.fs.readFile(f)).toString('utf8')
-      );
-      main_from_percent_sharp = per["main"];
-    }
+    main_from_percent_sharp = percent_sharp["main"];
     if(!main_from_percent_sharp) {return undefined; }
     main_from_percent_sharp = main_from_percent_sharp.trim();
     let main = path.isAbsolute(main_from_percent_sharp) ?
@@ -81,20 +68,20 @@ export default class LaTeXProject {
       vscode.Uri.file(path.join(path.dirname(f.fsPath), main_from_percent_sharp));
     if(!await LaTeXProject.exist_file(main, vscode.Uri.file(path.dirname(f.fsPath)))) { return undefined; }
     let [cls, clsopt] = await LaTeXProject.get_class_option_from_main(main);
-    return [main, cls, clsopt, per];
+    return [main, cls, clsopt, percent_sharp];
   }
-  static async guess_main_file(f: vscode.Uri): Promise<[vscode.Uri, string, string, { [key: string]: string }] | undefined> {
+  static async guess_main_file(f: vscode.Uri, percent_sharp: { [key: string]: string }): Promise<[vscode.Uri, string, string, { [key: string]: string }] | undefined> {
     let res = await LaTeXProject.guess_mainfile(f);
     if (res) {
-      let ps = await LaTeXProject.parse_percent_sharp(f);
-      return [...res, ps];
-    }else {return undefined; }
+      return [...res, percent_sharp];
+    }else {
+      return undefined;
+    }
   }
 
-  static async main_from_current_file(f: vscode.Uri): Promise<[vscode.Uri, string, string, { [key: string]: string }] | undefined> {
+  static async main_from_current_file(f: vscode.Uri, percent_sharp: { [key: string]: string }): Promise<[vscode.Uri, string, string, { [key: string]: string }] | undefined> {
     let [cls,clsopt] = await LaTeXProject.get_class_option_from_main(f);
-    let ps = await LaTeXProject.parse_percent_sharp(f);
-    return [f, cls, clsopt, ps];
+    return [f, cls, clsopt, percent_sharp];
   }
 
   public static async generate_project(f: vscode.Uri | null, guess_parent: boolean): Promise<[vscode.Uri | null,vscode.Uri, string, string, { [key: string]: string }]> {
@@ -122,11 +109,12 @@ export default class LaTeXProject {
         throw new Error("Cannot get the current file");
       }
     })();
-
+    // %#は最初に指定されたファイル（基本的にエディタで開いているファイル）のみ読む．メインファイルは読まない．
+    let percent_sharp = await LaTeXProject.parse_percent_sharp(file);
     let dir = vscode.Uri.file(path.dirname(file.fsPath));
 
     for (let i = 0 ; i < main_order.length ; ++i){
-      let res = await guess_tactics[i](file);
+      let res = await guess_tactics[i](file,percent_sharp);
       if(res) {
         let m = res[0];
         if(await LaTeXProject.exist_file(m, dir)){ return [f, ...res]; }
@@ -181,16 +169,17 @@ export default class LaTeXProject {
 
   // mainfile, classfile, optionを推測する
   private static async guess_mainfile(file: vscode.Uri): Promise<[vscode.Uri, string, string] | null> {
-    Log.debug_log("guess main file from " + file);
+    //Log.debug_log("guess main file from " + file);
     let editor = vscode.window.activeTextEditor;
-    if (editor) {
-      if (await LaTeXProject.isthesamefile(file, editor.document.uri)) {
-        let cls = LaTeXProject.get_classfile(editor.document.getText());
-        if (cls[0] !== "") {
-          Log.debug_log("found main file from editor: " + editor.document.fileName);
-          return [file, cls[0], cls[1]];
-        }
-      }
+    let cls = ["", ""];
+    if (editor && (await LaTeXProject.isthesamefile(file, editor.document.uri))) {
+      cls = LaTeXProject.get_classfile(editor.document.getText());
+    }else{
+      cls = LaTeXProject.get_classfile(Buffer.from(await vscode.workspace.fs.readFile(file)).toString('utf8'));
+    }
+    if (cls[0] !== "") {
+      //Log.debug_log("found main file from editor: " + file.fsPath);
+      return [file, cls[0], cls[1]];
     }
     let dir = vscode.Uri.file(path.dirname(file.fsPath));
     // 階層をあがっていってfileがincludeされているファイルを探す
@@ -217,9 +206,9 @@ export default class LaTeXProject {
     const reg = /\\(input|include)(\[[^\]]*\])?\{([^\}]+)\}/g;
     let ms = txt.matchAll(reg);
     let files: [vscode.Uri, LaTeXFileType][] = [];
-    Log.debug_log("search included files in " + file);
+    //Log.debug_log("search included files in " + file);
     for (const m of ms) {
-      Log.debug_log("found " + m[0] + " in " + file);
+      //Log.debug_log("found " + m[0] + " in " + file);
       let f = m[3];
       if (path.extname(f) !== ".tex") { f = f + ".tex"; }
       if (m[1] === "input") {
@@ -242,7 +231,7 @@ export default class LaTeXProject {
       const files = await vscode.workspace.fs.readDirectory(dir);
       // results[file] = fileを\includeしているファイルたち
       let results: { [key: string]: [vscode.Uri, string, string][] } = {};
-      Log.debug_log("search the file which includes " + target.fsPath + " from the drectory " + dir);
+      //Log.debug_log("search the file which includes " + target.fsPath + " from the drectory " + dir);
       for (const file of files) {
         if (file[1] === vscode.FileType.Directory) { continue; }
         if (path.extname(file[0]) !== ".tex") { continue; }
@@ -316,19 +305,18 @@ export default class LaTeXProject {
 
   }
 
-  private static async parse_percent_sharp(main: vscode.Uri): Promise<{ [key: string]: string }> {
+  private static async parse_percent_sharp(file: vscode.Uri): Promise<{ [key: string]: string }> {
     let rv: { [key: string]: string } = {};
-    if (vscode.window.activeTextEditor) {
-      rv = LaTeXProject.parse_percent_sharp_doc(vscode.window.activeTextEditor.document.getText());
+    let editor = vscode.window.activeTextEditor;
+    if(editor && (await LaTeXProject.isthesamefile(file, editor.document.uri))) {
+      rv = LaTeXProject.parse_percent_sharp_doc(editor.document.getText());
+    }else{
+      rv = LaTeXProject.parse_percent_sharp_doc(Buffer.from(await vscode.workspace.fs.readFile(file)).toString("utf8"))
     }
-    if ((vscode.window.activeTextEditor) && ((vscode.window.activeTextEditor.document) &&
-        (await LaTeXProject.isthesamefile(main, vscode.window.activeTextEditor.document.uri))
-      )) {
-      rv = { ...LaTeXProject.parse_percent_sharp_doc(Buffer.from(await vscode.workspace.fs.readFile(main)).toString("utf8")), ...rv };
-    }
+    /*
     for (const a of Object.keys(rv)) {
       Log.debug_log("Parsed %# directive: " + a + " => " + rv[a]);
-    }
+    }*/
     return rv;
   }
 

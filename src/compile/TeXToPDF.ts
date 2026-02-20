@@ -82,7 +82,7 @@ export default class TeXToPDF {
           cmd = "pdflatex";
       }
     }
-    Log.debug_log("class file = " + cls + ", class option = " + clsopt + ", guessed command: " + cmd);
+    //Log.debug_log("class file = " + cls + ", class option = " + clsopt + ", guessed command: " + cmd);
     let opt = this.LaTeXProject.percent_sharp("t2dopt") ?? "";
     let opts = opt.split(" ").filter((s) => s.length > 0);
     return [cmd, ["-interaction=nonstopmode", "-halt-on-error", "-synctex=1", "-file-line-error",...opts]];
@@ -122,7 +122,8 @@ export default class TeXToPDF {
     let base = path.basename(this.LaTeXProject.mainfile.fsPath);
     Log.log(`(${runCount}) Executing: ${latex_cmd[0]} ${latex_cmd[1].join(" ")} ${TeXToPDF.change_extension(base, ".tex")}${dir ? `\n   in directory ${dir}` : ''}`);
     try {
-      let result = await Process.execute(latex_cmd[0], [...latex_cmd[1], TeXToPDF.change_extension(base, ".tex")], dir, false);
+      let process = new Process();
+      let result = await process.execute(latex_cmd[0], [...latex_cmd[1], TeXToPDF.change_extension(base, ".tex")], dir, false);
       if (result !== 0) {
         return false;
       }
@@ -155,7 +156,8 @@ export default class TeXToPDF {
       } else { break; }
       Log.log(`(${runCount}) Executing: ${cmd[0]} ${cmd[1].join(" ")}${dir ? `\n   in directory ${dir}` : ''}`);
       try {
-        let result = await Process.execute(cmd[0], [...cmd[1], target], dir, false);
+        let process = new Process();
+        let result = await process.execute(cmd[0], [...cmd[1], target], dir, false);
         if (result === null || result !== 0) {
           if (ignore_error) {
             Log.log(`Warning: ${cmd[0]} ${cmd[1].join(" ")} failed with exit code ${result}. Continuing...`);
@@ -177,7 +179,8 @@ export default class TeXToPDF {
       let dvipdfm = this.make_dvipdfm_command();
       Log.log(`Generating PDF using ${dvipdfm[0]} ${dvipdfm[1].join(" ")}`);
       try {
-        let result = await Process.execute(dvipdfm[0], [...dvipdfm[1], TeXToPDF.change_extension(base, ".dvi")], dir, false);
+        let process = new Process();
+        let result = await process.execute(dvipdfm[0], [...dvipdfm[1], TeXToPDF.change_extension(base, ".dvi")], dir, false);
         if (result === null || result !== 0) {
           return false;
         }
@@ -191,7 +194,7 @@ export default class TeXToPDF {
   }
 
   private read_status(): void {
-    Log.debug_log("Reading current latex file statuses");
+    //Log.debug_log("Reading current latex file statuses");
     for (const file of this.file_list) {
       if (this.status[file] === undefined) {
         this.status[file] = {};
@@ -200,11 +203,11 @@ export default class TeXToPDF {
         let f = TeXToPDF.change_extension(file, ext);
         try {
           this.status[file][ext] = fs.readFileSync(f, "utf8");
-          Log.debug_log(`Read status for ${f} \r\n` + this.status[file][ext]);
+          //Log.debug_log(`Read status for ${f} \r\n` + this.status[file][ext]);
         }
         catch (e) {
           this.status[file][ext] = null;
-          Log.debug_log(`Status for ${f} does not exist`);
+          //Log.debug_log(`Status for ${f} does not exist`);
         }
       }
     }
@@ -216,11 +219,11 @@ export default class TeXToPDF {
       rv = true;
       this.forcelatex = false;
     }
-    Log.debug_log("Checking LaTeX files for changes");
+    //Log.debug_log("Checking LaTeX files for changes");
     for (const file of this.file_list) {
       for (const ext of this.extensions) {
         let f = TeXToPDF.change_extension(file, ext);
-        Log.debug_log("Checking file: " + f + "; ext = " + ext);
+        //Log.debug_log("Checking file: " + f + "; ext = " + ext);
         try {
           let txt = fs.readFileSync(f, "utf8");
           if (!rv) {
@@ -249,7 +252,7 @@ export default class TeXToPDF {
     // \bibdata{...} と \citation{...} の中身を集合として一致していなければBibTeXを実行する
     for (const file of this.file_list) {
       let txt = this.status[file][".aux"];
-      Log.debug_log("BibTeX check for file " + file + ": \n" + txt);
+      //Log.debug_log("BibTeX check for file " + file + ": \n" + txt);
       if (txt) {
         let ms = txt.matchAll(bibdatareg);
         for (const m of ms) {
@@ -261,7 +264,7 @@ export default class TeXToPDF {
         }
       }
     }
-    Log.debug_log("BibTeX check: bibs = " + Array.from(bibs).join(", ") + ", cits = " + Array.from(cits).join(", "));
+    //Log.debug_log("BibTeX check: bibs = " + Array.from(bibs).join(", ") + ", cits = " + Array.from(cits).join(", "));
     if (TeXToPDF.eqSet(bibs, cits)) {
       this.forcelatex = true;
       this.bibtex = true;
@@ -349,7 +352,7 @@ export default class TeXToPDF {
     if(doc) {
       let target_line_txt = doc.lineAt(errline - 1).text;
       let regstr = TeXToPDF.escapeRegExp(error_string) + `\\s*` + `(` + TeXToPDF.escapeRegExp(cs) + `)\\s*` + TeXToPDF.escapeRegExp(next_line.trim());
-      Log.debug_log("RegExp for error: " + regstr);
+      //Log.debug_log("RegExp for error: " + regstr);
       let reg = new RegExp(regstr, 'd');
       let m = reg.exec(target_line_txt);
       if (m) {

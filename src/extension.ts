@@ -18,6 +18,11 @@ class BuildManeger{
     }
   }
   public async build(doc: vscode.TextDocument){
+    let editor = vscode.window.activeTextEditor;
+    if(!editor || editor.document !== doc){
+      vscode.window.setStatusBarMessage("The document to compile is not the active editor.", 5000);
+      return;
+    }
     if(LaTeXCompile.working){
       const statusBarItem = vscode.window.setStatusBarMessage("$(sync~spin) Compilation is in progress. Please wait until it finishes.", 5000);
     } else {
