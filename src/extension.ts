@@ -4,6 +4,7 @@ import LaTeXProject from './compile/LaTeXProject';
 import Log from './log';
 import ErrorManager from './compile/ErrorManager';
 import Process from './compile/Process';
+import Config from './Config';
 
 const taskType = "fortex";
 
@@ -77,7 +78,9 @@ export function activate(context: vscode.ExtensionContext) {
   }));
   const disp = vscode.workspace.onDidSaveTextDocument((doc) => {
     if(doc.languageId === 'latex'){
-      buildmanager.build(doc);
+      if(Config.compileTrigger().indexOf("onSave") >= 0){
+        buildmanager.build(doc);
+      }
     }
   });
   context.subscriptions.push(disp);

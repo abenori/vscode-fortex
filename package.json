@@ -51,6 +51,12 @@
           "items": { "type": "string" },
           "default": ["magic", "guess", "current"],
           "description": "Order of main files to be processed."
+        },
+        "vscode-fortex.compileTrigger": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["onSave"],
+          "description": "Trigger for compiling the LaTeX document."
         }
       }
     }
