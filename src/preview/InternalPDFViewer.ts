@@ -14,12 +14,12 @@ export default class InternalPDFViewer implements vscode.Disposable {
 
   public constructor(private readonly context: vscode.ExtensionContext) {}
 
-  public async open(pdf: vscode.Uri): Promise<void> {
+  public async open(pdf: vscode.Uri, preserveFocus = false): Promise<void> {
     await vscode.workspace.fs.stat(pdf);
     const key = this.key(pdf);
     const existing = this.viewers.get(key);
     if (existing) {
-      existing.panel.reveal(vscode.ViewColumn.Beside);
+      existing.panel.reveal(vscode.ViewColumn.Beside, preserveFocus);
       await this.reload(existing);
       return;
     }
@@ -28,7 +28,7 @@ export default class InternalPDFViewer implements vscode.Disposable {
     const panel = vscode.window.createWebviewPanel(
       "vscode-fortex.pdfPreview",
       `${path.basename(pdf.fsPath)} — PDF Preview`,
-      { viewColumn: vscode.ViewColumn.Beside, preserveFocus: false },
+      { viewColumn: vscode.ViewColumn.Beside, preserveFocus },
       {
         enableScripts: true,
         retainContextWhenHidden: true,
@@ -153,7 +153,8 @@ export default class InternalPDFViewer implements vscode.Disposable {
     #pages { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 16px; }
     .page { position: relative; flex: none; background: white; box-shadow: 0 2px 10px rgba(0,0,0,.35); }
     canvas { display: block; max-width: none; }
-    .synctex-highlight { position: absolute; z-index: 1; pointer-events: none; box-sizing: border-box; border: 2px solid var(--vscode-editorWarning-foreground); background: color-mix(in srgb, var(--vscode-editorWarning-foreground) 24%, transparent); }
+    .synctex-highlight { position: absolute; z-index: 1; pointer-events: none; box-sizing: border-box; border: 2px solid var(--vscode-editorWarning-foreground); background: color-mix(in srgb, var(--vscode-editorWarning-foreground) 24%, transparent); animation: synctex-highlight-fade 5s ease-in-out forwards; }
+    @keyframes synctex-highlight-fade { 0%, 40% { opacity: 1; } 100% { opacity: 0; } }
     #error { display: none; padding: 24px; color: var(--vscode-errorForeground); white-space: pre-wrap; }
   </style>
 </head>
@@ -179,6 +180,7 @@ export default class InternalPDFViewer implements vscode.Disposable {
     let generation = 0;
     let pendingHighlight;
     let highlightTimer;
+    let highlightStartedAt = 0;
     let pageObserver;
     const pageElements = new Map();
     const pageStates = new Map();
@@ -196,8 +198,9 @@ export default class InternalPDFViewer implements vscode.Disposable {
       highlight.style.top = Math.max(0, (pendingHighlight.v - pendingHighlight.height) * scale) + "px";
       highlight.style.width = Math.max(6, pendingHighlight.width * scale) + "px";
       highlight.style.height = height + "px";
+      highlight.style.animationDelay = -Math.max(0, performance.now() - highlightStartedAt) + "ms";
       wrapper.appendChild(highlight);
-      wrapper.scrollIntoView({ block: "center", inline: "nearest" });
+      highlight.scrollIntoView({ block: "center", inline: "nearest" });
     }
 
     function clearHighlight() {
@@ -357,6 +360,7 @@ export default class InternalPDFViewer implements vscode.Disposable {
       } else if (event.data?.type === "forwardSearch") {
         clearTimeout(highlightTimer);
         pendingHighlight = event.data.result;
+        highlightStartedAt = performance.now();
         showHighlight();
         void renderPage(pendingHighlight.page, generation);
         highlightTimer = setTimeout(clearHighlight, 5000);

@@ -161,6 +161,17 @@
           "scope": "machine",
           "description": "SyncTeX command used for forward and reverse search."
         },
+        "vscode-fortex.synctex.forwardSearch.focus": {
+          "type": "string",
+          "enum": ["editor", "viewer"],
+          "enumDescriptions": [
+            "Keep focus in the source editor after forward search.",
+            "Move focus to the PDF viewer after forward search."
+          ],
+          "default": "editor",
+          "order": 40,
+          "markdownDescription": "Focus destination after **SyncTeX from Cursor** (`Ctrl+T J`). Applies to both the internal viewer and SumatraPDF."
+        },
         "vscode-fortex.kpsewhich.path": {
           "type": "string",
           "default": "kpsewhich",

@@ -11,4 +11,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - Resolve referenced bibliography files through `kpsewhich` and the Kpathsea search path.
 - Search bibliography commands from the detected main file through recursively loaded `\\input` and `\\include` files.
 - Added current-file label completion for `\\ref` with a nearby-source preview.
+- Added a setting to keep focus in the source editor or move it to the viewer after forward SyncTeX search.
+- Preserve the source editor cursor and scroll position when keeping focus after forward search.
+- Center the internal PDF viewer on the forward SyncTeX marker.
 - Initial release

@@ -42,6 +42,10 @@ export default class Config {
     return Config.get<string>("synctex.path", "synctex");
   }
 
+  public static syncTeXForwardSearchFocus(): "editor" | "viewer" {
+    return Config.get<"editor" | "viewer">("synctex.forwardSearch.focus", "editor");
+  }
+
   public static kpsewhichPath(): string {
     return Config.get<string>("kpsewhich.path", "kpsewhich");
   }
