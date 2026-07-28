@@ -9,6 +9,7 @@ import PDFPreview, { PDFViewer } from './preview/PDFPreview';
 import CitationService from './citation/CitationService';
 import CitationCompletionProvider from './citation/CitationCompletionProvider';
 import { showCitationQuickPick } from './citation/CitationQuickPick';
+import LabelCompletionProvider from './reference/LabelCompletionProvider';
 
 const taskType = "fortex";
 
@@ -112,6 +113,12 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.languages.registerCompletionItemProvider(
       { language: 'latex' },
       new CitationCompletionProvider(citations),
+      '{',
+      ','
+    ),
+    vscode.languages.registerCompletionItemProvider(
+      { language: 'latex' },
+      new LabelCompletionProvider(),
       '{',
       ','
     ),

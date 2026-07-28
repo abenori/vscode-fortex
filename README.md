@@ -38,6 +38,10 @@ When completion is requested from a subfile, Fortex first determines the main fi
 
 Run **Fortex: Insert Citation** from the Command Palette, or press `Ctrl+T [`, for a larger Quick Pick search. Search terms may match either authors or titles without selecting a field. Select one or more entries; Fortex replaces the current citation fragment when the cursor is already inside a cite command, or inserts a complete `\cite{...}` command otherwise.
 
+## Label reference completion
+
+Inside `\ref{...}`, IntelliSense lists `\label{...}` targets from the current LaTeX file. Selecting a suggestion shows the target line and its nearby LaTeX source in the suggestion details popup. The same completion is available for common variants including `\pageref`, `\eqref`, `\autoref`, `\nameref`, `\cref`, and `\Cref`.
+
 ## What is this?
 
 This is a Visual Studio Code version of "祝鳥" which is the macro package of Hidemaru for supporting LaTeX editing.
