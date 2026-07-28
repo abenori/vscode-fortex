@@ -14,4 +14,32 @@ export default class Config {
     return Config.get<string[]>("compileTrigger", ["onSave"]);
   }
 
+  public static pdfViewer(): "internal" | "sumatra" {
+    return Config.get<"internal" | "sumatra">("pdfViewer", "internal");
+  }
+
+  public static openPdfAfterBuild(): boolean {
+    return Config.get<boolean>("openPdfAfterBuild", false);
+  }
+
+  public static sumatraPDFPath(): string {
+    return Config.get<string>("sumatraPDF.path", "");
+  }
+
+  public static sumatraPDFArgs(): string[] {
+    return Config.get<string[]>("sumatraPDF.args", ["-reuse-instance"]);
+  }
+
+  public static sumatraPDFInverseSearchEnabled(): boolean {
+    return Config.get<boolean>("sumatraPDF.inverseSearch.enabled", true);
+  }
+
+  public static sumatraPDFInverseSearchVSCodePath(): string {
+    return Config.get<string>("sumatraPDF.inverseSearch.vscodePath", "");
+  }
+
+  public static syncTeXPath(): string {
+    return Config.get<string>("synctex.path", "synctex");
+  }
+
 }

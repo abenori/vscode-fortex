@@ -5,10 +5,12 @@ import Log from './log';
 import ErrorManager from './compile/ErrorManager';
 import Process from './compile/Process';
 import Config from './Config';
+import PDFPreview, { PDFViewer } from './preview/PDFPreview';
 
 const taskType = "fortex";
 
 class BuildManeger{
+  public constructor(private readonly preview: PDFPreview) {}
   // 通知の表示/非表示を制御するためのPromiseのresolve関数を保持します。
   private resolveNotification: (() => void) | undefined;
 
@@ -50,6 +52,12 @@ class BuildManeger{
               token.onCancellationRequested(() => resolve());
             });
           }else{
+            try {
+              await this.preview.onBuildComplete(proj);
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              void vscode.window.showErrorMessage(`The PDF was built, but the preview could not be updated: ${message}`);
+            }
             new Promise<void>((resolve) => {resolve();});
           }
         });
@@ -63,32 +71,51 @@ class BuildManeger{
   }
 }
 
-let buildmanager = new BuildManeger();
+let buildmanager: BuildManeger | undefined;
+let preview: PDFPreview | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
 	//Log.debug_log("Activate vscode-fortex extension");
+
+  preview = new PDFPreview(context);
+  buildmanager = new BuildManeger(preview);
 
 	context.subscriptions.push(vscode.commands.registerCommand('vscode-fortex.build', async () => {
     let editor = vscode.window.activeTextEditor;
     if(editor){
       if(editor.document.languageId === "latex"){
-        buildmanager.build(editor.document);
+        void buildmanager?.build(editor.document);
       }
     }
   }));
+  const registerPreview = (command: string, viewer?: PDFViewer, sync = false) => {
+    context.subscriptions.push(vscode.commands.registerCommand(command, async () => {
+      try {
+        await preview?.viewCurrent(viewer, sync);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        void vscode.window.showErrorMessage(`Unable to open PDF preview: ${message}`);
+      }
+    }));
+  };
+  registerPreview('vscode-fortex.viewPdf');
+  registerPreview('vscode-fortex.viewPdfInVSCode', 'internal');
+  registerPreview('vscode-fortex.viewPdfInSumatraPDF', 'sumatra');
+  registerPreview('vscode-fortex.syncTeXFromCursor', undefined, true);
   const disp = vscode.workspace.onDidSaveTextDocument((doc) => {
     if(doc.languageId === 'latex'){
       if(Config.compileTrigger().indexOf("onSave") >= 0){
-        buildmanager.build(doc);
+        void buildmanager?.build(doc);
       }
     }
   });
   context.subscriptions.push(disp);
 
   ErrorManager.init(context);
+  context.subscriptions.push(preview);
 }
 
 export function deactivate() {
-  buildmanager.uninit();
+  buildmanager?.uninit();
   Process.killAll();
 }

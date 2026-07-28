@@ -14,14 +14,18 @@
     "url": "https://github.com/abenori/vscode-fortex.git"
   },
   "activationEvents": [
-    "onLanguage:latex"
+    "onLanguage:latex",
+    "onCommand:vscode-fortex.viewPdf",
+    "onCommand:vscode-fortex.viewPdfInVSCode",
+    "onCommand:vscode-fortex.viewPdfInSumatraPDF",
+    "onCommand:vscode-fortex.syncTeXFromCursor"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "languages": [
       {
         "id": "latex",
-        "aliases" : [
+        "aliases": [
           "LaTeX"
         ],
         "extensions": [
@@ -33,6 +37,22 @@
       {
         "command": "vscode-fortex.build",
         "title": "Build LaTeX Project"
+      },
+      {
+        "command": "vscode-fortex.viewPdf",
+        "title": "View LaTeX PDF"
+      },
+      {
+        "command": "vscode-fortex.viewPdfInVSCode",
+        "title": "View LaTeX PDF in VS Code"
+      },
+      {
+        "command": "vscode-fortex.viewPdfInSumatraPDF",
+        "title": "View LaTeX PDF in SumatraPDF"
+      },
+      {
+        "command": "vscode-fortex.syncTeXFromCursor",
+        "title": "SyncTeX from Cursor"
       }
     ],
     "keybindings": [
@@ -40,30 +60,101 @@
         "command": "vscode-fortex.build",
         "key": "ctrl+t t",
         "when": "editorTextFocus && editorLangId == latex"
+      },
+      {
+        "command": "vscode-fortex.viewPdf",
+        "key": "ctrl+t p",
+        "when": "editorLangId == latex"
+      },
+      {
+        "command": "vscode-fortex.syncTeXFromCursor",
+        "key": "ctrl+t j",
+        "when": "editorTextFocus && editorLangId == latex"
       }
     ],
     "configuration": {
       "type": "object",
-      "title": "vscode-fortex Configuration",
+      "title": "Fortex",
       "properties": {
         "vscode-fortex.mainFileOrder": {
           "type": "array",
-          "items": { "type": "string" },
-          "default": ["magic", "guess", "current"],
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "magic",
+            "guess",
+            "current"
+          ],
           "description": "Order of main files to be processed."
         },
         "vscode-fortex.compileTrigger": {
           "type": "array",
-          "items": { "type": "string" },
-          "default": ["onSave"],
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "onSave"
+          ],
           "description": "Trigger for compiling the LaTeX document."
+        },
+        "vscode-fortex.pdfViewer": {
+          "type": "string",
+          "enum": ["internal", "sumatra"],
+          "enumDescriptions": [
+            "Open PDFs in the VS Code internal viewer.",
+            "Open PDFs in SumatraPDF."
+          ],
+          "default": "internal",
+          "order": 20,
+          "markdownDescription": "PDF viewer used by **View LaTeX PDF** (`Ctrl+T P`). Select `internal` for the VS Code viewer or `sumatra` for SumatraPDF."
+        },
+        "vscode-fortex.openPdfAfterBuild": {
+          "type": "boolean",
+          "default": false,
+          "description": "Open the configured PDF viewer after a successful build. An already open internal preview is always refreshed."
+        },
+        "vscode-fortex.sumatraPDF.path": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "order": 30,
+          "markdownDescription": "Full path to `SumatraPDF.exe`, for example `C:\\Program Files\\SumatraPDF\\SumatraPDF.exe`. Leave empty to detect a standard installation or use `PATH`."
+        },
+        "vscode-fortex.sumatraPDF.args": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["-reuse-instance"],
+          "scope": "machine",
+          "order": 31,
+          "description": "Additional command-line arguments passed to SumatraPDF."
+        },
+        "vscode-fortex.sumatraPDF.inverseSearch.enabled": {
+          "type": "boolean",
+          "default": true,
+          "scope": "machine",
+          "order": 32,
+          "description": "Enable inverse SyncTeX search from SumatraPDF back to VS Code."
+        },
+        "vscode-fortex.sumatraPDF.inverseSearch.vscodePath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "order": 33,
+          "markdownDescription": "Path to the VS Code executable used by SumatraPDF inverse search. Leave empty to use the currently running VS Code executable. The generated command is `\"<path>\" -r -g \"%f:%l\"`."
+        },
+        "vscode-fortex.synctex.path": {
+          "type": "string",
+          "default": "synctex",
+          "scope": "machine",
+          "description": "SyncTeX command used for forward and reverse search."
         }
       }
     }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
+    "compile": "tsc -p ./ && node ./scripts/copy-pdfjs.mjs",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src",
@@ -79,7 +170,8 @@
     "@vscode/test-cli": "^0.0.10",
     "@vscode/test-electron": "^2.5.2",
     "eslint": "^9.25.1",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "pdfjs-dist": "^5.4.149"
   },
   "dependencies": {
     "cross-spawn": "^7.0.6"
