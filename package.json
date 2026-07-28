@@ -18,7 +18,8 @@
     "onCommand:vscode-fortex.viewPdf",
     "onCommand:vscode-fortex.viewPdfInVSCode",
     "onCommand:vscode-fortex.viewPdfInSumatraPDF",
-    "onCommand:vscode-fortex.syncTeXFromCursor"
+    "onCommand:vscode-fortex.syncTeXFromCursor",
+    "onCommand:vscode-fortex.insertCitation"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -53,6 +54,11 @@
       {
         "command": "vscode-fortex.syncTeXFromCursor",
         "title": "SyncTeX from Cursor"
+      },
+      {
+        "command": "vscode-fortex.insertCitation",
+        "title": "Insert Citation",
+        "category": "Fortex"
       }
     ],
     "keybindings": [
@@ -70,6 +76,11 @@
         "command": "vscode-fortex.syncTeXFromCursor",
         "key": "ctrl+t j",
         "when": "editorTextFocus && editorLangId == latex"
+      },
+      {
+        "command": "vscode-fortex.insertCitation",
+        "key": "ctrl+t [",
+        "when": "editorTextFocus && editorLangId == latex"
       }
     ],
     "configuration": {
@@ -79,14 +90,15 @@
         "vscode-fortex.mainFileOrder": {
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "string",
+            "enum": ["magic", "guess", "current"]
           },
           "default": [
             "magic",
             "guess",
             "current"
           ],
-          "description": "Order of main files to be processed."
+          "markdownDescription": "Priority order used to find the main LaTeX file: `magic` reads `%#main`, `guess` searches ancestor directories for a document that recursively includes the current file, and `current` uses the current file."
         },
         "vscode-fortex.compileTrigger": {
           "type": "array",
@@ -148,6 +160,12 @@
           "default": "synctex",
           "scope": "machine",
           "description": "SyncTeX command used for forward and reverse search."
+        },
+        "vscode-fortex.kpsewhich.path": {
+          "type": "string",
+          "default": "kpsewhich",
+          "scope": "machine",
+          "description": "kpsewhich command used to resolve bibliography files through the Kpathsea search path."
         }
       }
     }

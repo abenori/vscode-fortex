@@ -24,6 +24,20 @@ SumatraPDF inverse search is enabled by default. When opening SumatraPDF normall
 
 SyncTeX from the editor uses the viewer selected by `vscode-fortex.pdfViewer`. Running **SyncTeX from Cursor**, or pressing `Ctrl+T J`, jumps to the PDF output for the current source position in either the internal viewer or SumatraPDF. In the internal viewer, double-click a position in the PDF to open the corresponding TeX file and line. Set `vscode-fortex.synctex.path` if the `synctex` command is not available on `PATH`.
 
+## Citation completion
+
+Fortex reads bibliography files referenced by `\bibliography{...}` or `\addbibresource{...}` throughout the current LaTeX project. Bibliography names are resolved with `kpsewhich --format=bib`, using the main document directory as the working directory, so both relative files and files on the TeX search path are available. Set `vscode-fortex.kpsewhich.path` when `kpsewhich` is not on `PATH`. Inside `\cite{...}` and common cite-like commands, IntelliSense searches the `author` and `title` fields together and inserts the selected BibTeX key. Multiple citations are supported after a comma.
+
+When completion is requested from a subfile, Fortex first determines the main file and recursively follows `\input` and `\include` from it. Bibliography commands in any loaded file are included. Main-file detection follows `vscode-fortex.mainFileOrder`; `magic` reads `%#main main.tex`, `guess` searches the current and every ancestor directory for a document containing `\documentclass` that recursively loads the current file, and `current` treats the current file as the main file. For example:
+
+```json
+{
+  "vscode-fortex.mainFileOrder": ["magic", "guess", "current"]
+}
+```
+
+Run **Fortex: Insert Citation** from the Command Palette, or press `Ctrl+T [`, for a larger Quick Pick search. Search terms may match either authors or titles without selecting a field. Select one or more entries; Fortex replaces the current citation fragment when the cursor is already inside a cite command, or inserts a complete `\cite{...}` command otherwise.
+
 ## What is this?
 
 This is a Visual Studio Code version of "祝鳥" which is the macro package of Hidemaru for supporting LaTeX editing.

@@ -39,14 +39,7 @@ export default class LaTeXProject {
   }
 
   static async get_class_option_from_main(main: vscode.Uri): Promise<[string, string]> {
-    let editor = vscode.window.activeTextEditor;
-    let [cls, clsopt] = await (async (main: vscode.Uri) => {
-      if (editor && (await LaTeXProject.isthesamefile(main, editor.document.uri))) {
-        return LaTeXProject.get_classfile(editor.document.getText());
-      } else {
-        return LaTeXProject.get_classfile(Buffer.from(await vscode.workspace.fs.readFile(main)).toString('utf8'));
-      }
-    })(main);
+    let [cls, clsopt] = LaTeXProject.get_classfile(await LaTeXProject.read_file_text(main));
     return [cls, clsopt];
   }
   static async exist_file(f: vscode.Uri, dir: vscode.Uri) : Promise<boolean> {
@@ -85,7 +78,7 @@ export default class LaTeXProject {
   }
 
   public static async generate_project(f: vscode.Uri | null, guess_parent: boolean): Promise<[vscode.Uri | null,vscode.Uri, string, string, { [key: string]: string }]> {
-    let guess_tactics = [];
+    const guess_tactics: Array<(file: vscode.Uri, directives: { [key: string]: string }) => Promise<[vscode.Uri, string, string, { [key: string]: string }] | undefined>> = [];
     let main_order = Config.mainFileOrder();
     for(let i = 0 ; i < main_order.length ; ++i){
       switch(main_order[i]){
@@ -113,8 +106,8 @@ export default class LaTeXProject {
     let percent_sharp = await LaTeXProject.parse_percent_sharp(file);
     let dir = vscode.Uri.file(path.dirname(file.fsPath));
 
-    for (let i = 0 ; i < main_order.length ; ++i){
-      let res = await guess_tactics[i](file,percent_sharp);
+    for (const tactic of guess_tactics){
+      let res = await tactic(file,percent_sharp);
       if(res) {
         let m = res[0];
         if(await LaTeXProject.exist_file(m, dir)){ return [f, ...res]; }
@@ -147,6 +140,7 @@ export default class LaTeXProject {
 
   // [class,option]を返す
   private static get_classfile(txt: string): [string, string] {
+    txt = LaTeXProject.strip_comments(txt);
     const re = /\\documentclass(\[.*\])?\{(.*?)\}/g;
     let m = re.exec(txt);
     if (m) {
@@ -170,13 +164,7 @@ export default class LaTeXProject {
   // mainfile, classfile, optionを推測する
   private static async guess_mainfile(file: vscode.Uri): Promise<[vscode.Uri, string, string] | null> {
     //Log.debug_log("guess main file from " + file);
-    let editor = vscode.window.activeTextEditor;
-    let cls = ["", ""];
-    if (editor && (await LaTeXProject.isthesamefile(file, editor.document.uri))) {
-      cls = LaTeXProject.get_classfile(editor.document.getText());
-    }else{
-      cls = LaTeXProject.get_classfile(Buffer.from(await vscode.workspace.fs.readFile(file)).toString('utf8'));
-    }
+    let cls = LaTeXProject.get_classfile(await LaTeXProject.read_file_text(file));
     if (cls[0] !== "") {
       //Log.debug_log("found main file from editor: " + file.fsPath);
       return [file, cls[0], cls[1]];
@@ -198,23 +186,25 @@ export default class LaTeXProject {
     let txt = "";
     let dir = vscode.Uri.file(path.dirname(file.fsPath));
     try {
-      txt = Buffer.from(await vscode.workspace.fs.readFile(file)).toString('utf8');
+      txt = await LaTeXProject.read_file_text(file);
     }
     catch (e) {
       return [[], "", ""];
     }
     const reg = /\\(input|include)(\[[^\]]*\])?\{([^\}]+)\}/g;
-    let ms = txt.matchAll(reg);
+    let ms = LaTeXProject.strip_comments(txt).matchAll(reg);
     let files: [vscode.Uri, LaTeXFileType][] = [];
     //Log.debug_log("search included files in " + file);
     for (const m of ms) {
       //Log.debug_log("found " + m[0] + " in " + file);
-      let f = m[3];
-      if (path.extname(f) !== ".tex") { f = f + ".tex"; }
+      let f = m[3].trim();
+      if (!f || f.includes('\\')) { continue; }
+      if (path.extname(f).toLowerCase() !== ".tex") { f = f + ".tex"; }
+      const uri = vscode.Uri.file(path.resolve(dir.fsPath, f));
       if (m[1] === "input") {
-        files.push([vscode.Uri.joinPath(dir, f), LaTeXProject.LaTeXFileType.input]);
+        files.push([uri, LaTeXProject.LaTeXFileType.input]);
       } else {
-        files.push([vscode.Uri.joinPath(dir, f), LaTeXProject.LaTeXFileType.include]);
+        files.push([uri, LaTeXProject.LaTeXFileType.include]);
       }
     }
     if (files.length === 0) {
@@ -230,59 +220,60 @@ export default class LaTeXProject {
     try {
       const files = await vscode.workspace.fs.readDirectory(dir);
       // results[file] = fileを\includeしているファイルたち
-      let results: { [key: string]: [vscode.Uri, string, string][] } = {};
       //Log.debug_log("search the file which includes " + target.fsPath + " from the drectory " + dir);
       for (const file of files) {
         if (file[1] === vscode.FileType.Directory) { continue; }
-        if (path.extname(file[0]) !== ".tex") { continue; }
+        if (path.extname(file[0]).toLowerCase() !== ".tex") { continue; }
         let filepath = vscode.Uri.joinPath(dir, file[0]);
-        let [incfiles, cls, opt] = await this.included_files(filepath);
-        for (const [incfile, t] of incfiles) {
-          if (results[path.normalize(incfile.fsPath).toLowerCase()]) {
-            results[path.normalize(incfile.fsPath).toLowerCase()].push([filepath, cls, opt]);
-          } else {
-            results[path.normalize(incfile.fsPath).toLowerCase()] = [[filepath, cls, opt]];
+        try {
+          const [cls, opt] = LaTeXProject.get_classfile(await LaTeXProject.read_file_text(filepath));
+          if (!cls) { continue; }
+          const projectFiles = await LaTeXProject.collectProjectFiles(filepath);
+          if (projectFiles.some((projectFile) => LaTeXProject.uri_key(projectFile) === LaTeXProject.uri_key(target))) {
+            return [filepath, cls, opt];
           }
+        } catch {
+          continue;
         }
-        let a = results[path.normalize(target.fsPath).toLowerCase()];
-        if (a) {
-          for (const b of a) {
-            if (b[1] !== "") { return b; }
-          }
-        }
-      }
-      let currenttarget = path.normalize(target.fsPath).toLowerCase();
-      let resolvedtarget = [];
-      while (true) {
-        let a = results[currenttarget];
-        if (a) {
-          for (const b of a) {
-            if (b[1] !== "") { 
-              return b; 
-            }
-          }
-          resolvedtarget.push(currenttarget);
-          currenttarget = path.normalize(a[0][0].fsPath).toLowerCase();
-          if (resolvedtarget.includes(currenttarget)) {
-            break;
-          }
-        } else { break; }
       }
       return null;
 
     }
     catch (e) { return null; }
   }
+
+  public static async collectProjectFiles(main: vscode.Uri): Promise<vscode.Uri[]> {
+    const files: vscode.Uri[] = [];
+    const visited = new Set<string>();
+    const visit = async (file: vscode.Uri): Promise<void> => {
+      const key = LaTeXProject.uri_key(file);
+      if (visited.has(key)) { return; }
+      visited.add(key);
+      try {
+        await vscode.workspace.fs.stat(file);
+      } catch {
+        return;
+      }
+      files.push(file);
+      const [included] = await LaTeXProject.included_files(file);
+      for (const [child] of included) {
+        await visit(child);
+      }
+    };
+    await visit(main);
+    return files;
+  }
+
   private make_filelist() {
     this.filelist_ = [[this.mainfile_, LaTeXProject.LaTeXFileType.main]];
-    this.make_filelist_from_file(this.mainfile_);
+    void this.make_filelist_from_file(this.mainfile_);
   }
   private async make_filelist_from_file(file: vscode.Uri) {
     let [incfiles, a, b] = await LaTeXProject.included_files(file);
     for (const incfile of incfiles) {
-      if (this.filelist.includes(incfile)) { continue; }
+      if (this.filelist.some(([listed]) => LaTeXProject.uri_key(listed) === LaTeXProject.uri_key(incfile[0]))) { continue; }
       this.filelist.push(incfile);
-      this.make_filelist_from_file(incfile[0]);
+      await this.make_filelist_from_file(incfile[0]);
     }
   }
 
@@ -306,18 +297,48 @@ export default class LaTeXProject {
   }
 
   private static async parse_percent_sharp(file: vscode.Uri): Promise<{ [key: string]: string }> {
-    let rv: { [key: string]: string } = {};
-    let editor = vscode.window.activeTextEditor;
-    if(editor && (await LaTeXProject.isthesamefile(file, editor.document.uri))) {
-      rv = LaTeXProject.parse_percent_sharp_doc(editor.document.getText());
-    }else{
-      rv = LaTeXProject.parse_percent_sharp_doc(Buffer.from(await vscode.workspace.fs.readFile(file)).toString("utf8"))
-    }
+    const rv = LaTeXProject.parse_percent_sharp_doc(await LaTeXProject.read_file_text(file));
     /*
     for (const a of Object.keys(rv)) {
       Log.debug_log("Parsed %# directive: " + a + " => " + rv[a]);
     }*/
     return rv;
+  }
+
+  private static async read_file_text(file: vscode.Uri): Promise<string> {
+    const openDocument = vscode.workspace.textDocuments.find((document) => LaTeXProject.uri_key(document.uri) === LaTeXProject.uri_key(file));
+    return openDocument?.getText() ?? Buffer.from(await vscode.workspace.fs.readFile(file)).toString('utf8');
+  }
+
+  private static uri_key(uri: vscode.Uri): string {
+    const value = uri.scheme === 'file' ? path.normalize(uri.fsPath) : uri.toString();
+    return process.platform === 'win32' ? value.toLocaleLowerCase() : value;
+  }
+
+  private static strip_comments(source: string): string {
+    let result = '';
+    let inComment = false;
+    let slashCount = 0;
+    for (const char of source) {
+      if (inComment) {
+        if (char === '\r' || char === '\n') {
+          inComment = false;
+          result += char;
+        } else {
+          result += ' ';
+        }
+        continue;
+      }
+      if (char === '%' && slashCount % 2 === 0) {
+        inComment = true;
+        result += ' ';
+        slashCount = 0;
+        continue;
+      }
+      result += char;
+      slashCount = char === '\\' ? slashCount + 1 : 0;
+    }
+    return result;
   }
 
 }

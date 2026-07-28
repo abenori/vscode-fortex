@@ -7,7 +7,7 @@ export default class Config {
   }
 
   public static mainFileOrder(){
-    return Config.get<string[]>("mainFileOrder", ["magick", "guess", "current"]);
+    return Config.get<string[]>("mainFileOrder", ["magic", "guess", "current"]);
   }
 
   public static compileTrigger(){
@@ -40,6 +40,10 @@ export default class Config {
 
   public static syncTeXPath(): string {
     return Config.get<string>("synctex.path", "synctex");
+  }
+
+  public static kpsewhichPath(): string {
+    return Config.get<string>("kpsewhich.path", "kpsewhich");
   }
 
 }

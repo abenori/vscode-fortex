@@ -6,6 +6,9 @@ import ErrorManager from './compile/ErrorManager';
 import Process from './compile/Process';
 import Config from './Config';
 import PDFPreview, { PDFViewer } from './preview/PDFPreview';
+import CitationService from './citation/CitationService';
+import CitationCompletionProvider from './citation/CitationCompletionProvider';
+import { showCitationQuickPick } from './citation/CitationQuickPick';
 
 const taskType = "fortex";
 
@@ -102,6 +105,21 @@ export function activate(context: vscode.ExtensionContext) {
   registerPreview('vscode-fortex.viewPdfInVSCode', 'internal');
   registerPreview('vscode-fortex.viewPdfInSumatraPDF', 'sumatra');
   registerPreview('vscode-fortex.syncTeXFromCursor', undefined, true);
+
+  const citations = new CitationService();
+  context.subscriptions.push(
+    citations,
+    vscode.languages.registerCompletionItemProvider(
+      { language: 'latex' },
+      new CitationCompletionProvider(citations),
+      '{',
+      ','
+    ),
+    vscode.commands.registerCommand('vscode-fortex.insertCitation', async () => {
+      await showCitationQuickPick(citations);
+    })
+  );
+
   const disp = vscode.workspace.onDidSaveTextDocument((doc) => {
     if(doc.languageId === 'latex'){
       if(Config.compileTrigger().indexOf("onSave") >= 0){
