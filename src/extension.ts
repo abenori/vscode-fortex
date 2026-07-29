@@ -13,6 +13,7 @@ import LabelCompletionProvider from './reference/LabelCompletionProvider';
 import EnvironmentCompletionProvider from './environment/EnvironmentCompletionProvider';
 import EnvironmentRenameProvider from './environment/EnvironmentRenameProvider';
 import { insertOrRenameEnvironment } from './environment/EnvironmentCommand';
+import { closeEnvironment } from './environment/EnvironmentCloseCommand';
 
 const taskType = "fortex";
 
@@ -149,6 +150,9 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('vscode-fortex.insertOrRenameEnvironment', async () => {
       await insertOrRenameEnvironment();
+    }),
+    vscode.commands.registerCommand('vscode-fortex.closeEnvironment', async () => {
+      await closeEnvironment();
     })
   );
 

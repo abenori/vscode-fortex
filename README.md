@@ -48,6 +48,8 @@ Inside `\begin{...}`, IntelliSense completes a standard, previously used, `\newe
 
 Press `Ctrl+T B` away from an existing environment command to select an environment from Quick Pick. With selected text, the command wraps the selection; otherwise it inserts an empty pair and places the cursor inside. When the cursor is on a `\begin{...}`, `\end{...}`, `\[`, or `\]`, `Ctrl+T B` starts the same paired rename operation as `F2`. Renaming updates only the structurally matching pair, including nested environments. Enter `\[` as the new name to convert a named environment into display-math notation.
 
+Press `Ctrl+T E` to close the innermost unclosed environment before the cursor. Fortex inserts the corresponding `\end{...}` or `\]` on a line aligned with its opening command. An environment that already has a structurally matching closing command later in the document is not closed a second time.
+
 Set `vscode-fortex.environment.indentContent` to `false` to keep inserted or wrapped environment content at the outer environment's indentation level. When enabled (the default), the indentation characters and width follow VS Code's `editor.insertSpaces` and `editor.tabSize` settings.
 
 ## What is this?

@@ -17,4 +17,5 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - Added LaTeX environment insertion and wrapping through IntelliSense and `Ctrl+T B`.
 - Added paired environment renaming with `F2` or `Ctrl+T B`, including `\\[ ... \\]` display math.
 - Added `vscode-fortex.environment.indentContent` to disable the extra indentation inside inserted environments.
+- Added `Ctrl+T E` to close the innermost unclosed named or display-math environment.
 - Initial release

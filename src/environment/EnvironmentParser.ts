@@ -135,6 +135,29 @@ export function findEnvironmentPairs(source: string): EnvironmentPair[] {
   return pairs;
 }
 
+/**
+ * Returns the innermost complete opening token before the cursor that has no
+ * structurally matching closing token anywhere in the document.
+ */
+export function findUnclosedEnvironmentAtOffset(source: string, offset: number): EnvironmentToken | undefined {
+  const stack: EnvironmentToken[] = [];
+  for (const token of findEnvironmentTokens(source)) {
+    if (token.kind === 'begin') {
+      stack.push(token);
+      continue;
+    }
+    const begin = stack[stack.length - 1];
+    if (begin && begin.name === token.name && begin.style === token.style) {
+      stack.pop();
+    }
+  }
+
+  // An opening command is eligible only after the cursor has passed the complete
+  // token. This avoids inserting an end command while `\begin{...}` is still being
+  // edited.
+  return stack.filter((token) => token.end <= offset).at(-1);
+}
+
 export function findEnvironmentTokenAtOffset(source: string, offset: number): EnvironmentToken | undefined {
   return findEnvironmentTokens(source).find((token) => token.start <= offset && offset <= token.end);
 }
