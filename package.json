@@ -19,7 +19,8 @@
     "onCommand:vscode-fortex.viewPdfInVSCode",
     "onCommand:vscode-fortex.viewPdfInSumatraPDF",
     "onCommand:vscode-fortex.syncTeXFromCursor",
-    "onCommand:vscode-fortex.insertCitation"
+    "onCommand:vscode-fortex.insertCitation",
+    "onCommand:vscode-fortex.insertOrRenameEnvironment"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -59,6 +60,11 @@
         "command": "vscode-fortex.insertCitation",
         "title": "Insert Citation",
         "category": "Fortex"
+      },
+      {
+        "command": "vscode-fortex.insertOrRenameEnvironment",
+        "title": "Insert or Rename LaTeX Environment",
+        "category": "Fortex"
       }
     ],
     "keybindings": [
@@ -80,6 +86,11 @@
       {
         "command": "vscode-fortex.insertCitation",
         "key": "ctrl+t [",
+        "when": "editorTextFocus && editorLangId == latex"
+      },
+      {
+        "command": "vscode-fortex.insertOrRenameEnvironment",
+        "key": "ctrl+t b",
         "when": "editorTextFocus && editorLangId == latex"
       }
     ],
@@ -177,6 +188,12 @@
           "default": "kpsewhich",
           "scope": "machine",
           "description": "kpsewhich command used to resolve bibliography files through the Kpathsea search path."
+        },
+        "vscode-fortex.environment.indentContent": {
+          "type": "boolean",
+          "default": true,
+          "order": 50,
+          "markdownDescription": "Indent content by one editor indentation level when Fortex inserts or wraps a LaTeX environment. The indentation width and tabs/spaces follow the standard `editor.tabSize` and `editor.insertSpaces` settings."
         }
       }
     }

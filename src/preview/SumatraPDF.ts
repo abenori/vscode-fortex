@@ -3,8 +3,11 @@ import * as path from "path";
 import * as spawn from "cross-spawn";
 import Config from "../Config";
 
+/** Starts SumatraPDF with forward and inverse SyncTeX arguments on Windows. */
 export default class SumatraPDF {
   private static inverseSearchCommand(): string {
+    // Sumatra substitutes %f and %l when it invokes this command. Quotes remain in
+    // the argument because Sumatra parses the inverse-search command line itself.
     const configured = Config.sumatraPDFInverseSearchVSCodePath().trim();
     if (configured && !fs.existsSync(configured)) {
       throw new Error(`VS Code was not found at the configured inverse-search path: ${configured}`);
@@ -14,6 +17,8 @@ export default class SumatraPDF {
   }
 
   private static executable(): string {
+    // An explicit setting wins; otherwise check normal installation locations
+    // before falling back to PATH lookup.
     const configured = Config.sumatraPDFPath().trim();
     if (configured) {
       if (!fs.existsSync(configured)) {
@@ -46,6 +51,8 @@ export default class SumatraPDF {
       return Promise.reject(error);
     }
     const args = [...Config.sumatraPDFArgs()];
+    // Forward search should not resend inverse-search configuration. A reused
+    // Sumatra instance retains it from a normal preview launch.
     if (sourcePath === undefined &&
         Config.sumatraPDFInverseSearchEnabled() &&
         !args.some(arg => arg.toLowerCase() === "-inverse-search")) {

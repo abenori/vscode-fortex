@@ -2,10 +2,13 @@ import * as spawn from 'cross-spawn';
 import Log from '../log';
 import ChildProcess from 'child_process';
 
+/** Runs external TeX tools while tracking them for extension shutdown cleanup. */
 export default class Process{
   private static child_processes = new Set<ChildProcess.ChildProcess>();
   process: ChildProcess.ChildProcess | undefined;
   public static killAll(){
+    // A build can consist of several short-lived tools. Track all live children
+    // globally so deactivation never leaves a compiler running in the background.
     for(let child of Process.child_processes){
       try{
         child.kill();
@@ -18,7 +21,9 @@ export default class Process{
     this.process = undefined;
   }
   public execute(cmd: string, options: string[], dir : string | null, shell: boolean) : Promise<number | null>{
-    if(this.process !== undefined){ 
+    // A Process instance represents one active command. Reusing it cancels the
+    // previous command before the replacement is spawned.
+    if(this.process !== undefined){
       try{ this.process.kill(); }
       catch(e){}
     }

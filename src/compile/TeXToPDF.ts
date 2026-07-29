@@ -5,6 +5,11 @@ import LaTeXProject from './LaTeXProject';
 import Log from '../log';
 import Process from './Process';
 
+/**
+ * Runs the TeX/BibTeX/index/PDF pipeline until auxiliary files stabilize.
+ * The previous contents of auxiliary files are snapshots used to decide which
+ * stage must run again.
+ */
 export default class TeXToPDF {
   LaTeXProject: LaTeXProject;
   // 現在状態によらず必ずLaTeXを実行するフラグ
@@ -39,6 +44,8 @@ export default class TeXToPDF {
   }
 
   private make_latex_command(): [string, string[]] {
+    // Prefer an explicit `%#!` engine, otherwise infer a sensible Japanese or
+    // standard LaTeX engine from the document class and its options.
     let cls = this.LaTeXProject.classfile;
     let clsopt = this.LaTeXProject.classoption;
     let cmd = "";
@@ -104,6 +111,9 @@ export default class TeXToPDF {
   }
 
   async build(): Promise<boolean> {
+    // The first LaTeX pass creates dependency files. Subsequent passes are driven
+    // by changes in those files, with a finite loop inside this method preventing
+    // permanently unstable documents from compiling forever.
     let runCount = 1;
     this.read_status();
     let latex_cmd = this.make_latex_command();
@@ -194,6 +204,8 @@ export default class TeXToPDF {
   }
 
   private read_status(): void {
+    // Snapshot auxiliary files before the first pass. Missing files are stored as
+    // null so creating or deleting one also counts as a meaningful change.
     //Log.debug_log("Reading current latex file statuses");
     for (const file of this.file_list) {
       if (this.status[file] === undefined) {
@@ -214,6 +226,8 @@ export default class TeXToPDF {
   }
 
   private latex_check(): boolean {
+    // Refresh snapshots while comparing them; the next call therefore compares
+    // against the immediately preceding TeX pass.
     let rv: boolean = false;
     if (this.forcelatex) {
       rv = true;
@@ -244,6 +258,8 @@ export default class TeXToPDF {
 
   //status の.auxは最新と仮定して処理する．
   private bibtex_check(): boolean {
+    // BibTeX is needed while the citations requested in .aux differ from the
+    // bibliography entries already written there. It runs at most once per build.
     if (this.makeindex) { return false; }
     let bibs = new Set<string>();
     let cits = new Set<string>();
@@ -273,6 +289,8 @@ export default class TeXToPDF {
   }
 
   private makeindex_check(): boolean {
+    // An index file is enough to schedule makeindex once, followed by another TeX
+    // pass to incorporate the generated index.
     let f = TeXToPDF.change_extension(this.LaTeXProject.mainfile.fsPath, ".idx");
     if (fs.existsSync(f)) {
       this.makeindex = true;
@@ -399,6 +417,8 @@ export default class TeXToPDF {
   }
 
   static async analyze_errors(main: vscode.Uri): Promise<[vscode.Uri, vscode.Range, string][]> {
+    // `-file-line-error` produces file:line:message records. A few TeX errors put
+    // the offending token on the next log line and need specialized ranges.
     let dir = path.dirname(main.fsPath);
     let logfile = vscode.Uri.file(TeXToPDF.change_extension(main.fsPath, ".log"));
     let txt = Buffer.from(await vscode.workspace.fs.readFile(logfile)).toString("utf8");

@@ -1,8 +1,11 @@
 import * as vscode from 'vscode';
 
+/** Centralized, typed access to the `vscode-fortex` configuration section. */
 export default class Config {
   static readonly config_name = "vscode-fortex";
   static get<T>(key: string, default_value: T) : T {
+    // Keeping fallbacks here makes commands work even before package.json settings
+    // have been migrated into a user's profile.
     return vscode.workspace.getConfiguration(Config.config_name).get<T>(key, default_value);
   }
 
@@ -48,6 +51,10 @@ export default class Config {
 
   public static kpsewhichPath(): string {
     return Config.get<string>("kpsewhich.path", "kpsewhich");
+  }
+
+  public static environmentIndentContent(): boolean {
+    return Config.get<boolean>("environment.indentContent", true);
   }
 
 }

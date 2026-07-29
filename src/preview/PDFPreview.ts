@@ -7,6 +7,7 @@ import InternalPDFViewer from "./InternalPDFViewer";
 
 export type PDFViewer = "internal" | "sumatra";
 
+/** Routes preview and forward-search requests to the configured PDF viewer. */
 export default class PDFPreview implements vscode.Disposable {
   private readonly internal: InternalPDFViewer;
 
@@ -15,6 +16,8 @@ export default class PDFPreview implements vscode.Disposable {
   }
 
   public async viewCurrent(viewer: PDFViewer = Config.pdfViewer(), sync = false): Promise<void> {
+    // Capture the source position before opening a viewer, which can change VS
+    // Code's active editor or move operating-system focus.
     const editor = vscode.window.activeTextEditor;
     if (!editor || editor.document.languageId !== "latex") {
       throw new Error("Open a LaTeX document before opening the PDF preview.");
@@ -35,6 +38,8 @@ export default class PDFPreview implements vscode.Disposable {
   }
 
   public async onBuildComplete(project: LaTeXProject): Promise<void> {
+    // Refresh an existing internal panel even when automatic opening is disabled,
+    // so an already visible preview never remains on an older build.
     if (Config.openPdfAfterBuild()) {
       await this.open(project, Config.pdfViewer());
     } else {
@@ -62,6 +67,8 @@ export default class PDFPreview implements vscode.Disposable {
   }
 
   private async restoreEditorFocus(viewColumn: vscode.ViewColumn | undefined): Promise<void> {
+    // Use group-focus commands only. Re-showing the document would alter its
+    // selection or viewport during forward search.
     const focus = async () => {
       const groupCommands: Partial<Record<vscode.ViewColumn, string>> = {
         [vscode.ViewColumn.One]: "workbench.action.focusFirstEditorGroup",

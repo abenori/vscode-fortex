@@ -20,7 +20,9 @@ export type SyncTeXEditResult = {
 
 type RecordValues = Record<string, string>;
 
+/** Executes the synctex CLI and converts text records into typed positions. */
 export default class SyncTeX {
+  /** Maps a source line and column to a rectangle on a PDF page. */
   public static async forward(
     pdfPath: string,
     inputPath: string,
@@ -51,6 +53,7 @@ export default class SyncTeX {
   }
 
   public static async edit(pdfPath: string, page: number, x: number, y: number): Promise<SyncTeXEditResult> {
+    // Reverse search maps PDF coordinates back to an input file and source line.
     const output = await this.execute([
       "edit",
       "-o",
@@ -68,6 +71,8 @@ export default class SyncTeX {
   }
 
   private static records(output: string, startKey: string): RecordValues[] {
+    // Repeated key:value blocks have no machine-readable wrapper. Seeing the first
+    // key again marks the beginning of the next result.
     const records: RecordValues[] = [];
     let current: RecordValues = {};
     for (const line of output.split(/\r?\n/)) {
@@ -90,6 +95,8 @@ export default class SyncTeX {
   }
 
   private static number(record: RecordValues, ...keys: string[]): number {
+    // Reject malformed CLI output here rather than propagating NaN coordinates to
+    // the viewer, where they would be much harder to diagnose.
     for (const rawKey of keys) {
       const value = record[rawKey.toLowerCase()];
       if (value !== undefined) {
@@ -103,6 +110,8 @@ export default class SyncTeX {
   }
 
   private static execute(args: string[], cwd: string): Promise<string> {
+    // Avoid a shell so paths are passed without another quoting layer. stderr is
+    // retained to produce a useful failure message.
     return new Promise<string>((resolve, reject) => {
       const child = spawn.spawn(Config.syncTeXPath(), args, {
         cwd,

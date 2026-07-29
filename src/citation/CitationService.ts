@@ -22,6 +22,10 @@ interface ProjectScopeCacheEntry {
   scope: Promise<ProjectScope>;
 }
 
+/**
+ * Discovers project bibliography files, parses their entries, and invalidates
+ * caches when either bibliography contents or LaTeX project structure changes.
+ */
 export default class CitationService implements vscode.Disposable {
   private readonly cache = new Map<string, CacheEntry>();
   private readonly disposables: vscode.Disposable[] = [];
@@ -30,6 +34,8 @@ export default class CitationService implements vscode.Disposable {
   private readonly structuralSignatures = new Map<string, string>();
 
   public constructor() {
+    // .bib changes invalidate only that file's parsed entries. Structural .tex
+    // changes can alter the main file, include graph, or bibliography list.
     const watcher = vscode.workspace.createFileSystemWatcher('**/*.bib');
     const texWatcher = vscode.workspace.createFileSystemWatcher('**/*.tex');
     const invalidateProjects = () => this.projectScopes.clear();
@@ -79,6 +85,7 @@ export default class CitationService implements vscode.Disposable {
     const kpsewhichResults = await this.kpsewhich.resolve(scope.main, scope.references);
     const uris = scope.references.map((reference, index) => kpsewhichResults[index] ?? resolveBibUri(scope.main, reference));
     const groups = await Promise.all(uris.map((uri) => this.readEntries(uri)));
+    // Keep the first occurrence of a duplicate key, matching bibliography order.
     const unique = new Map<string, CitationEntry>();
     for (const entry of groups.flat()) {
       if (!unique.has(entry.key)) {
@@ -111,6 +118,8 @@ export default class CitationService implements vscode.Disposable {
       return cached.scope;
     }
 
+    // Cache the in-flight promise as well as completed results so simultaneous
+    // IntelliSense requests share one filesystem traversal.
     const scope = (async (): Promise<ProjectScope> => {
       let main = document.uri;
       try {
@@ -145,6 +154,8 @@ export default class CitationService implements vscode.Disposable {
   }
 
   private async readEntries(uri: vscode.Uri): Promise<CitationEntry[]> {
+    // Open documents are keyed by VS Code's version; saved files use an undefined
+    // version and are invalidated by the filesystem watcher.
     const openDocument = vscode.workspace.textDocuments.find((document) => document.uri.toString() === uri.toString());
     const cacheKey = uri.toString();
     const cached = this.cache.get(cacheKey);
@@ -190,6 +201,8 @@ async function readTexSource(uri: vscode.Uri): Promise<string> {
 }
 
 function projectStructureSignature(source: string): string {
+  // Only directives that affect project discovery belong in this cheap signature;
+  // ordinary text edits should not discard the project-scope cache.
   const directives = source.match(/^%#main\b[^\r\n]*/gm) ?? [];
   const commands = source.match(/\\(?:documentclass|input|include|bibliography|addbibresource)\b(?:\s*\[[^\]]*\])?\s*\{[^{}]*\}/g) ?? [];
   return JSON.stringify([directives, commands]);

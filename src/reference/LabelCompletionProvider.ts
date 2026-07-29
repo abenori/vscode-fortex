@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { findLabels, findReferenceContext, LabelEntry } from './LabelParser';
 
+/** Completes reference keys from labels in the active LaTeX document. */
 export default class LabelCompletionProvider implements vscode.CompletionItemProvider {
   public provideCompletionItems(document: vscode.TextDocument, position: vscode.Position): vscode.CompletionList | undefined {
     const source = document.getText();
@@ -23,17 +24,10 @@ export default class LabelCompletionProvider implements vscode.CompletionItemPro
     item.insertText = label.key;
     item.filterText = label.key;
     item.range = range;
-    item.detail = `\\label{${label.key}} — line ${label.line + 1}`;
 
     const documentation = new vscode.MarkdownString();
-    documentation.appendMarkdown(`**Reference target:** \`${escapeMarkdown(label.key)}\`  \nLine ${label.line + 1}\n\n`);
     documentation.appendCodeblock(label.context, 'latex');
     item.documentation = documentation;
     return item;
   }
 }
-
-function escapeMarkdown(value: string): string {
-  return value.replace(/[\\`*_{}\[\]()#+\-.!]/g, '\\$&');
-}
-

@@ -1,5 +1,6 @@
 import { CitationContext, CitationEntry } from './Citation';
 
+/** Ranks entries using one query shared across author and title fields. */
 export function searchCitations(entries: readonly CitationEntry[], query: string): CitationEntry[] {
   const normalizedQuery = normalizeForSearch(query);
   const tokens = normalizedQuery.split(' ').filter(Boolean);
@@ -26,6 +27,8 @@ function scoreEntry(entry: CitationEntry, query: string, tokens: readonly string
     return 5;
   }
 
+  // Lower scores are better: exact words outrank prefixes, which outrank a token
+  // appearing elsewhere in the combined author/title text.
   let score = 10;
   const words = combined.split(' ');
   for (const token of tokens) {
@@ -48,6 +51,8 @@ function compareEntries(left: CitationEntry, right: CitationEntry): number {
 }
 
 export function normalizeForSearch(value: string): string {
+  // NFKD plus combining-mark removal makes accented names searchable with either
+  // their accented or ASCII spelling while retaining non-Latin scripts.
   return latexToPlainText(value)
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
@@ -58,9 +63,12 @@ export function normalizeForSearch(value: string): string {
 }
 
 export function latexToPlainText(value: string): string {
+  // This is deliberately a display/search normalizer, not a full TeX parser. The
+  // ordering matters: accents must be decoded before generic commands are removed.
   return value
     .replace(/\\(?:LaTeX|TeX)\b/g, (command) => command.slice(1))
-    .replace(/\\["'`^~=.uvHckbdtr]\s*\{?([A-Za-z])\}?/g, '$1')
+    .replace(/\\["'`^~=.]\s*\{?([A-Za-z])\}?/g, '$1')
+    .replace(/\\[uvHckbdtr](?:\s*\{([A-Za-z])\}|\s+([A-Za-z]))/g, (_match, braced, spaced) => braced ?? spaced)
     .replace(/\\([%&_#$])/g, '$1')
     .replace(/\\[A-Za-z@]+\*?\s*/g, '')
     .replace(/[{}]/g, '')
@@ -78,6 +86,7 @@ export function findCitationContext(text: string, offset = text.length): Citatio
     }
   }
 
+  // Limit backward scanning so completion stays responsive in very large files.
   const prefix = text.slice(Math.max(0, offset - 20000), offset);
   const baseOffset = Math.max(0, offset - 20000);
   const citePattern = /\\(?:cite|citep|citet|citealp|citealt|citeauthor|citeyear|citeyearpar|autocite|parencite|textcite|footcite|footcitetext|smartcite|supercite|fullcite|volcite|pvolcite|fvolcite|notecite|nocite)\*?\s*(?:\[[^\]]*\]\s*)*\{([^{}]*)$/i;
@@ -87,6 +96,8 @@ export function findCitationContext(text: string, offset = text.length): Citatio
   }
 
   const content = match[1];
+  // Only replace the key currently being typed, preserving earlier keys in a
+  // multi-citation command.
   const comma = content.lastIndexOf(',');
   const fragment = content.slice(comma + 1);
   const leadingWhitespace = fragment.match(/^\s*/)?.[0].length ?? 0;

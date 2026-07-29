@@ -1,6 +1,7 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 
+/** Finds literal bibliography paths declared by classic BibTeX or biblatex. */
 export function discoverBibReferences(texSource: string): string[] {
   const source = stripTeXComments(texSource);
   const references: string[] = [];
@@ -8,6 +9,8 @@ export function discoverBibReferences(texSource: string): string[] {
 
   const add = (reference: string, appendExtension: boolean) => {
     let normalized = reference.trim();
+    // Macro-expanded filenames cannot be resolved statically; defer them rather
+    // than presenting a misleading path to kpsewhich.
     if (!normalized || normalized.includes('\\')) {
       return;
     }
@@ -34,6 +37,8 @@ export function discoverBibReferences(texSource: string): string[] {
 }
 
 export function resolveBibUri(texUri: vscode.Uri, reference: string): vscode.Uri {
+  // Preserve non-file URI schemes (remote workspaces, virtual documents) by using
+  // URI path operations unless the reference is a native absolute path.
   const normalized = reference.replace(/\\/g, '/');
   if (texUri.scheme === 'file' && path.isAbsolute(reference)) {
     return vscode.Uri.file(reference);
@@ -45,6 +50,8 @@ export function resolveBibUri(texUri: vscode.Uri, reference: string): vscode.Uri
 }
 
 function stripTeXComments(source: string): string {
+  // An even number of preceding backslashes means `%` begins a real TeX comment;
+  // `\%` remains part of the document.
   let result = '';
   let inComment = false;
   let slashCount = 0;

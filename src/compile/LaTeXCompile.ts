@@ -5,7 +5,9 @@ import TeXToPDF from './TeXToPDF';
 import Log from '../log';
 import ErrorManager from './ErrorManager';
 
+/** Marker base class for parsed `%#!` build actions. */
 class Action{}
+/** Invokes one of Fortex's built-in build stages. */
 class CommandAction extends Action{
   action = "";
   option = "";
@@ -15,6 +17,7 @@ class CommandAction extends Action{
     this.option = option;
   }
 }
+/** Executes a user-supplied shell command after placeholder expansion. */
 class ExecuteAction extends Action{
   command : string;
   public constructor(cmd : string){
@@ -23,6 +26,7 @@ class ExecuteAction extends Action{
   }
 }
 
+/** Coordinates a complete build and converts TeX log errors into diagnostics. */
 export default class LaTeXCompile {
   public static working = false;
   private LaTeXProject: LaTeXProject;
@@ -33,6 +37,8 @@ export default class LaTeXCompile {
 
 
   public async build() : Promise<boolean>{
+    // Build requests can arrive from both save events and explicit commands. The
+    // shared flag prevents two tool chains from writing the same auxiliary files.
     if(LaTeXCompile.working){ return false; }
     try{
       ErrorManager.clear();
@@ -42,6 +48,8 @@ export default class LaTeXCompile {
       let actions : Action[] = [];
       let ps = this.LaTeXProject.percent_sharp("!");
       actions = [new CommandAction("TeXToPDF", "")];
+      // A `%#!` directive may replace the default pipeline with built-in actions
+      // and arbitrary commands separated by semicolons.
       if(ps){
         ps = ps.trimStart();
         if(ps.indexOf(" ") >= 0) {
@@ -89,6 +97,8 @@ export default class LaTeXCompile {
     } else if (action instanceof ExecuteAction){
       //Log.process_message(`(%s) Executing command: %s\n`, j + 1, action.commands[j]);
       let cmd = action.command;
+      // Lowercase placeholders describe the active source file; uppercase ones
+      // always describe the detected project main file.
       if(this.LaTeXProject.file){
         cmd = cmd.replace(
           "%f", this.LaTeXProject.file.fsPath
@@ -117,6 +127,8 @@ export default class LaTeXCompile {
   }
 
   private static parse_action(action: string): Action[] {
+    // Built-in actions use `$(C:name:option)`. Parenthesis depth is tracked so
+    // options can themselves contain parenthesized fragments.
     action = action.trim();
     let parse_top = 0;
     let rv : Action[] = [];

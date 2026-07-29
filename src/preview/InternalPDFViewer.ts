@@ -9,6 +9,7 @@ type ViewerEntry = {
   pendingForward?: SyncTeXForwardResult;
 };
 
+/** Hosts PDF.js in one reusable webview per PDF and bridges SyncTeX messages. */
 export default class InternalPDFViewer implements vscode.Disposable {
   private readonly viewers = new Map<string, ViewerEntry>();
 
@@ -35,6 +36,8 @@ export default class InternalPDFViewer implements vscode.Disposable {
         localResourceRoots: [vscode.Uri.file(path.dirname(pdf.fsPath)), pdfjsRoot]
       }
     );
+    // The script reports readiness asynchronously. Preserve a pending forward
+    // search so Ctrl+T J immediately after opening the panel is not lost.
     const entry: ViewerEntry = { panel, pdf, ready: false };
     this.viewers.set(key, entry);
     panel.onDidDispose(() => this.viewers.delete(key), undefined, this.context.subscriptions);
@@ -60,6 +63,8 @@ export default class InternalPDFViewer implements vscode.Disposable {
       throw new Error("Open the internal PDF viewer before running forward SyncTeX search.");
     }
     let result: SyncTeXForwardResult;
+    // SyncTeX metadata may store either absolute input paths or paths relative to
+    // the build directory, so try both forms.
     try {
       result = await SyncTeX.forward(pdf.fsPath, source.fsPath, line, column);
     } catch (absolutePathError) {
@@ -108,6 +113,8 @@ export default class InternalPDFViewer implements vscode.Disposable {
         ? result.input
         : path.resolve(path.dirname(entry.pdf.fsPath), result.input);
       const document = await vscode.workspace.openTextDocument(vscode.Uri.file(inputPath));
+      // CLI positions are one-based and may point past an edited document. Clamp
+      // them before constructing a VS Code selection.
       const line = Math.max(0, Math.min(document.lineCount - 1, result.line - 1));
       const maxColumn = document.lineAt(line).text.length;
       const column = result.column < 0 ? 0 : Math.min(maxColumn, result.column);
@@ -130,6 +137,8 @@ export default class InternalPDFViewer implements vscode.Disposable {
   }
 
   private html(webview: vscode.Webview, pdfjsRoot: vscode.Uri): string {
+    // Generate markup here so the CSP can authorize only this panel's nonce and
+    // the packaged PDF.js resources.
     const nonce = this.nonce();
     const pdfjs = webview.asWebviewUri(vscode.Uri.joinPath(pdfjsRoot, "pdf.min.mjs"));
     const worker = webview.asWebviewUri(vscode.Uri.joinPath(pdfjsRoot, "pdf.worker.min.mjs"));
@@ -187,6 +196,8 @@ export default class InternalPDFViewer implements vscode.Disposable {
     const activeRenderTasks = new Set();
 
     function showHighlight() {
+      // Recreating the marker handles zoom changes. A negative delay preserves the
+      // original five-second fade deadline after a rerender.
       document.querySelectorAll(".synctex-highlight").forEach(element => element.remove());
       if (!pendingHighlight) return;
       const wrapper = pageElements.get(pendingHighlight.page);
@@ -209,6 +220,8 @@ export default class InternalPDFViewer implements vscode.Disposable {
     }
 
     async function renderPage(number, current) {
+      // Render lazily. The generation token discards work for a PDF or zoom level
+      // that has already been replaced.
       const state = pageStates.get(number);
       if (!state || current !== generation) return;
       if (state.renderedScale === scale) return;
@@ -270,6 +283,7 @@ export default class InternalPDFViewer implements vscode.Disposable {
       if (current !== generation) return;
       const defaultViewport = firstPage.getViewport({ scale });
       pageObserver = new IntersectionObserver(entries => {
+        // Pre-render pages near the viewport without rendering the whole document.
         for (const entry of entries) {
           if (entry.isIntersecting) {
             void renderPage(Number(entry.target.dataset.page), current);
@@ -310,6 +324,8 @@ export default class InternalPDFViewer implements vscode.Disposable {
     }
 
     function decodeBase64(data) {
+      // Small PDFs arrive over webview messaging for speed. Decode in chunks to
+      // keep temporary work bounded.
       const binary = atob(data);
       const bytes = new Uint8Array(binary.length);
       for (let offset = 0; offset < binary.length; offset += 65536) {
@@ -322,6 +338,8 @@ export default class InternalPDFViewer implements vscode.Disposable {
     }
 
     async function load(source) {
+      // Packaged CMaps, fonts, WASM, and ICC data are required for reliable
+      // Japanese and other non-Latin PDF rendering.
       try {
         generation++;
         status.textContent = "Loading…";

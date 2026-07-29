@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 
 const LOG_PANEL = vscode.window.createOutputChannel('fortex-vscode');
 
-
+/** Writes compiler progress and diagnostics to Fortex's shared output channel. */
 export default class Log {
   static readonly DEBUG = true;
   public static log(message: string, ...args: any[]) {
@@ -20,6 +20,7 @@ export default class Log {
   }
 
   public static process_message(message: string, ...args: any[]) {
+    // Compiler output already contains line breaks, so append rather than appendLine.
     if (args.length > 0) {
       message = message.replace(/%s/g, () => args.shift());
     }

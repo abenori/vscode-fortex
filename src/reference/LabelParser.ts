@@ -1,5 +1,6 @@
 import { latexToPlainText } from '../citation/CitationSearch';
 
+/** A label and the nearby source shown in reference completion details. */
 export interface LabelEntry {
   key: string;
   line: number;
@@ -12,6 +13,7 @@ export interface ReferenceContext {
   queryStart: number;
 }
 
+/** Extracts unique, uncommented labels from the current document. */
 export function findLabels(source: string): LabelEntry[] {
   const masked = maskComments(source);
   const sourceLines = source.split(/\r?\n/);
@@ -44,6 +46,8 @@ export function findReferenceContext(source: string, offset = source.length): Re
     }
   }
 
+  // As with citation completion, a bounded look-behind avoids rescanning an entire
+  // large document on every keystroke.
   const start = Math.max(0, offset - 20000);
   const prefix = source.slice(start, offset);
   const match = /\\(?:ref|pageref|eqref|autoref|nameref|cref|Cref|vref|Vref)\*?\s*\{([^{}]*)$/.exec(prefix);
@@ -85,6 +89,8 @@ function lineAtOffset(offsets: readonly number[], offset: number): number {
 }
 
 function makeContext(lines: readonly string[], targetLine: number): string {
+  // Include two lines on either side, trimming blank edges so the documentation
+  // popup remains compact while retaining the original LaTeX source.
   let start = Math.max(0, targetLine - 2);
   let end = Math.min(lines.length, targetLine + 3);
   while (start < targetLine && lines[start].trim() === '') {
@@ -97,6 +103,8 @@ function makeContext(lines: readonly string[], targetLine: number): string {
 }
 
 function makeSummary(lines: readonly string[], targetLine: number): string {
+  // Prefer the label's line, then nearby lines, and remove formatting commands for
+  // the short description displayed beside the completion key.
   const candidateLines = [
     lines[targetLine],
     ...lines.slice(Math.max(0, targetLine - 2), targetLine).reverse(),
@@ -112,6 +120,8 @@ function makeSummary(lines: readonly string[], targetLine: number): string {
 }
 
 function maskComments(source: string): string {
+  // Replace comment characters with spaces to preserve offsets used against the
+  // unmasked source.
   let result = '';
   let inComment = false;
   let slashCount = 0;
@@ -144,4 +154,3 @@ function isEscaped(source: string, offset: number): boolean {
   }
   return slashCount % 2 === 1;
 }
-

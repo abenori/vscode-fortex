@@ -14,4 +14,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - Added a setting to keep focus in the source editor or move it to the viewer after forward SyncTeX search.
 - Preserve the source editor cursor and scroll position when keeping focus after forward search.
 - Center the internal PDF viewer on the forward SyncTeX marker.
+- Added LaTeX environment insertion and wrapping through IntelliSense and `Ctrl+T B`.
+- Added paired environment renaming with `F2` or `Ctrl+T B`, including `\\[ ... \\]` display math.
+- Added `vscode-fortex.environment.indentContent` to disable the extra indentation inside inserted environments.
 - Initial release

@@ -40,6 +40,8 @@ export default class KpsewhichResolver implements vscode.Disposable {
   }
 
   private run(executable: string, cwd: string, references: readonly string[]): Promise<readonly (vscode.Uri | undefined)[]> {
+    // kpsewhich emits one output line per argument, including blank lines for
+    // misses. Preserve positional correspondence with the requested references.
     return new Promise((resolve) => {
       const child = spawn.spawn(executable, ['--format=bib', ...references], {
         cwd,
@@ -76,10 +78,11 @@ export default class KpsewhichResolver implements vscode.Disposable {
 }
 
 export function parseKpsewhichOutput(output: string, expectedResults: number): (string | undefined)[] {
+  // Remove only the final process newline; internal blank lines represent files
+  // that Kpathsea could not resolve and must remain in the result array.
   const lines = output.replace(/\r/g, '').split('\n');
   if (lines.length > expectedResults && lines[lines.length - 1] === '') {
     lines.pop();
   }
   return Array.from({ length: expectedResults }, (_, index) => lines[index]?.trim() || undefined);
 }
-

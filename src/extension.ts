@@ -10,15 +10,21 @@ import CitationService from './citation/CitationService';
 import CitationCompletionProvider from './citation/CitationCompletionProvider';
 import { showCitationQuickPick } from './citation/CitationQuickPick';
 import LabelCompletionProvider from './reference/LabelCompletionProvider';
+import EnvironmentCompletionProvider from './environment/EnvironmentCompletionProvider';
+import EnvironmentRenameProvider from './environment/EnvironmentRenameProvider';
+import { insertOrRenameEnvironment } from './environment/EnvironmentCommand';
 
 const taskType = "fortex";
 
+/** Serializes builds and keeps the long-running progress notification dismissible. */
 class BuildManeger{
   public constructor(private readonly preview: PDFPreview) {}
   // 通知の表示/非表示を制御するためのPromiseのresolve関数を保持します。
   private resolveNotification: (() => void) | undefined;
 
   private clearProgress(){
+    // Resolving the stored promise closes a previous failed-build notification
+    // before the next build starts or the extension shuts down.
     if(this.resolveNotification){
       this.resolveNotification();
       this.resolveNotification = undefined;
@@ -35,6 +41,8 @@ class BuildManeger{
     } else {
       try{
         this.clearProgress();
+        // Project discovery must happen for every build because `%#main` and the
+        // include graph may have changed since the previous save.
         let proj = new LaTeXProject(
           await LaTeXProject.generate_project(doc.uri, true)
         );
@@ -92,6 +100,8 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }
   }));
+  // All preview commands share error handling; optional arguments select a viewer
+  // for one call or turn the request into forward SyncTeX search.
   const registerPreview = (command: string, viewer?: PDFViewer, sync = false) => {
     context.subscriptions.push(vscode.commands.registerCommand(command, async () => {
       try {
@@ -107,6 +117,8 @@ export function activate(context: vscode.ExtensionContext) {
   registerPreview('vscode-fortex.viewPdfInSumatraPDF', 'sumatra');
   registerPreview('vscode-fortex.syncTeXFromCursor', undefined, true);
 
+  // Providers and commands are registered together so every disposable follows
+  // the extension context lifetime.
   const citations = new CitationService();
   context.subscriptions.push(
     citations,
@@ -122,11 +134,25 @@ export function activate(context: vscode.ExtensionContext) {
       '{',
       ','
     ),
+    vscode.languages.registerCompletionItemProvider(
+      { language: 'latex' },
+      new EnvironmentCompletionProvider(),
+      '{',
+      '['
+    ),
+    vscode.languages.registerRenameProvider(
+      { language: 'latex' },
+      new EnvironmentRenameProvider()
+    ),
     vscode.commands.registerCommand('vscode-fortex.insertCitation', async () => {
       await showCitationQuickPick(citations);
+    }),
+    vscode.commands.registerCommand('vscode-fortex.insertOrRenameEnvironment', async () => {
+      await insertOrRenameEnvironment();
     })
   );
 
+  // Save-triggered builds remain opt-in through compileTrigger.
   const disp = vscode.workspace.onDidSaveTextDocument((doc) => {
     if(doc.languageId === 'latex'){
       if(Config.compileTrigger().indexOf("onSave") >= 0){
@@ -141,6 +167,8 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {
+  // VS Code disposes registered resources automatically; these two objects also
+  // own pending promises and external processes that need explicit cleanup.
   buildmanager?.uninit();
   Process.killAll();
 }

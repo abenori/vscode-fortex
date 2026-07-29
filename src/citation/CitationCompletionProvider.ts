@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { findCitationContext } from './CitationSearch';
 import CitationService from './CitationService';
 
+/** Supplies BibTeX keys while the cursor is inside a cite-like command. */
 export default class CitationCompletionProvider implements vscode.CompletionItemProvider {
   public constructor(private readonly service: CitationService) {}
 
@@ -20,6 +21,7 @@ export default class CitationCompletionProvider implements vscode.CompletionItem
     if (token.isCancellationRequested) {
       return undefined;
     }
+    // Cap the UI list; the service still searches every entry before ranking.
     const matches = this.service.search(entries, context.query).slice(0, 200);
     const range = new vscode.Range(document.positionAt(context.queryStart), position);
     const items = matches.map((entry, index) => {

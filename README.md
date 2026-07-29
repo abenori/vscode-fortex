@@ -42,6 +42,14 @@ Run **Fortex: Insert Citation** from the Command Palette, or press `Ctrl+T [`, f
 
 Inside `\ref{...}`, IntelliSense lists `\label{...}` targets from the current LaTeX file. Selecting a suggestion shows the target line and its nearby LaTeX source in the suggestion details popup. The same completion is available for common variants including `\pageref`, `\eqref`, `\autoref`, `\nameref`, `\cref`, and `\Cref`.
 
+## Environment editing
+
+Inside `\begin{...}`, IntelliSense completes a standard, previously used, `\newenvironment`, or `\newtheorem` environment and inserts its matching `\end{...}`. Type `\[` to complete a `\[ ... \]` display-math pair.
+
+Press `Ctrl+T B` away from an existing environment command to select an environment from Quick Pick. With selected text, the command wraps the selection; otherwise it inserts an empty pair and places the cursor inside. When the cursor is on a `\begin{...}`, `\end{...}`, `\[`, or `\]`, `Ctrl+T B` starts the same paired rename operation as `F2`. Renaming updates only the structurally matching pair, including nested environments. Enter `\[` as the new name to convert a named environment into display-math notation.
+
+Set `vscode-fortex.environment.indentContent` to `false` to keep inserted or wrapped environment content at the outer environment's indentation level. When enabled (the default), the indentation characters and width follow VS Code's `editor.insertSpaces` and `editor.tabSize` settings.
+
 ## What is this?
 
 This is a Visual Studio Code version of "祝鳥" which is the macro package of Hidemaru for supporting LaTeX editing.

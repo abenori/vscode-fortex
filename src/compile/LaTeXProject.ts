@@ -6,6 +6,12 @@ import Config from "../Config";
 
 type LaTeXFileType = typeof LaTeXProject.LaTeXFileType[keyof typeof LaTeXProject.LaTeXFileType];
 
+/**
+ * Describes the active LaTeX project and locates its main document.
+ *
+ * Main-file detection applies the user-configured strategies in order: `%#main`,
+ * recursive parent discovery, and finally treating the current file as main.
+ */
 export default class LaTeXProject {
   static readonly LaTeXFileType = {
     main: 0,
@@ -78,6 +84,8 @@ export default class LaTeXProject {
   }
 
   public static async generate_project(f: vscode.Uri | null, guess_parent: boolean): Promise<[vscode.Uri | null,vscode.Uri, string, string, { [key: string]: string }]> {
+    // Strategies are data-driven so changing `mainFileOrder` does not duplicate
+    // the validation and result assembly below.
     const guess_tactics: Array<(file: vscode.Uri, directives: { [key: string]: string }) => Promise<[vscode.Uri, string, string, { [key: string]: string }] | undefined>> = [];
     let main_order = Config.mainFileOrder();
     for(let i = 0 ; i < main_order.length ; ++i){
@@ -118,6 +126,8 @@ export default class LaTeXProject {
 
   // file1とfile2が同じファイルかどうかを調べる
   private static async isthesamefile(file1: vscode.Uri, file2: vscode.Uri): Promise<boolean> {
+    // Windows paths are case-insensitive. URI normalization also lets the upward
+    // directory walk recognize when it has reached the filesystem root.
     try {
       let f1 = await vscode.workspace.fs.stat(file1);
       let f2 = await vscode.workspace.fs.stat(file2);
@@ -140,6 +150,8 @@ export default class LaTeXProject {
 
   // [class,option]を返す
   private static get_classfile(txt: string): [string, string] {
+    // Comments are masked first so a documented-out `\documentclass` does not
+    // make a subfile look like a project root.
     txt = LaTeXProject.strip_comments(txt);
     const re = /\\documentclass(\[.*\])?\{(.*?)\}/g;
     let m = re.exec(txt);
@@ -170,6 +182,8 @@ export default class LaTeXProject {
       return [file, cls[0], cls[1]];
     }
     let dir = vscode.Uri.file(path.dirname(file.fsPath));
+    // Search every ancestor. A candidate is accepted only when it has a
+    // document class and recursively includes the active file.
     // 階層をあがっていってfileがincludeされているファイルを探す
     while (true) {
       let res = await LaTeXProject.find_included(dir, file);
@@ -183,6 +197,8 @@ export default class LaTeXProject {
 
   // (includeされているファイル一覧，クラスファイル名,option)を返す
   private static async included_files(file: vscode.Uri): Promise<[[vscode.Uri, LaTeXFileType][], string, string]> {
+    // This intentionally parses only literal paths. Macro-generated inputs cannot
+    // be resolved reliably without executing TeX.
     let txt = "";
     let dir = vscode.Uri.file(path.dirname(file.fsPath));
     try {
@@ -217,6 +233,8 @@ export default class LaTeXProject {
   // ディレクトリdir内からtargetがinclude/inputされているファイルを探す．
   // 戻り値は[親ファイル名,クラスファイル名,option]（\documentclassがない場合はクラスファイルは空文字列）
   private static async find_included(dir: vscode.Uri, target: vscode.Uri): Promise<[vscode.Uri, string, string] | null> {
+    // Only top-level documents in this directory are candidates; recursive
+    // inclusion is checked by collectProjectFiles for each candidate.
     try {
       const files = await vscode.workspace.fs.readDirectory(dir);
       // results[file] = fileを\includeしているファイルたち
@@ -243,6 +261,7 @@ export default class LaTeXProject {
   }
 
   public static async collectProjectFiles(main: vscode.Uri): Promise<vscode.Uri[]> {
+    // The visited set prevents cycles such as A inputting B and B inputting A.
     const files: vscode.Uri[] = [];
     const visited = new Set<string>();
     const visit = async (file: vscode.Uri): Promise<void> => {
@@ -278,6 +297,8 @@ export default class LaTeXProject {
   }
 
   private static parse_percent_sharp_doc(txt: string): { [key: string]: string } {
+    // `%#key value` directives are intentionally line-oriented and are read only
+    // from the originally active document during project detection.
     const reg = /^%#([^ \r\n]*)( ?[^\r\n]*?)$/gm;
     let rv: { [key: string]: string } = {};
     let mm = txt.matchAll(reg);
@@ -306,6 +327,8 @@ export default class LaTeXProject {
   }
 
   private static async read_file_text(file: vscode.Uri): Promise<string> {
+    // Prefer unsaved editor contents so project and completion behavior matches
+    // what the user currently sees rather than the last saved version.
     const openDocument = vscode.workspace.textDocuments.find((document) => LaTeXProject.uri_key(document.uri) === LaTeXProject.uri_key(file));
     return openDocument?.getText() ?? Buffer.from(await vscode.workspace.fs.readFile(file)).toString('utf8');
   }
@@ -316,6 +339,8 @@ export default class LaTeXProject {
   }
 
   private static strip_comments(source: string): string {
+    // Preserve string length and newlines: callers can safely use match offsets
+    // against the original source after comments have been hidden.
     let result = '';
     let inComment = false;
     let slashCount = 0;

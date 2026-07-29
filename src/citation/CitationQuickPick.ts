@@ -7,6 +7,7 @@ interface CitationQuickPickItem extends vscode.QuickPickItem {
   entry: CitationEntry;
 }
 
+/** Opens the searchable, multi-select citation picker used by `Ctrl+T [` . */
 export async function showCitationQuickPick(service: CitationService): Promise<void> {
   const editor = vscode.window.activeTextEditor;
   if (!editor || editor.document.languageId !== 'latex') {
@@ -27,6 +28,8 @@ export async function showCitationQuickPick(service: CitationService): Promise<v
   quickPick.matchOnDescription = true;
   quickPick.matchOnDetail = true;
 
+  // Quick Pick replaces its item list on each query. Keep selections separately
+  // so entries selected under an earlier filter are not lost.
   const entriesByKey = new Map(entries.map((entry) => [entry.key, entry]));
   const selectedKeys = new Set<string>();
   let refreshing = false;
@@ -89,6 +92,8 @@ function toQuickPickItem(entry: CitationEntry): CitationQuickPickItem {
 }
 
 async function insertCitations(editor: vscode.TextEditor, keys: string): Promise<void> {
+  // Each cursor is handled independently: replace an active cite fragment, wrap a
+  // selection, or insert a complete command at an empty cursor.
   const document = editor.document;
   await editor.edit((edit) => {
     for (const selection of editor.selections) {
