@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as spawn from "cross-spawn";
-import Config from "../Config";
+import Config from "../../Config";
 
 /** Starts SumatraPDF with forward and inverse SyncTeX arguments on Windows. */
 export default class SumatraPDF {

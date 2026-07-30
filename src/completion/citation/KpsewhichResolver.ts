@@ -2,7 +2,7 @@ import * as path from 'path';
 import * as ChildProcess from 'child_process';
 import * as spawn from 'cross-spawn';
 import * as vscode from 'vscode';
-import Config from '../Config';
+import Config from '../../Config';
 
 const lookupTimeoutMilliseconds = 5000;
 

@@ -5,15 +5,16 @@ import Log from './log';
 import ErrorManager from './compile/ErrorManager';
 import Process from './compile/Process';
 import Config from './Config';
-import PDFPreview, { PDFViewer } from './preview/PDFPreview';
-import CitationService from './citation/CitationService';
-import CitationCompletionProvider from './citation/CitationCompletionProvider';
-import { showCitationQuickPick } from './citation/CitationQuickPick';
-import LabelCompletionProvider from './reference/LabelCompletionProvider';
-import EnvironmentCompletionProvider from './environment/EnvironmentCompletionProvider';
-import EnvironmentRenameProvider from './environment/EnvironmentRenameProvider';
-import { insertOrRenameEnvironment } from './environment/EnvironmentCommand';
-import { closeEnvironment } from './environment/EnvironmentCloseCommand';
+import PDFPreview, { PDFViewer } from './compile/preview/PDFPreview';
+import CitationService from './completion/citation/CitationService';
+import CitationCompletionProvider from './completion/citation/CitationCompletionProvider';
+import { showCitationQuickPick } from './completion/citation/CitationQuickPick';
+import LabelCompletionProvider from './completion/reference/LabelCompletionProvider';
+import EnvironmentCompletionProvider from './completion/environment/EnvironmentCompletionProvider';
+import EnvironmentRenameProvider from './completion/environment/EnvironmentRenameProvider';
+import { insertOrRenameEnvironment } from './completion/environment/EnvironmentCommand';
+import { closeEnvironment } from './completion/environment/EnvironmentCloseCommand';
+import CommandCompletionProvider from './completion/command/CommandCompletionProvider';
 
 const taskType = "fortex";
 
@@ -122,9 +123,11 @@ export function activate(context: vscode.ExtensionContext) {
   // the extension context lifetime.
   const citations = new CitationService();
   const labels = new LabelCompletionProvider();
+  const commands = new CommandCompletionProvider();
   context.subscriptions.push(
     citations,
     labels,
+    commands,
     vscode.languages.registerCompletionItemProvider(
       { language: 'latex' },
       new CitationCompletionProvider(citations),
@@ -146,6 +149,11 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.languages.registerRenameProvider(
       { language: 'latex' },
       new EnvironmentRenameProvider()
+    ),
+    vscode.languages.registerCompletionItemProvider(
+      { language: 'latex' },
+      commands,
+      '\\'
     ),
     vscode.commands.registerCommand('vscode-fortex.insertCitation', async () => {
       await showCitationQuickPick(citations);

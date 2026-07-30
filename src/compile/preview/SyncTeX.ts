@@ -1,6 +1,6 @@
 import * as path from "path";
 import * as spawn from "cross-spawn";
-import Config from "../Config";
+import Config from "../../Config";
 
 export type SyncTeXForwardResult = {
   page: number;

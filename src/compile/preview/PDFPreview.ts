@@ -1,7 +1,7 @@
 import * as path from "path";
 import * as vscode from "vscode";
-import Config from "../Config";
-import LaTeXProject from "../compile/LaTeXProject";
+import Config from "../../Config";
+import LaTeXProject from "../LaTeXProject";
 import SumatraPDF from "./SumatraPDF";
 import InternalPDFViewer from "./InternalPDFViewer";
 

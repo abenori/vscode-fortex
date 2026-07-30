@@ -52,6 +52,10 @@ Press `Ctrl+T E` to close the innermost unclosed environment before the cursor. 
 
 Set `vscode-fortex.environment.indentContent` to `false` to keep inserted or wrapped environment content at the outer environment's indentation level. When enabled (the default), the indentation characters and width follow VS Code's `editor.insertSpaces` and `editor.tabSize` settings.
 
+## Command completion
+
+After typing `\`, IntelliSense lists common LaTeX commands and commands declared in the current document with `\newcommand`, `\renewcommand`, `\providecommand`, `\DeclareRobustCommand`, or xparse document-command declarations. Common commands and classic `\newcommand` declarations insert argument placeholders as snippets. Completing `\ref`, `\cite`, or `\begin` immediately opens the corresponding label, citation, or environment completion.
+
 ## What is this?
 
 This is a Visual Studio Code version of "祝鳥" which is the macro package of Hidemaru for supporting LaTeX editing.

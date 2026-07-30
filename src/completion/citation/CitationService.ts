@@ -4,7 +4,7 @@ import { discoverBibReferences, resolveBibUri } from './BibFileDiscovery';
 import { CitationEntry } from './Citation';
 import { latexToPlainText, searchCitations } from './CitationSearch';
 import KpsewhichResolver from './KpsewhichResolver';
-import LaTeXProject from '../compile/LaTeXProject';
+import LaTeXProject from '../../compile/LaTeXProject';
 
 interface CacheEntry {
   documentVersion?: number;

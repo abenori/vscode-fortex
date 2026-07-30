@@ -6,6 +6,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+- Grouped all completion sources under `src/completion` and moved PDF preview sources under `src/compile/preview`.
 - Added author/title citation search through IntelliSense and the **Fortex: Insert Citation** Quick Pick command.
 - Added the `Ctrl+T [` keybinding for citation Quick Pick.
 - Resolve referenced bibliography files through `kpsewhich` and the Kpathsea search path.
@@ -19,4 +20,5 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - Added `vscode-fortex.environment.indentContent` to disable the extra indentation inside inserted environments.
 - Added `Ctrl+T E` to close the innermost unclosed named or display-math environment.
 - Cached and incrementally refreshed label indexes so `\\ref` completion opens immediately in large documents.
+- Added IntelliSense snippets for common LaTeX commands and commands declared in the current document.
 - Initial release
