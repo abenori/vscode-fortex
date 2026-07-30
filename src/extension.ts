@@ -121,8 +121,10 @@ export function activate(context: vscode.ExtensionContext) {
   // Providers and commands are registered together so every disposable follows
   // the extension context lifetime.
   const citations = new CitationService();
+  const labels = new LabelCompletionProvider();
   context.subscriptions.push(
     citations,
+    labels,
     vscode.languages.registerCompletionItemProvider(
       { language: 'latex' },
       new CitationCompletionProvider(citations),
@@ -131,7 +133,7 @@ export function activate(context: vscode.ExtensionContext) {
     ),
     vscode.languages.registerCompletionItemProvider(
       { language: 'latex' },
-      new LabelCompletionProvider(),
+      labels,
       '{',
       ','
     ),
