@@ -1,5 +1,11 @@
 # vscode-fortex
 
+## Build security
+
+Programs named by source-file build directives such as `%#!`, `%#bibtex`, `%#makeindex`, and `%#dvipdf` must be listed in `vscode-fortex.compile.allowedPrograms`. The default list contains common TeX engines and helper programs. Matching is exact; add another program explicitly when a document needs it. An empty list rejects every `%#`-selected program, while adding `*` permits any program. The setting is machine-scoped so an opened workspace cannot silently widen its own permissions.
+
+Fortex parses `%#!` command lines itself and starts the executable with `shell: false`. Quotes may be used for arguments containing spaces. Shell operators such as `|`, `&&`, `<`, and `>` are passed as ordinary arguments and are not interpreted. Semicolons outside quotes retain their existing meaning as separators between build actions. All programs named by `%#` directives are checked before the first build process starts. Programs selected without a `%#` directive are not restricted by this setting.
+
 ## PDF preview
 
 Run **View LaTeX PDF** from the Command Palette or press `Ctrl+T P`. Select the default viewer with `vscode-fortex.pdfViewer`:
@@ -42,6 +48,8 @@ Run **Fortex: Insert Citation** from the Command Palette, or press `Ctrl+T [`, f
 
 Inside `\ref{...}`, IntelliSense lists `\label{...}` targets from the current LaTeX file. Selecting a suggestion shows the target line and its nearby LaTeX source in the suggestion details popup. The same completion is available for common variants including `\pageref`, `\eqref`, `\autoref`, `\nameref`, `\cref`, and `\Cref`.
 
+Press `Ctrl+T G` with the cursor on a `\label{...}` or reference command to move to the command using the same key. Moving from a label shows Quick Pick when the label has several references. This navigation currently searches the active file only.
+
 ## Environment editing
 
 Inside `\begin{...}`, IntelliSense completes a standard, previously used, `\newenvironment`, or `\newtheorem` environment and inserts its matching `\end{...}`. Type `\[` to complete a `\[ ... \]` display-math pair.
@@ -51,6 +59,8 @@ Press `Ctrl+T B` away from an existing environment command to select an environm
 Press `Ctrl+T E` to close the innermost unclosed environment before the cursor. Fortex inserts the corresponding `\end{...}` or `\]` on a line aligned with its opening command. An environment that already has a structurally matching closing command later in the document is not closed a second time.
 
 Set `vscode-fortex.environment.indentContent` to `false` to keep inserted or wrapped environment content at the outer environment's indentation level. When enabled (the default), the indentation characters and width follow VS Code's `editor.insertSpaces` and `editor.tabSize` settings.
+
+Press `Ctrl+T G` on `\begin{...}`, `\end{...}`, `\[`, or `\]` to move to its structurally matching opening or closing command.
 
 ## Command completion
 

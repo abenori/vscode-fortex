@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { DEFAULT_ALLOWED_PROGRAMS } from './compile/BuildSecurity';
 
 /** Centralized, typed access to the `vscode-fortex` configuration section. */
 export default class Config {
@@ -15,6 +16,10 @@ export default class Config {
 
   public static compileTrigger(){
     return Config.get<string[]>("compileTrigger", ["onSave"]);
+  }
+
+  public static allowedPrograms(): string[] {
+    return Config.get<string[]>('compile.allowedPrograms', [...DEFAULT_ALLOWED_PROGRAMS]);
   }
 
   public static pdfViewer(): "internal" | "sumatra" {

@@ -21,7 +21,8 @@
     "onCommand:vscode-fortex.syncTeXFromCursor",
     "onCommand:vscode-fortex.insertCitation",
     "onCommand:vscode-fortex.insertOrRenameEnvironment",
-    "onCommand:vscode-fortex.closeEnvironment"
+    "onCommand:vscode-fortex.closeEnvironment",
+    "onCommand:vscode-fortex.goToCorresponding"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -71,6 +72,11 @@
         "command": "vscode-fortex.closeEnvironment",
         "title": "Close Unclosed LaTeX Environment",
         "category": "Fortex"
+      },
+      {
+        "command": "vscode-fortex.goToCorresponding",
+        "title": "Go to Corresponding LaTeX Command",
+        "category": "Fortex"
       }
     ],
     "keybindings": [
@@ -103,6 +109,11 @@
         "command": "vscode-fortex.closeEnvironment",
         "key": "ctrl+t e",
         "when": "editorTextFocus && editorLangId == latex"
+      },
+      {
+        "command": "vscode-fortex.goToCorresponding",
+        "key": "ctrl+t g",
+        "when": "editorTextFocus && editorLangId == latex"
       }
     ],
     "configuration": {
@@ -131,6 +142,38 @@
             "onSave"
           ],
           "description": "Trigger for compiling the LaTeX document."
+        },
+        "vscode-fortex.compile.allowedPrograms": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true,
+          "default": [
+            "tex",
+            "pdftex",
+            "luatex",
+            "xetex",
+            "ptex",
+            "uptex",
+            "latex",
+            "pdflatex",
+            "lualatex",
+            "xelatex",
+            "platex",
+            "uplatex",
+            "dvipdfmx",
+            "dvispk",
+            "bibtex",
+            "upbibtex",
+            "biber",
+            "mendex",
+            "makeindex",
+            "upmendex"
+          ],
+          "scope": "machine",
+          "order": 10,
+          "markdownDescription": "Programs that source-file `%#` directives may execute. Program names are matched exactly. Add `*` as an array item to permit any program. This restriction does not apply to programs selected without a `%#` directive."
         },
         "vscode-fortex.pdfViewer": {
           "type": "string",

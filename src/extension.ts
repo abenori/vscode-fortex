@@ -15,6 +15,7 @@ import EnvironmentRenameProvider from './completion/environment/EnvironmentRenam
 import { insertOrRenameEnvironment } from './completion/environment/EnvironmentCommand';
 import { closeEnvironment } from './completion/environment/EnvironmentCloseCommand';
 import CommandCompletionProvider from './completion/command/CommandCompletionProvider';
+import { goToCorresponding } from './navigation/CorrespondingCommand';
 
 const taskType = "fortex";
 
@@ -163,6 +164,9 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('vscode-fortex.closeEnvironment', async () => {
       await closeEnvironment();
+    }),
+    vscode.commands.registerCommand('vscode-fortex.goToCorresponding', async () => {
+      await goToCorresponding();
     })
   );
 

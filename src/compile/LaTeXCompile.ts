@@ -4,6 +4,13 @@ import LaTeXProject from './LaTeXProject';
 import TeXToPDF from './TeXToPDF';
 import Log from '../log';
 import ErrorManager from './ErrorManager';
+import Config from '../Config';
+import {
+  assertProgramAllowed,
+  findCommandSeparator,
+  parseCommandLine,
+  singleProgramFromDirective
+} from './BuildSecurity';
 
 /** Marker base class for parsed `%#!` build actions. */
 class Action{}
@@ -17,12 +24,15 @@ class CommandAction extends Action{
     this.option = option;
   }
 }
-/** Executes a user-supplied shell command after placeholder expansion. */
+/** Executes one parsed `%#!` command directly, without a shell. */
 class ExecuteAction extends Action{
-  command : string;
+  executable: string;
+  args: string[];
   public constructor(cmd : string){
     super();
-    this.command = cmd;
+    const parsed = parseCommandLine(cmd.trim());
+    this.executable = parsed.executable;
+    this.args = parsed.args;
   }
 }
 
@@ -51,11 +61,15 @@ export default class LaTeXCompile {
       // A `%#!` directive may replace the default pipeline with built-in actions
       // and arbitrary commands separated by semicolons.
       if(ps){
-        ps = ps.trimStart();
-        if(ps.indexOf(" ") >= 0) {
-          actions  = LaTeXCompile.parse_action(ps.trimEnd());
+        ps = ps.trim();
+        if(singleProgramFromDirective(ps) === undefined) {
+          actions = LaTeXCompile.parse_action(ps);
         }
       }
+      // Validate every executable named by a source directive before starting
+      // even the first process. A later, unused disallowed directive therefore
+      // cannot hide behind an earlier successful TeX pass.
+      this.validate_percent_sharp_programs(actions);
       for(let i = 0 ; i < actions.length ; ++i){
         //Log.debug_log("Executing action: " + JSON.stringify(actions[i]));
         let result = await this.execute_action(actions[i]);
@@ -95,35 +109,76 @@ export default class LaTeXCompile {
         return false;
       }
     } else if (action instanceof ExecuteAction){
-      //Log.process_message(`(%s) Executing command: %s\n`, j + 1, action.commands[j]);
-      let cmd = action.command;
-      // Lowercase placeholders describe the active source file; uppercase ones
-      // always describe the detected project main file.
-      if(this.LaTeXProject.file){
-        cmd = cmd.replace(
-          "%f", this.LaTeXProject.file.fsPath
-        ).replace(
-          "%d", path.dirname(this.LaTeXProject.file.fsPath)
-        ).replace(
-          "%b", path.basename(this.LaTeXProject.file.fsPath, path.extname(this.LaTeXProject.file.fsPath))
-        ).replace(
-          "%k", path.extname(this.LaTeXProject.file.fsPath)
-        );
-      }
-      cmd = cmd.replace(
-        "%F", this.LaTeXProject.mainfile.fsPath
-      ).replace(
-        "%D", path.dirname(this.LaTeXProject.mainfile.fsPath)
-      ).replace(
-        "%B", path.basename(this.LaTeXProject.mainfile.fsPath, path.extname(this.LaTeXProject.mainfile.fsPath))
-      ).replace(
-        "%K", path.extname(this.LaTeXProject.mainfile.fsPath)
-      );
-      Log.process_message(`Executing command: %s\n`, cmd);
+      const executable = this.expand_placeholders(action.executable);
+      const args = action.args.map((arg) => this.expand_placeholders(arg));
+      Log.process_message(`Executing command: %s\n`, LaTeXCompile.format_command(executable, args));
       let process = new Process();
-      let res = await process.execute(cmd, [], path.dirname(this.LaTeXProject.mainfile.fsPath), true);  
+      const result = await process.execute(
+        executable,
+        args,
+        path.dirname(this.LaTeXProject.mainfile.fsPath),
+        false
+      );
+      if (result !== 0) {
+        return false;
+      }
     }
     return true;
+  }
+
+  private validate_percent_sharp_programs(actions: Action[]): void {
+    const allowedPrograms = Config.allowedPrograms();
+    const buildDirective = this.LaTeXProject.percent_sharp('!')?.trim();
+    if (buildDirective) {
+      const engine = singleProgramFromDirective(buildDirective);
+      if (engine !== undefined) {
+        assertProgramAllowed(this.expand_placeholders(engine), allowedPrograms, '%#!');
+      }
+    }
+
+    // These directives select helper executables inside the standard pipeline.
+    // Validate all of them now, even if this particular build would not need the
+    // corresponding bibliography, index, or DVI conversion stage.
+    for (const [key, label] of [
+      ['bibtex', '%#bibtex'],
+      ['makeindex', '%#makeindex'],
+      ['dvipdf', '%#dvipdf']
+    ] as const) {
+      const program = this.LaTeXProject.percent_sharp(key)?.trim();
+      if (program) {
+        assertProgramAllowed(this.expand_placeholders(program), allowedPrograms, label);
+      }
+    }
+
+    for (const action of actions) {
+      if (action instanceof ExecuteAction) {
+        assertProgramAllowed(
+          this.expand_placeholders(action.executable),
+          allowedPrograms,
+          '%#!'
+        );
+      }
+    }
+  }
+
+  private expand_placeholders(value: string): string {
+    // Lowercase placeholders describe the active source file; uppercase ones
+    // always describe the detected project main file. Expansion happens after
+    // tokenization, so a path containing spaces remains a single argument.
+    if(this.LaTeXProject.file){
+      value = value.replaceAll("%f", this.LaTeXProject.file.fsPath)
+        .replaceAll("%d", path.dirname(this.LaTeXProject.file.fsPath))
+        .replaceAll("%b", path.basename(this.LaTeXProject.file.fsPath, path.extname(this.LaTeXProject.file.fsPath)))
+        .replaceAll("%k", path.extname(this.LaTeXProject.file.fsPath));
+    }
+    return value.replaceAll("%F", this.LaTeXProject.mainfile.fsPath)
+      .replaceAll("%D", path.dirname(this.LaTeXProject.mainfile.fsPath))
+      .replaceAll("%B", path.basename(this.LaTeXProject.mainfile.fsPath, path.extname(this.LaTeXProject.mainfile.fsPath)))
+      .replaceAll("%K", path.extname(this.LaTeXProject.mainfile.fsPath));
+  }
+
+  private static format_command(executable: string, args: string[]): string {
+    return [executable, ...args].map((part) => /\s/.test(part) ? JSON.stringify(part) : part).join(' ');
   }
 
   private static parse_action(action: string): Action[] {
@@ -142,6 +197,9 @@ export default class LaTeXCompile {
         c = action.substring(parse_top+1,parse_top + 2);
         if(c === "("){
           let r = action.indexOf(":", parse_top + 2);
+          if (r === -1) {
+            throw new Error("Built-in action is missing ':' in %#! directive: " + action);
+          }
           let cmd = action.substring(parse_top + 2, r);
           r = r + 1;
           parse_top = r;
@@ -154,8 +212,7 @@ export default class LaTeXCompile {
               nest = nest - 1;
               if (nest === 0) { break; }
             }else if(c === "") {
-              Log.error("Error parsing action: " + action);
-              return [];
+              throw new Error("Unclosed built-in action in %#! directive: " + action);
             }
             r = r + 1;
           }
@@ -169,9 +226,10 @@ export default class LaTeXCompile {
               rv.push(new CommandAction(naiyo.substring(0,r),naiyo.substring(r + 1)));
             }
           }else{
-            Log.error("Unknown action command: " + cmd);
-            return [];
+            throw new Error("Unknown built-in action in %#! directive: " + cmd);
           }
+        } else {
+          throw new Error("Invalid action in %#! directive near: " + action.substring(parse_top));
         }
         while(action.substring(parse_top,parse_top + 1) === " "){
           parse_top = parse_top + 1;
@@ -180,7 +238,7 @@ export default class LaTeXCompile {
           parse_top = parse_top + 1;
         }
       } else {
-        let r = action.indexOf(";", parse_top);
+        let r = findCommandSeparator(action, parse_top);
         if(r === -1){
           rv.push(new ExecuteAction(action.substring(parse_top)));
           break;
@@ -188,7 +246,6 @@ export default class LaTeXCompile {
           rv.push(new ExecuteAction(action.substring(parse_top, r)));
           parse_top = r + 1;
         }
-        parse_top = r + 1;
       }
     }
     return rv;

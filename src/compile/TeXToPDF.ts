@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import LaTeXProject from './LaTeXProject';
 import Log from '../log';
 import Process from './Process';
+import { singleProgramFromDirective } from './BuildSecurity';
 
 /**
  * Runs the TeX/BibTeX/index/PDF pipeline until auxiliary files stabilize.
@@ -51,9 +52,9 @@ export default class TeXToPDF {
     let cmd = "";
     let ps = this.LaTeXProject.percent_sharp("!");
     if (ps) {
-      ps = ps.trimStart();
-      if (ps.indexOf(" ") < 0) { cmd = ps; }
-    } else {
+      cmd = singleProgramFromDirective(ps.trim()) ?? "";
+    }
+    if (!cmd) {
       switch (cls) {
         case "article":
         case "report":
