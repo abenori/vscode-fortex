@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import LaTeXProject from './LaTeXProject';
 import Log from '../log';
 import Process from './Process';
+import Config from '../Config';
 import { singleProgramFromDirective } from './BuildSecurity';
 
 /**
@@ -145,6 +146,11 @@ export default class TeXToPDF {
     }
     while (true) {
       runCount++;
+      if(Config.maxLaTeXRuns() > 0 && runCount > Config.maxLaTeXRuns()){
+        Log.error(`Maximum number of LaTeX runs (${Config.maxLaTeXRuns()}) exceeded. Stopping compilation.`);
+        return false;
+      }
+
       let cmd: [string, string[]] = ["", []];
       let target = "";
       let ignore_error = false;
@@ -376,9 +382,9 @@ export default class TeXToPDF {
       let m = reg.exec(target_line_txt);
       if (m) {
         let strat = new vscode.Position(errline - 1,
-          m.indices ? m.indices[1][0] : 0);
+          (m.indices && m.indices[1]) ? m.indices[1][0] : 0);
         let end = new vscode.Position(errline - 1,
-          m.indices ? m.indices[1][1] : target_line_txt.length);
+          (m.indices && m.indices[1]) ? m.indices[1][1] : target_line_txt.length);
         return [[
           vscode.Uri.file(error_file),
           new vscode.Range(strat, end),
@@ -389,9 +395,9 @@ export default class TeXToPDF {
             m = reg.exec(doc.lineAt(i - 1).text);
             if(m){
               let strat = new vscode.Position(i - 1,
-                m.indices ? m.indices[1][0] : 0);
+                (m.indices && m.indices[1]) ? m.indices[1][0] : 0);
               let end = new vscode.Position(i - 1,
-                m.indices ? m.indices[1][1] : doc.lineAt(i - 1).text.length);
+                (m.indices && m.indices[1]) ? m.indices[1][1] : doc.lineAt(i - 1).text.length);
               return [[
                 vscode.Uri.file(error_file),
                 new vscode.Range(strat, end),

@@ -62,4 +62,7 @@ export default class Config {
     return Config.get<boolean>("environment.indentContent", true);
   }
 
+  public static maxLaTeXRuns(): number {
+    return Config.get<number>("compile.maxLaTeXRuns", 5);
+  }
 }
