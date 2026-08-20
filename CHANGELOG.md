@@ -8,6 +8,8 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - Added an allowlist for programs selected by `%#` build directives and reject disallowed programs before starting a build.
 - Parse `%#!` command lines internally and execute them with `shell: false`.
+- Disable manual, save-triggered, and programmatic LaTeX builds in untrusted workspaces.
+- Disable PDF previews, SyncTeX, SumatraPDF, and `kpsewhich` execution in untrusted workspaces.
 - Grouped all completion sources under `src/completion` and moved PDF preview sources under `src/compile/preview`.
 - Added author/title citation search through IntelliSense and the **Fortex: Insert Citation** Quick Pick command.
 - Added the `Ctrl+T [` keybinding for citation Quick Pick.

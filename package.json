@@ -13,6 +13,12 @@
     "type": "git",
     "url": "https://github.com/abenori/vscode-fortex.git"
   },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Editing and navigation remain available, but builds, PDF previews, SyncTeX, SumatraPDF, and kpsewhich execution are disabled until the workspace is trusted."
+    }
+  },
   "activationEvents": [
     "onLanguage:latex",
     "onCommand:vscode-fortex.viewPdf",
@@ -40,23 +46,28 @@
     "commands": [
       {
         "command": "vscode-fortex.build",
-        "title": "Build LaTeX Project"
+        "title": "Build LaTeX Project",
+        "enablement": "isWorkspaceTrusted"
       },
       {
         "command": "vscode-fortex.viewPdf",
-        "title": "View LaTeX PDF"
+        "title": "View LaTeX PDF",
+        "enablement": "isWorkspaceTrusted"
       },
       {
         "command": "vscode-fortex.viewPdfInVSCode",
-        "title": "View LaTeX PDF in VS Code"
+        "title": "View LaTeX PDF in VS Code",
+        "enablement": "isWorkspaceTrusted"
       },
       {
         "command": "vscode-fortex.viewPdfInSumatraPDF",
-        "title": "View LaTeX PDF in SumatraPDF"
+        "title": "View LaTeX PDF in SumatraPDF",
+        "enablement": "isWorkspaceTrusted"
       },
       {
         "command": "vscode-fortex.syncTeXFromCursor",
-        "title": "SyncTeX from Cursor"
+        "title": "SyncTeX from Cursor",
+        "enablement": "isWorkspaceTrusted"
       },
       {
         "command": "vscode-fortex.insertCitation",
@@ -83,17 +94,17 @@
       {
         "command": "vscode-fortex.build",
         "key": "ctrl+t t",
-        "when": "editorTextFocus && editorLangId == latex"
+        "when": "editorTextFocus && editorLangId == latex && isWorkspaceTrusted"
       },
       {
         "command": "vscode-fortex.viewPdf",
         "key": "ctrl+t p",
-        "when": "editorLangId == latex"
+        "when": "editorLangId == latex && isWorkspaceTrusted"
       },
       {
         "command": "vscode-fortex.syncTeXFromCursor",
         "key": "ctrl+t j",
-        "when": "editorTextFocus && editorLangId == latex"
+        "when": "editorTextFocus && editorLangId == latex && isWorkspaceTrusted"
       },
       {
         "command": "vscode-fortex.insertCitation",

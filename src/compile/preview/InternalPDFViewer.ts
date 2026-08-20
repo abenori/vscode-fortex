@@ -1,6 +1,7 @@
 import * as path from "path";
 import * as vscode from "vscode";
 import SyncTeX, { SyncTeXForwardResult } from "./SyncTeX";
+import { assertWorkspaceTrusted } from "../../WorkspaceTrust";
 
 type ViewerEntry = {
   panel: vscode.WebviewPanel;
@@ -16,6 +17,7 @@ export default class InternalPDFViewer implements vscode.Disposable {
   public constructor(private readonly context: vscode.ExtensionContext) {}
 
   public async open(pdf: vscode.Uri, preserveFocus = false): Promise<void> {
+    assertWorkspaceTrusted("Internal PDF preview");
     await vscode.workspace.fs.stat(pdf);
     const key = this.key(pdf);
     const existing = this.viewers.get(key);
@@ -58,6 +60,7 @@ export default class InternalPDFViewer implements vscode.Disposable {
   }
 
   public async forwardSearch(pdf: vscode.Uri, source: vscode.Uri, line: number, column: number): Promise<void> {
+    assertWorkspaceTrusted("Internal PDF preview");
     const entry = this.viewers.get(this.key(pdf));
     if (!entry) {
       throw new Error("Open the internal PDF viewer before running forward SyncTeX search.");
@@ -81,6 +84,7 @@ export default class InternalPDFViewer implements vscode.Disposable {
   }
 
   public async refresh(pdf: vscode.Uri): Promise<void> {
+    assertWorkspaceTrusted("Internal PDF preview");
     const entry = this.viewers.get(this.key(pdf));
     if (entry) {
       await this.reload(entry);

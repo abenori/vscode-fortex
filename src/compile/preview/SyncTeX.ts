@@ -1,6 +1,7 @@
 import * as path from "path";
 import * as spawn from "cross-spawn";
 import Config from "../../Config";
+import { assertWorkspaceTrusted } from "../../WorkspaceTrust";
 
 export type SyncTeXForwardResult = {
   page: number;
@@ -110,6 +111,7 @@ export default class SyncTeX {
   }
 
   private static execute(args: string[], cwd: string): Promise<string> {
+    assertWorkspaceTrusted("SyncTeX");
     // Avoid a shell so paths are passed without another quoting layer. stderr is
     // retained to produce a useful failure message.
     return new Promise<string>((resolve, reject) => {

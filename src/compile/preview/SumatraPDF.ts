@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as spawn from "cross-spawn";
 import Config from "../../Config";
+import { assertWorkspaceTrusted } from "../../WorkspaceTrust";
 
 /** Starts SumatraPDF with forward and inverse SyncTeX arguments on Windows. */
 export default class SumatraPDF {
@@ -37,6 +38,11 @@ export default class SumatraPDF {
   }
 
   public static open(pdfPath: string, sourcePath?: string, line?: number): Promise<void> {
+    try {
+      assertWorkspaceTrusted("SumatraPDF preview");
+    } catch (error) {
+      return Promise.reject(error);
+    }
     if (process.platform !== "win32") {
       return Promise.reject(new Error("SumatraPDF preview is available only on Windows."));
     }
@@ -71,7 +77,8 @@ export default class SumatraPDF {
       const child = spawn.spawn(executable, args, {
         detached: true,
         stdio: "ignore",
-        windowsHide: false
+        windowsHide: false,
+        shell: false
       });
       child.once("error", reject);
       child.once("spawn", () => {

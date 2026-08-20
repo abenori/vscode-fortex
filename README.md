@@ -6,6 +6,8 @@ Programs named by source-file build directives such as `%#!`, `%#bibtex`, `%#mak
 
 Fortex parses `%#!` command lines itself and starts the executable with `shell: false`. Quotes may be used for arguments containing spaces. Shell operators such as `|`, `&&`, `<`, and `>` are passed as ordinary arguments and are not interpreted. Semicolons outside quotes retain their existing meaning as separators between build actions. All programs named by `%#` directives are checked before the first build process starts. Programs selected without a `%#` directive are not restricted by this setting.
 
+LaTeX builds, PDF previews, SyncTeX, SumatraPDF, and `kpsewhich` execution run only when VS Code trusts the current workspace. In Restricted Mode, the corresponding commands and keybindings are disabled, and runtime checks also block programmatic calls. Citation completion can still read bibliography files resolved directly from the project, but does not start `kpsewhich`. Editing, navigation, and other completion features remain available.
+
 ## PDF preview
 
 Run **View LaTeX PDF** from the Command Palette or press `Ctrl+T P`. Select the default viewer with `vscode-fortex.pdfViewer`:

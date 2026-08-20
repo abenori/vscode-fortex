@@ -34,6 +34,16 @@ class BuildManeger{
     }
   }
   public async build(doc: vscode.TextDocument){
+    // Keep this runtime check at the shared build entry point. Command enablement
+    // improves the UI, but save-triggered builds and programmatic command calls
+    // must also be unable to start TeX in an untrusted workspace.
+    if (!vscode.workspace.isTrusted) {
+      vscode.window.setStatusBarMessage(
+        '$(shield) LaTeX build is disabled until this workspace is trusted.',
+        5000
+      );
+      return;
+    }
     let editor = vscode.window.activeTextEditor;
     if(!editor || editor.document !== doc){
       vscode.window.setStatusBarMessage("The document to compile is not the active editor.", 5000);

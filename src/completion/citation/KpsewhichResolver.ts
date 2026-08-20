@@ -12,7 +12,10 @@ export default class KpsewhichResolver implements vscode.Disposable {
   private readonly processes = new Set<ChildProcess.ChildProcess>();
 
   public resolve(texUri: vscode.Uri, references: readonly string[]): Promise<readonly (vscode.Uri | undefined)[]> {
-    if (texUri.scheme !== 'file' || references.length === 0) {
+    // Citation completion itself remains available in Restricted Mode, but it
+    // must not start kpsewhich automatically. The caller can still fall back to
+    // bibliography paths resolved directly from the project directory.
+    if (!vscode.workspace.isTrusted || texUri.scheme !== 'file' || references.length === 0) {
       return Promise.resolve(references.map(() => undefined));
     }
 

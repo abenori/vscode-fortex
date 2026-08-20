@@ -120,7 +120,7 @@ export default class TeXToPDF {
     this.read_status();
     let latex_cmd = this.make_latex_command();
     let output_pdf = false;
-    if (latex_cmd[0].indexOf("Lua") >= 0) {
+    if (latex_cmd[0].indexOf("lua") >= 0) {
       for (let i = 0; i < latex_cmd[1].length; ++i) {
         if (latex_cmd[1][i] === "-output-format=dvi") {
           output_pdf = false;

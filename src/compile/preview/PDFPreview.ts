@@ -4,6 +4,7 @@ import Config from "../../Config";
 import LaTeXProject from "../LaTeXProject";
 import SumatraPDF from "./SumatraPDF";
 import InternalPDFViewer from "./InternalPDFViewer";
+import { assertWorkspaceTrusted } from "../../WorkspaceTrust";
 
 export type PDFViewer = "internal" | "sumatra";
 
@@ -16,6 +17,7 @@ export default class PDFPreview implements vscode.Disposable {
   }
 
   public async viewCurrent(viewer: PDFViewer = Config.pdfViewer(), sync = false): Promise<void> {
+    assertWorkspaceTrusted(sync ? "SyncTeX preview" : "PDF preview");
     // Capture the source position before opening a viewer, which can change VS
     // Code's active editor or move operating-system focus.
     const editor = vscode.window.activeTextEditor;
@@ -38,6 +40,7 @@ export default class PDFPreview implements vscode.Disposable {
   }
 
   public async onBuildComplete(project: LaTeXProject): Promise<void> {
+    assertWorkspaceTrusted("PDF preview");
     // Refresh an existing internal panel even when automatic opening is disabled,
     // so an already visible preview never remains on an older build.
     if (Config.openPdfAfterBuild()) {
