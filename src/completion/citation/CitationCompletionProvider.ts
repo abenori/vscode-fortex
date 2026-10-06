@@ -1,19 +1,18 @@
 import * as vscode from 'vscode';
-import { findCitationContext } from './CitationSearch';
+import { CitationContext } from './Citation';
 import CitationService from './CitationService';
 
 /** Supplies BibTeX keys while the cursor is inside a cite-like command. */
-export default class CitationCompletionProvider implements vscode.CompletionItemProvider {
+export default class CitationCompletionProvider {
   public constructor(private readonly service: CitationService) {}
 
-  public async provideCompletionItems(
+  public async complete(
     document: vscode.TextDocument,
     position: vscode.Position,
+    context: CitationContext,
     token: vscode.CancellationToken
   ): Promise<vscode.CompletionList | undefined> {
-    const offset = document.offsetAt(position);
-    const context = findCitationContext(document.getText(), offset);
-    if (!context || token.isCancellationRequested) {
+    if (token.isCancellationRequested) {
       return undefined;
     }
 

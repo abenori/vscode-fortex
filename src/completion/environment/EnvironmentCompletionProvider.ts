@@ -3,16 +3,18 @@ import Config from '../../Config';
 import {
   collectEnvironmentNames,
   DISPLAY_MATH_ENVIRONMENT,
-  EnvironmentCompletionContext,
-  findEnvironmentCompletionContext
+  EnvironmentCompletionContext
 } from './EnvironmentParser';
 
 /** Inserts a complete environment pair from a `\begin{...}` or `\[` completion. */
-export default class EnvironmentCompletionProvider implements vscode.CompletionItemProvider {
-  public provideCompletionItems(document: vscode.TextDocument, position: vscode.Position): vscode.CompletionList | undefined {
-    const source = document.getText();
-    const context = findEnvironmentCompletionContext(source, document.offsetAt(position));
-    if (!context) {
+export default class EnvironmentCompletionProvider {
+  public complete(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    context: EnvironmentCompletionContext,
+    token: vscode.CancellationToken
+  ): vscode.CompletionList | undefined {
+    if (token.isCancellationRequested) {
       return undefined;
     }
 
@@ -20,7 +22,7 @@ export default class EnvironmentCompletionProvider implements vscode.CompletionI
       return new vscode.CompletionList([this.makeDisplayItem(document, position, context)], false);
     }
 
-    const items = collectEnvironmentNames(source).map((name) => this.makeNamedItem(document, position, context, name));
+    const items = collectEnvironmentNames(document.getText()).map((name) => this.makeNamedItem(document, position, context, name));
     return new vscode.CompletionList(items, false);
   }
 

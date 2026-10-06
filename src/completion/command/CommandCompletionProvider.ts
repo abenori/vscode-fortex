@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { COMMAND_CATALOG, CommandCatalogEntry } from './CommandCatalog';
-import { CustomCommandDefinition, findCommandContext, findCustomCommands } from './CommandParser';
+import { CommandContext, CustomCommandDefinition, findCustomCommands } from './CommandParser';
 
 interface CommandCacheEntry {
   source: string;
@@ -11,7 +11,7 @@ const reindexDelayMilliseconds = 300;
 const declarationPattern = /\\(?:newcommand|renewcommand|providecommand|DeclareRobustCommand|NewDocumentCommand|RenewDocumentCommand|ProvideDocumentCommand|DeclareDocumentCommand)\b/;
 
 /** Provides cached standard and document-local LaTeX command completions. */
-export default class CommandCompletionProvider implements vscode.CompletionItemProvider, vscode.Disposable {
+export default class CommandCompletionProvider implements vscode.Disposable {
   private readonly cache = new Map<string, CommandCacheEntry>();
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly disposables: vscode.Disposable[];
@@ -33,15 +33,13 @@ export default class CommandCompletionProvider implements vscode.CompletionItemP
     ];
   }
 
-  public provideCompletionItems(
+  public complete(
     document: vscode.TextDocument,
     position: vscode.Position,
+    context: CommandContext,
     token: vscode.CancellationToken
   ): vscode.CompletionList | undefined {
-    const line = document.lineAt(position.line);
-    const lineStart = document.offsetAt(line.range.start);
-    const context = findCommandContext(line.text.slice(0, position.character), lineStart);
-    if (!context || token.isCancellationRequested) {
+    if (token.isCancellationRequested) {
       return undefined;
     }
 

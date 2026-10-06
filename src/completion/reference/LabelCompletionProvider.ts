@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { findLabels, findReferenceContext, LabelEntry, ReferenceContext } from './LabelParser';
+import { findLabels, LabelEntry, ReferenceContext } from './LabelParser';
 
 interface LabelCacheEntry {
   source: string;
@@ -14,7 +14,7 @@ const reindexDelayMilliseconds = 300;
  * Indexing is moved away from the completion request so large documents can show
  * their first suggestions without rescanning every label on each keystroke.
  */
-export default class LabelCompletionProvider implements vscode.CompletionItemProvider, vscode.Disposable {
+export default class LabelCompletionProvider implements vscode.Disposable {
   private readonly cache = new Map<string, LabelCacheEntry>();
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly disposables: vscode.Disposable[];
@@ -39,13 +39,13 @@ export default class LabelCompletionProvider implements vscode.CompletionItemPro
     ];
   }
 
-  public provideCompletionItems(
+  public complete(
     document: vscode.TextDocument,
     position: vscode.Position,
+    context: ReferenceContext,
     token: vscode.CancellationToken
   ): vscode.CompletionList | undefined {
-    const context = referenceContextAt(document, position);
-    if (!context || token.isCancellationRequested) {
+    if (token.isCancellationRequested) {
       return undefined;
     }
 
@@ -163,17 +163,6 @@ export default class LabelCompletionProvider implements vscode.CompletionItemPro
     item.documentation = documentation;
     return item;
   }
-}
-
-/** Reads only the bounded prefix needed by the reference-context parser. */
-function referenceContextAt(document: vscode.TextDocument, position: vscode.Position): ReferenceContext | undefined {
-  const offset = document.offsetAt(position);
-  const requestedStart = Math.max(0, offset - 20000);
-  const startPosition = document.positionAt(requestedStart);
-  const startOffset = document.offsetAt(startPosition);
-  const prefix = document.getText(new vscode.Range(startPosition, position));
-  const context = findReferenceContext(prefix, prefix.length);
-  return context ? { query: context.query, queryStart: startOffset + context.queryStart } : undefined;
 }
 
 /** VS Code-like subsequence matching without constructing every CompletionItem. */
