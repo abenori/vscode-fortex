@@ -129,7 +129,7 @@
     ],
     "configuration": {
       "type": "object",
-      "title": "Fortex",
+      "title": "fortex",
       "properties": {
         "vscode-fortex.mainFileOrder": {
           "type": "array",
@@ -185,6 +185,14 @@
           "scope": "machine",
           "order": 10,
           "markdownDescription": "Programs that source-file `%#` directives may execute. Program names are matched exactly. Add `*` as an array item to permit any program. This restriction does not apply to programs selected without a `%#` directive."
+        },
+        "vscode-fortex.compile.maxLaTeXRuns": {
+          "type": "number",
+          "default": 7,
+          "minimum": 1,
+          "scope": "machine",
+          "order": 11,
+          "markdownDescription": "Maximum number of LaTeX runs allowed for a single build. Set to `0` to allow unlimited runs. This limit is applied to the number of LaTeX runs, not the total number of compilation runs, which may include BibTeX or Biber runs."
         },
         "vscode-fortex.pdfViewer": {
           "type": "string",

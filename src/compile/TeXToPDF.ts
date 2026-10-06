@@ -117,6 +117,7 @@ export default class TeXToPDF {
     // by changes in those files, with a finite loop inside this method preventing
     // permanently unstable documents from compiling forever.
     let runCount = 1;
+    let LaTeXrunCount = 1;
     this.read_status();
     let latex_cmd = this.make_latex_command();
     let output_pdf = false;
@@ -146,7 +147,7 @@ export default class TeXToPDF {
     }
     while (true) {
       runCount++;
-      if(Config.maxLaTeXRuns() > 0 && runCount > Config.maxLaTeXRuns()){
+      if(Config.maxLaTeXRuns() > 0 && LaTeXrunCount > Config.maxLaTeXRuns()){
         Log.error(`Maximum number of LaTeX runs (${Config.maxLaTeXRuns()}) exceeded. Stopping compilation.`);
         return false;
       }
@@ -158,6 +159,7 @@ export default class TeXToPDF {
       if (this.latex_check()) {
         cmd = this.make_latex_command();
         target = TeXToPDF.change_extension(base, ".tex");
+        LaTeXrunCount++;
       } else if (!this.bibtex && this.bibtex_check()) {
         cmd = this.make_bibtex_command();
         target = TeXToPDF.remove_extension(base);

@@ -15,6 +15,7 @@ import EnvironmentRenameProvider from './completion/environment/EnvironmentRenam
 import { insertOrRenameEnvironment } from './completion/environment/EnvironmentCommand';
 import { closeEnvironment } from './completion/environment/EnvironmentCloseCommand';
 import CommandCompletionProvider from './completion/command/CommandCompletionProvider';
+import LaTeXCompletionProvider from './completion/LaTeXCompletionProvider';
 import { goToCorresponding } from './navigation/CorrespondingCommand';
 
 const taskType = "fortex";
@@ -141,30 +142,20 @@ export function activate(context: vscode.ExtensionContext) {
     commands,
     vscode.languages.registerCompletionItemProvider(
       { language: 'latex' },
-      new CitationCompletionProvider(citations),
+      new LaTeXCompletionProvider({
+        reference: labels,
+        citation: new CitationCompletionProvider(citations),
+        environment: new EnvironmentCompletionProvider(),
+        command: commands
+      }),
       '{',
-      ','
-    ),
-    vscode.languages.registerCompletionItemProvider(
-      { language: 'latex' },
-      labels,
-      '{',
-      ','
-    ),
-    vscode.languages.registerCompletionItemProvider(
-      { language: 'latex' },
-      new EnvironmentCompletionProvider(),
-      '{',
-      '['
+      ',',
+      '[',
+      '\\'
     ),
     vscode.languages.registerRenameProvider(
       { language: 'latex' },
       new EnvironmentRenameProvider()
-    ),
-    vscode.languages.registerCompletionItemProvider(
-      { language: 'latex' },
-      commands,
-      '\\'
     ),
     vscode.commands.registerCommand('vscode-fortex.insertCitation', async () => {
       await showCitationQuickPick(citations);

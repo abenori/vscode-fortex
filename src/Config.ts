@@ -63,6 +63,6 @@ export default class Config {
   }
 
   public static maxLaTeXRuns(): number {
-    return Config.get<number>("compile.maxLaTeXRuns", 5);
+    return Config.get<number>("compile.maxLaTeXRuns", 7);
   }
 }
