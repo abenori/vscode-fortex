@@ -2,6 +2,7 @@ import * as path from "path";
 import * as vscode from "vscode";
 import SyncTeX, { SyncTeXForwardResult } from "./SyncTeX";
 import { assertWorkspaceTrusted } from "../../WorkspaceTrust";
+import PDFWorkerSource from "./PDFWorkerSource";
 
 type ViewerEntry = {
   panel: vscode.WebviewPanel;
@@ -13,8 +14,11 @@ type ViewerEntry = {
 /** Hosts PDF.js in one reusable webview per PDF and bridges SyncTeX messages. */
 export default class InternalPDFViewer implements vscode.Disposable {
   private readonly viewers = new Map<string, ViewerEntry>();
+  private readonly workerSource: PDFWorkerSource;
 
-  public constructor(private readonly context: vscode.ExtensionContext) {}
+  public constructor(private readonly context: vscode.ExtensionContext) {
+    this.workerSource = new PDFWorkerSource(context.extensionUri);
+  }
 
   public async open(pdf: vscode.Uri, preserveFocus = false): Promise<void> {
     assertWorkspaceTrusted("Internal PDF preview");
@@ -23,7 +27,9 @@ export default class InternalPDFViewer implements vscode.Disposable {
     const existing = this.viewers.get(key);
     if (existing) {
       existing.panel.reveal(vscode.ViewColumn.Beside, preserveFocus);
-      await this.reload(existing);
+      if (existing.ready) {
+        await this.reload(existing);
+      }
       return;
     }
 
@@ -45,10 +51,21 @@ export default class InternalPDFViewer implements vscode.Disposable {
     panel.onDidDispose(() => this.viewers.delete(key), undefined, this.context.subscriptions);
     panel.webview.onDidReceiveMessage(async message => {
       if (message?.type === "ready") {
-        entry.ready = true;
-        await this.reload(entry);
-        if (entry.pendingForward) {
-          await entry.panel.webview.postMessage({ type: "forwardSearch", result: entry.pendingForward });
+        try {
+          // A module worker fetching a webview resource can stall for seconds
+          // before starting. Deliver our packaged code over IPC and start it
+          // from a local Blob URL instead.
+          const data = await this.workerSource.read();
+          if (!await panel.webview.postMessage({ type: "initializeWorker", data })) {
+            return;
+          }
+          entry.ready = true;
+          await this.reload(entry);
+          if (entry.pendingForward) {
+            await entry.panel.webview.postMessage({ type: "forwardSearch", result: entry.pendingForward });
+          }
+        } catch (error) {
+          void vscode.window.showErrorMessage(`PDF preview: ${String(error)}`);
         }
       } else if (message?.type === "inverseSearch") {
         await this.inverseSearch(entry, Number(message.page), Number(message.x), Number(message.y));
@@ -86,7 +103,7 @@ export default class InternalPDFViewer implements vscode.Disposable {
   public async refresh(pdf: vscode.Uri): Promise<void> {
     assertWorkspaceTrusted("Internal PDF preview");
     const entry = this.viewers.get(this.key(pdf));
-    if (entry) {
+    if (entry?.ready) {
       await this.reload(entry);
     }
   }
@@ -145,7 +162,6 @@ export default class InternalPDFViewer implements vscode.Disposable {
     // the packaged PDF.js resources.
     const nonce = this.nonce();
     const pdfjs = webview.asWebviewUri(vscode.Uri.joinPath(pdfjsRoot, "pdf.min.mjs"));
-    const worker = webview.asWebviewUri(vscode.Uri.joinPath(pdfjsRoot, "pdf.worker.min.mjs"));
     const cMapUrl = webview.asWebviewUri(vscode.Uri.joinPath(pdfjsRoot, "cmaps")).toString() + "/";
     const standardFontDataUrl = webview.asWebviewUri(vscode.Uri.joinPath(pdfjsRoot, "standard_fonts")).toString() + "/";
     const wasmUrl = webview.asWebviewUri(vscode.Uri.joinPath(pdfjsRoot, "wasm")).toString() + "/";
@@ -155,7 +171,7 @@ export default class InternalPDFViewer implements vscode.Disposable {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data: blob:; font-src ${webview.cspSource} data: blob:; connect-src ${webview.cspSource} data: blob:; script-src 'nonce-${nonce}' ${webview.cspSource}; style-src 'nonce-${nonce}'; worker-src ${webview.cspSource} blob:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data: blob:; font-src ${webview.cspSource} data: blob:; connect-src ${webview.cspSource} data: blob:; script-src 'nonce-${nonce}' ${webview.cspSource} blob:; style-src 'nonce-${nonce}'; worker-src blob:;">
   <style nonce="${nonce}">
     :root { color-scheme: light dark; }
     body { margin: 0; color: var(--vscode-foreground); background: var(--vscode-editor-background); font-family: var(--vscode-font-family); }
@@ -182,12 +198,17 @@ export default class InternalPDFViewer implements vscode.Disposable {
   <main id="pages"></main>
   <script type="module" nonce="${nonce}">
     import * as pdfjsLib from "${pdfjs}";
-    pdfjsLib.GlobalWorkerOptions.workerSrc = "${worker}";
     const vscode = acquireVsCodeApi();
     const pages = document.getElementById("pages");
     const status = document.getElementById("status");
     const errorBox = document.getElementById("error");
     let documentTask;
+    let pdfWorker;
+    let workerUrl;
+    const workerReady = Promise.withResolvers();
+    // load() reports initialization errors. Attach a handler immediately in case
+    // worker initialization fails before the first load message arrives.
+    void workerReady.promise.catch(() => {});
     let pdf;
     let scale = 1.25;
     let generation = 0;
@@ -348,8 +369,11 @@ export default class InternalPDFViewer implements vscode.Disposable {
         generation++;
         status.textContent = "Loading…";
         errorBox.style.display = "none";
+        const worker = await workerReady.promise;
         if (documentTask) await documentTask.destroy();
         documentTask = pdfjsLib.getDocument({
+          // Explicit ownership preserves the worker across document reloads.
+          worker,
           ...(source.data ? { data: decodeBase64(source.data) } : { url: source.url }),
           cMapUrl: "${cMapUrl}",
           cMapPacked: true,
@@ -377,7 +401,17 @@ export default class InternalPDFViewer implements vscode.Disposable {
       void render();
     });
     addEventListener("message", event => {
-      if (event.data?.type === "load") {
+      if (event.data?.type === "initializeWorker") {
+        if (pdfWorker) return;
+        try {
+          workerUrl = URL.createObjectURL(new Blob([event.data.data], { type: "text/javascript" }));
+          pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
+          pdfWorker = new pdfjsLib.PDFWorker();
+          workerReady.resolve(pdfWorker.promise.then(() => pdfWorker));
+        } catch (error) {
+          workerReady.reject(error);
+        }
+      } else if (event.data?.type === "load") {
         void load(event.data);
       } else if (event.data?.type === "forwardSearch") {
         clearTimeout(highlightTimer);
@@ -387,6 +421,10 @@ export default class InternalPDFViewer implements vscode.Disposable {
         void renderPage(pendingHighlight.page, generation);
         highlightTimer = setTimeout(clearHighlight, 5000);
       }
+    });
+    addEventListener("pagehide", () => {
+      pdfWorker?.destroy();
+      if (workerUrl) URL.revokeObjectURL(workerUrl);
     });
     vscode.postMessage({ type: "ready" });
   </script>
