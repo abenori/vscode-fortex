@@ -75,6 +75,8 @@ export default class SumatraPDF {
 
     return new Promise<void>((resolve, reject) => {
       const child = spawn.spawn(executable, args, {
+        // Let inverse search launch VS Code as an editor, not as a Node.js process.
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: undefined },
         detached: true,
         stdio: "ignore",
         windowsHide: false,
