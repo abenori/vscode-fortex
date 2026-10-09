@@ -24,7 +24,7 @@ export default class EnvironmentRenameProvider implements vscode.RenameProvider 
     }
     return {
       range: tokenRange(document, token, token.style === 'display'),
-      placeholder: token.style === 'display' ? DISPLAY_MATH_ENVIRONMENT : token.name
+      placeholder: token.style === 'display' ? '[' : token.name
     };
   }
 
@@ -47,14 +47,14 @@ export default class EnvironmentRenameProvider implements vscode.RenameProvider 
   }
 }
 
-function normalizeNewName(value: string): string {
-  // Either display delimiter is treated as a request to convert to `\[...\]`.
+export function normalizeNewName(value: string): string {
+  // A bare opening bracket or either display delimiter converts to `\[...\]`.
   const name = value.trim();
-  if (name === '\\[' || name === '\\]') {
+  if (name === '[' || name === '\\[' || name === '\\]') {
     return DISPLAY_MATH_ENVIRONMENT;
   }
   if (!name || /[\s{}\\]/.test(name)) {
-    throw new Error('Enter an environment name without whitespace, braces, or backslashes. Use \\[ for display math.');
+    throw new Error('Enter an environment name without whitespace, braces, or backslashes. Use [ for display math.');
   }
   return name;
 }
