@@ -380,6 +380,11 @@ export default class InternalPDFViewer implements vscode.Disposable {
           standardFontDataUrl: "${standardFontDataUrl}",
           wasmUrl: "${wasmUrl}",
           iccUrl: "${iccUrl}",
+          // Blob workers cannot reliably fetch VS Code webview resources. Let
+          // PDF.js request CMaps and font data through its main-thread factories;
+          // failed CMap fetches otherwise silently turn Japanese into ErrorFont.
+          // PDF.js also falls back to non-ICC color conversion in this mode.
+          useWorkerFetch: false,
           useSystemFonts: true
         });
         pdf = await documentTask.promise;
