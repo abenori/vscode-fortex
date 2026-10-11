@@ -46,6 +46,8 @@ When completion is requested from a subfile, Fortex first determines the main fi
 
 Run **Fortex: Insert Citation** from the Command Palette, or press `Ctrl+T [`, for a larger Quick Pick search. Search terms may match either authors or titles without selecting a field. Select one or more entries; Fortex replaces the current citation fragment when the cursor is already inside a cite command, or inserts a complete `\cite{...}` command otherwise.
 
+Resolved bibliography files are cached and watched through VS Code, including files outside the workspace that are not open in an editor. Changes, deletion, and recreation invalidate the cached entries; the next citation request reads the current contents. Open bibliography documents use their unsaved contents. Watches are shared between documents and released when their last referencing document closes or a later citation request no longer uses that bibliography.
+
 ## Label reference completion
 
 Inside `\ref{...}`, IntelliSense lists `\label{...}` targets from the current LaTeX file. Selecting a suggestion shows the target line and its nearby LaTeX source in the suggestion details popup. The same completion is available for common variants including `\pageref`, `\eqref`, `\autoref`, `\nameref`, `\cref`, and `\Cref`.

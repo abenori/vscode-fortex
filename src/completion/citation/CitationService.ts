@@ -1,15 +1,10 @@
 import * as vscode from 'vscode';
-import { parseBibTeX } from './BibTeXParser';
 import { discoverBibReferences, resolveBibUri } from './BibFileDiscovery';
 import { CitationEntry } from './Citation';
-import { latexToPlainText, searchCitations } from './CitationSearch';
+import { searchCitations } from './CitationSearch';
+import BibFileCache, { citationUriKey } from './BibFileCache';
 import KpsewhichResolver from './KpsewhichResolver';
 import LaTeXProject from '../../compile/LaTeXProject';
-
-interface CacheEntry {
-  documentVersion?: number;
-  entries: CitationEntry[];
-}
 
 interface ProjectScope {
   main: vscode.Uri;
@@ -27,32 +22,28 @@ interface ProjectScopeCacheEntry {
  * caches when either bibliography contents or LaTeX project structure changes.
  */
 export default class CitationService implements vscode.Disposable {
-  private readonly cache = new Map<string, CacheEntry>();
   private readonly disposables: vscode.Disposable[] = [];
   private readonly kpsewhich = new KpsewhichResolver();
+  private readonly bibliography = new BibFileCache(() => this.kpsewhich.clear());
   private readonly projectScopes = new Map<string, ProjectScopeCacheEntry>();
   private readonly structuralSignatures = new Map<string, string>();
+  private disposed = false;
 
   public constructor() {
-    // .bib changes invalidate only that file's parsed entries. Structural .tex
+    // Bibliographies are watched individually when resolved. Structural .tex
     // changes can alter the main file, include graph, or bibliography list.
-    const watcher = vscode.workspace.createFileSystemWatcher('**/*.bib');
     const texWatcher = vscode.workspace.createFileSystemWatcher('**/*.tex');
     const invalidateProjects = () => this.projectScopes.clear();
     this.disposables.push(
-      watcher,
       texWatcher,
-      watcher.onDidChange((uri) => this.invalidate(uri)),
-      watcher.onDidCreate((uri) => this.invalidate(uri)),
-      watcher.onDidDelete((uri) => this.invalidate(uri)),
       texWatcher.onDidChange(invalidateProjects),
       texWatcher.onDidCreate(invalidateProjects),
       texWatcher.onDidDelete(invalidateProjects),
       vscode.workspace.onDidChangeTextDocument((event) => {
         if (isBibDocument(event.document)) {
-          this.invalidate(event.document.uri);
+          this.bibliography.invalidate(event.document.uri);
         } else if (event.document.languageId === 'latex') {
-          const key = event.document.uri.toString();
+          const key = citationUriKey(event.document.uri);
           const signature = projectStructureSignature(event.document.getText());
           const previous = this.structuralSignatures.get(key);
           if (previous !== undefined && previous !== signature) {
@@ -63,9 +54,11 @@ export default class CitationService implements vscode.Disposable {
       }),
       vscode.workspace.onDidCloseTextDocument((document) => {
         if (isBibDocument(document)) {
-          this.invalidate(document.uri);
+          this.bibliography.invalidate(document.uri);
         } else if (document.languageId === 'latex') {
-          this.structuralSignatures.delete(document.uri.toString());
+          const key = citationUriKey(document.uri);
+          this.structuralSignatures.delete(key);
+          this.bibliography.release(key);
           this.projectScopes.clear();
         }
       }),
@@ -81,10 +74,27 @@ export default class CitationService implements vscode.Disposable {
   }
 
   public async entriesFor(document: vscode.TextDocument): Promise<CitationEntry[]> {
-    const scope = await this.projectScope(document);
+    if (this.disposed || document.isClosed) {
+      return [];
+    }
+    const key = citationUriKey(document.uri);
+    const scopePromise = this.projectScope(document);
+    const scope = await scopePromise;
+    if (this.disposed || document.isClosed || this.projectScopes.get(key)?.scope !== scopePromise) {
+      return [];
+    }
     const kpsewhichResults = await this.kpsewhich.resolve(scope.main, scope.references);
+    // A closed document or a newer project structure must not register stale
+    // watches after asynchronous project/path discovery finishes.
+    if (this.disposed || document.isClosed || this.projectScopes.get(key)?.scope !== scopePromise) {
+      return [];
+    }
     const uris = scope.references.map((reference, index) => kpsewhichResults[index] ?? resolveBibUri(scope.main, reference));
-    const groups = await Promise.all(uris.map((uri) => this.readEntries(uri)));
+    this.bibliography.setReferences(key, uris);
+    const groups = await Promise.all(uris.map((uri) => this.bibliography.read(uri)));
+    if (this.disposed || document.isClosed || this.projectScopes.get(key)?.scope !== scopePromise) {
+      return [];
+    }
     // Keep the first occurrence of a duplicate key, matching bibliography order.
     const unique = new Map<string, CitationEntry>();
     for (const entry of groups.flat()) {
@@ -100,17 +110,18 @@ export default class CitationService implements vscode.Disposable {
   }
 
   public dispose(): void {
+    this.disposed = true;
     for (const disposable of this.disposables) {
       disposable.dispose();
     }
-    this.cache.clear();
+    this.bibliography.dispose();
     this.projectScopes.clear();
     this.structuralSignatures.clear();
     this.kpsewhich.dispose();
   }
 
   private projectScope(document: vscode.TextDocument): Promise<ProjectScope> {
-    const key = document.uri.toString();
+    const key = citationUriKey(document.uri);
     const signature = projectStructureSignature(document.getText());
     this.structuralSignatures.set(key, signature);
     const cached = this.projectScopes.get(key);
@@ -134,7 +145,7 @@ export default class CitationService implements vscode.Disposable {
       const references: string[] = [];
       const seen = new Set<string>();
       for (const { uri, source } of sources) {
-        this.structuralSignatures.set(uri.toString(), projectStructureSignature(source));
+        this.structuralSignatures.set(citationUriKey(uri), projectStructureSignature(source));
         for (const reference of discoverBibReferences(source)) {
           const referenceKey = reference.toLocaleLowerCase();
           if (!seen.has(referenceKey)) {
@@ -148,43 +159,6 @@ export default class CitationService implements vscode.Disposable {
     this.projectScopes.set(key, { signature, scope });
     return scope;
   }
-
-  private invalidate(uri: vscode.Uri): void {
-    this.cache.delete(uri.toString());
-  }
-
-  private async readEntries(uri: vscode.Uri): Promise<CitationEntry[]> {
-    // Open documents are keyed by VS Code's version; saved files use an undefined
-    // version and are invalidated by the filesystem watcher.
-    const openDocument = vscode.workspace.textDocuments.find((document) => document.uri.toString() === uri.toString());
-    const cacheKey = uri.toString();
-    const cached = this.cache.get(cacheKey);
-    if (openDocument && cached?.documentVersion === openDocument.version) {
-      return cached.entries;
-    }
-    if (!openDocument && cached && cached.documentVersion === undefined) {
-      return cached.entries;
-    }
-
-    try {
-      const source = openDocument ? openDocument.getText() : Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8');
-      const entries = parseBibTeX(source).map((parsed): CitationEntry => ({
-        key: parsed.key,
-        type: parsed.type,
-        author: latexToPlainText(parsed.fields.author ?? ''),
-        title: latexToPlainText(parsed.fields.title ?? ''),
-        year: parsed.fields.year ? latexToPlainText(parsed.fields.year) : undefined,
-        sourceUri: uri
-      }));
-      this.cache.set(cacheKey, {
-        documentVersion: openDocument?.version,
-        entries
-      });
-      return entries;
-    } catch {
-      return [];
-    }
-  }
 }
 
 function isBibDocument(document: vscode.TextDocument): boolean {
@@ -192,7 +166,7 @@ function isBibDocument(document: vscode.TextDocument): boolean {
 }
 
 async function readTexSource(uri: vscode.Uri): Promise<string> {
-  const openDocument = vscode.workspace.textDocuments.find((document) => document.uri.toString() === uri.toString());
+  const openDocument = vscode.workspace.textDocuments.find((document) => citationUriKey(document.uri) === citationUriKey(uri));
   try {
     return openDocument?.getText() ?? Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8');
   } catch {
