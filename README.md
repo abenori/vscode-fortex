@@ -2,6 +2,8 @@
 
 ## Build security
 
+Run **Build LaTeX Project** from the Command Palette or press `Ctrl+T T T`. For this shortcut and the PDF shortcuts below, press `Ctrl+T`, release Ctrl, then press the remaining keys without Shift.
+
 Programs named by source-file build directives such as `%#!`, `%#bibtex`, `%#makeindex`, and `%#dvipdf` must be listed in `vscode-fortex.compile.allowedPrograms`. The default list contains common TeX engines and helper programs. Matching is exact; add another program explicitly when a document needs it. An empty list rejects every `%#`-selected program, while adding `*` permits any program. The setting is machine-scoped so an opened workspace cannot silently widen its own permissions.
 
 Fortex parses `%#!` command lines itself and starts the executable with `shell: false`. Quotes may be used for arguments containing spaces. Shell operators such as `|`, `&&`, `<`, and `>` are passed as ordinary arguments and are not interpreted. Semicolons outside quotes retain their existing meaning as separators between build actions. All programs named by `%#` directives are checked before the first build process starts. Programs selected without a `%#` directive are not restricted by this setting.
@@ -10,7 +12,7 @@ LaTeX builds, PDF previews, SyncTeX, SumatraPDF, and `kpsewhich` execution run o
 
 ## PDF preview
 
-Run **View LaTeX PDF** from the Command Palette or press `Ctrl+T P`. Select the default viewer with `vscode-fortex.pdfViewer`:
+Run **View LaTeX PDF** from the Command Palette or press `Ctrl+T T P`. Select the default viewer with `vscode-fortex.pdfViewer`:
 
 - `internal` renders the PDF in a VS Code tab and refreshes it after successful builds.
 - `sumatra` opens SumatraPDF and performs forward search to the current source line.
@@ -28,9 +30,9 @@ To use SumatraPDF by default, configure:
 
 The path may be left empty when SumatraPDF is installed in its standard per-user or Program Files location.
 
-SumatraPDF inverse search is enabled by default. When opening SumatraPDF normally, Fortex passes `-inverse-search` with `"<VS Code path>" -r -g "%f:%l"`, so invoking inverse search in SumatraPDF opens the corresponding source line in VS Code. `Ctrl+T J` only sends `-forward-search` and does not repeat the inverse-search setting. The running VS Code executable is detected automatically. To override it, set `vscode-fortex.sumatraPDF.inverseSearch.vscodePath`; inverse search can be disabled with `vscode-fortex.sumatraPDF.inverseSearch.enabled`.
+SumatraPDF inverse search is enabled by default. When opening SumatraPDF normally, Fortex passes `-inverse-search` with `"<VS Code path>" -r -g "%f:%l"`, so invoking inverse search in SumatraPDF opens the corresponding source line in VS Code. `Ctrl+T T J` only sends `-forward-search` and does not repeat the inverse-search setting. The running VS Code executable is detected automatically. To override it, set `vscode-fortex.sumatraPDF.inverseSearch.vscodePath`; inverse search can be disabled with `vscode-fortex.sumatraPDF.inverseSearch.enabled`.
 
-SyncTeX from the editor uses the viewer selected by `vscode-fortex.pdfViewer`. Running **SyncTeX from Cursor**, or pressing `Ctrl+T J`, jumps to the PDF output for the current source position in either the internal viewer or SumatraPDF. The internal viewer centers the SyncTeX marker in the visible area. Set `vscode-fortex.synctex.forwardSearch.focus` to `editor` to keep focus in the source editor without changing its cursor or scroll position (the default), or `viewer` to move focus to the PDF viewer. In the internal viewer, double-click a position in the PDF to open the corresponding TeX file and line. Set `vscode-fortex.synctex.path` if the `synctex` command is not available on `PATH`.
+SyncTeX from the editor uses the viewer selected by `vscode-fortex.pdfViewer`. Running **SyncTeX from Cursor**, or pressing `Ctrl+T T J`, jumps to the PDF output for the current source position in either the internal viewer or SumatraPDF. The internal viewer centers the SyncTeX marker in the visible area. Set `vscode-fortex.synctex.forwardSearch.focus` to `editor` to keep focus in the source editor without changing its cursor or scroll position (the default), or `viewer` to move focus to the PDF viewer. In the internal viewer, double-click a position in the PDF to open the corresponding TeX file and line. Set `vscode-fortex.synctex.path` if the `synctex` command is not available on `PATH`.
 
 ## Citation completion
 

@@ -93,17 +93,17 @@
     "keybindings": [
       {
         "command": "vscode-fortex.build",
-        "key": "ctrl+t t",
+        "key": "ctrl+t t t",
         "when": "editorTextFocus && editorLangId == latex && isWorkspaceTrusted"
       },
       {
         "command": "vscode-fortex.viewPdf",
-        "key": "ctrl+t p",
+        "key": "ctrl+t t p",
         "when": "editorLangId == latex && isWorkspaceTrusted"
       },
       {
         "command": "vscode-fortex.syncTeXFromCursor",
-        "key": "ctrl+t j",
+        "key": "ctrl+t t j",
         "when": "editorTextFocus && editorLangId == latex && isWorkspaceTrusted"
       },
       {
@@ -1035,7 +1035,7 @@
           ],
           "default": "internal",
           "order": 20,
-          "markdownDescription": "PDF viewer used by **View LaTeX PDF** (`Ctrl+T P`). Select `internal` for the VS Code viewer or `sumatra` for SumatraPDF."
+          "markdownDescription": "PDF viewer used by **View LaTeX PDF** (`Ctrl+T T P`). Select `internal` for the VS Code viewer or `sumatra` for SumatraPDF."
         },
         "vscode-fortex.openPdfAfterBuild": {
           "type": "boolean",
@@ -1086,7 +1086,7 @@
           ],
           "default": "editor",
           "order": 40,
-          "markdownDescription": "Focus destination after **SyncTeX from Cursor** (`Ctrl+T J`). Applies to both the internal viewer and SumatraPDF."
+          "markdownDescription": "Focus destination after **SyncTeX from Cursor** (`Ctrl+T T J`). Applies to both the internal viewer and SumatraPDF."
         },
         "vscode-fortex.kpsewhich.path": {
           "type": "string",

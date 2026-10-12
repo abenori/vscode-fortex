@@ -6,6 +6,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+- Moved the build, PDF preview, and forward SyncTeX shortcuts from `Ctrl+T T`, `Ctrl+T P`, and `Ctrl+T J` to `Ctrl+T T T`, `Ctrl+T T P`, and `Ctrl+T T J`, respectively.
 - Added an allowlist for programs selected by `%#` build directives and reject disallowed programs before starting a build.
 - Parse `%#!` command lines internally and execute them with `shell: false`.
 - Disable manual, save-triggered, and programmatic LaTeX builds in untrusted workspaces.

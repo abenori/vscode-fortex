@@ -45,7 +45,7 @@ export default class InternalPDFViewer implements vscode.Disposable {
       }
     );
     // The script reports readiness asynchronously. Preserve a pending forward
-    // search so Ctrl+T J immediately after opening the panel is not lost.
+    // search so Ctrl+T T J immediately after opening the panel is not lost.
     const entry: ViewerEntry = { panel, pdf, ready: false };
     this.viewers.set(key, entry);
     panel.onDidDispose(() => this.viewers.delete(key), undefined, this.context.subscriptions);
