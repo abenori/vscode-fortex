@@ -88,6 +88,12 @@
         "command": "vscode-fortex.goToCorresponding",
         "title": "Go to Corresponding LaTeX Command",
         "category": "Fortex"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.start",
+        "title": "Insert Greek Letter",
+        "category": "Fortex",
+        "enablement": "editorLangId == latex && !editorReadonly"
       }
     ],
     "keybindings": [
@@ -125,6 +131,629 @@
         "command": "vscode-fortex.goToCorresponding",
         "key": "ctrl+t g",
         "when": "editorTextFocus && editorLangId == latex"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.start",
+        "key": "ctrl+t j",
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "a",
+        "args": {
+          "text": "a"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "shift+a",
+        "args": {
+          "text": "A"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "b",
+        "args": {
+          "text": "b"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "shift+b",
+        "args": {
+          "text": "B"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "c",
+        "args": {
+          "text": "c"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "shift+c",
+        "args": {
+          "text": "C"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "d",
+        "args": {
+          "text": "d"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "shift+d",
+        "args": {
+          "text": "D"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "e",
+        "args": {
+          "text": "e"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "shift+e",
+        "args": {
+          "text": "E"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "f",
+        "args": {
+          "text": "f"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "shift+f",
+        "args": {
+          "text": "F"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "g",
+        "args": {
+          "text": "g"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "shift+g",
+        "args": {
+          "text": "G"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "h",
+        "args": {
+          "text": "h"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "shift+h",
+        "args": {
+          "text": "H"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "i",
+        "args": {
+          "text": "i"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "shift+i",
+        "args": {
+          "text": "I"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "j",
+        "args": {
+          "text": "j"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "shift+j",
+        "args": {
+          "text": "J"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "k",
+        "args": {
+          "text": "k"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "shift+k",
+        "args": {
+          "text": "K"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "l",
+        "args": {
+          "text": "l"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "shift+l",
+        "args": {
+          "text": "L"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "m",
+        "args": {
+          "text": "m"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "shift+m",
+        "args": {
+          "text": "M"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "n",
+        "args": {
+          "text": "n"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "shift+n",
+        "args": {
+          "text": "N"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "o",
+        "args": {
+          "text": "o"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "shift+o",
+        "args": {
+          "text": "O"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "p",
+        "args": {
+          "text": "p"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "shift+p",
+        "args": {
+          "text": "P"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "q",
+        "args": {
+          "text": "q"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "shift+q",
+        "args": {
+          "text": "Q"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "r",
+        "args": {
+          "text": "r"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "shift+r",
+        "args": {
+          "text": "R"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "s",
+        "args": {
+          "text": "s"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "shift+s",
+        "args": {
+          "text": "S"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "t",
+        "args": {
+          "text": "t"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "shift+t",
+        "args": {
+          "text": "T"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "u",
+        "args": {
+          "text": "u"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "shift+u",
+        "args": {
+          "text": "U"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "v",
+        "args": {
+          "text": "v"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "shift+v",
+        "args": {
+          "text": "V"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "w",
+        "args": {
+          "text": "w"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "shift+w",
+        "args": {
+          "text": "W"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "x",
+        "args": {
+          "text": "x"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "shift+x",
+        "args": {
+          "text": "X"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "y",
+        "args": {
+          "text": "y"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "shift+y",
+        "args": {
+          "text": "Y"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "z",
+        "args": {
+          "text": "z"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "shift+z",
+        "args": {
+          "text": "Z"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "0",
+        "args": {
+          "text": "0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "1",
+        "args": {
+          "text": "1"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "2",
+        "args": {
+          "text": "2"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "3",
+        "args": {
+          "text": "3"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "4",
+        "args": {
+          "text": "4"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "5",
+        "args": {
+          "text": "5"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "6",
+        "args": {
+          "text": "6"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "7",
+        "args": {
+          "text": "7"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "8",
+        "args": {
+          "text": "8"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "9",
+        "args": {
+          "text": "9"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "-",
+        "args": {
+          "text": "-"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": ",",
+        "args": {
+          "text": ","
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": ".",
+        "args": {
+          "text": "."
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "/",
+        "args": {
+          "text": "/"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "shift+1",
+        "args": {
+          "text": "!"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "shift+3",
+        "args": {
+          "text": "#"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "shift+4",
+        "args": {
+          "text": "$"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "shift+5",
+        "args": {
+          "text": "%"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "shift+,",
+        "args": {
+          "text": "<"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "shift+.",
+        "args": {
+          "text": ">"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.input",
+        "key": "shift+/",
+        "args": {
+          "text": "?"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.commit",
+        "key": "enter",
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.commit",
+        "key": "space",
+        "args": {
+          "text": " "
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.cancel",
+        "key": "escape",
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.backspace",
+        "key": "backspace",
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.showCandidates",
+        "key": "tab",
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
+      },
+      {
+        "command": "vscode-fortex.greekCompletion.cancel",
+        "key": "ctrl+z",
+        "mac": "cmd+z",
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && fortex.greekCompletionActive && !isComposing"
       },
       {
         "command": "editor.action.insertSnippet",
@@ -1105,7 +1734,7 @@
           "default": false,
           "scope": "window",
           "order": 60,
-          "markdownDescription": "Enable both math font shortcut families in LaTeX editors: `Ctrl+T X` followed by a letter inserts `\\mathcal{...}`, and `Ctrl+T F` followed by a letter inserts `\\mathfrak{...}`. Letters `a` to `z` are supported; hold Shift for the final letter to insert uppercase."
+          "markdownDescription": "Enable math alphabet shortcuts in LaTeX editors: `Ctrl+T X` followed by a letter inserts `\\mathcal{...}`, and `Ctrl+T F` followed by a letter inserts `\\mathfrak{...}`. Use Shift to enter uppercase letters."
         }
       }
     }

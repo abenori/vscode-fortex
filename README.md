@@ -72,15 +72,21 @@ Press `Ctrl+T G` on `\begin{...}`, `\end{...}`, `\[`, or `\]` to move to its str
 
 After typing `\`, IntelliSense lists common LaTeX commands and commands declared in the current document with `\newcommand`, `\renewcommand`, `\providecommand`, `\DeclareRobustCommand`, or xparse document-command declarations. Common commands and classic `\newcommand` declarations insert argument placeholders as snippets. Completing `\ref`, `\cite`, or `\begin` immediately opens the corresponding label, citation, or environment completion.
 
-## Math alphabet shortcuts
+## Math input shortcuts
 
-Math alphabet shortcuts are disabled by default. Enable both `\mathcal` and `\mathfrak` shortcuts with one setting:
+These shortcuts work in editable LaTeX documents, including macro definitions outside a math environment.
+
+### Math alphabets
+
+The `\mathcal` and `\mathfrak` shortcuts are disabled by default. Enable both with one setting:
 
 ```json
 {
   "vscode-fortex.mathShortcuts.enabled": true
 }
 ```
+
+Set `vscode-fortex.mathShortcuts.enabled` to `false` to disable both math alphabet shortcuts.
 
 In an editable LaTeX document, press `Ctrl+T`, release Ctrl, then press `X` or `F` without Shift, followed by a letter. Hold Shift for the final letter to insert an uppercase letter; otherwise a lowercase letter is inserted.
 
@@ -91,7 +97,58 @@ In an editable LaTeX document, press `Ctrl+T`, release Ctrl, then press `X` or `
 | `Ctrl+T → F → a` | `\mathfrak{a}` |
 | `Ctrl+T → F → Shift+A` | `\mathfrak{A}` |
 
-All letters from `a` to `z` and `A` to `Z` are supported. The cursor moves after the closing brace. Set `vscode-fortex.mathShortcuts.enabled` to `false` to disable both shortcut families together.
+All letters from `a` to `z` and `A` to `Z` are supported. The cursor moves after the closing brace.
+
+### Greek letters
+
+Greek letter input is always available and does not require changing `vscode-fortex.mathShortcuts.enabled`.
+
+Press `Ctrl+T`, release Ctrl, then press `J` without Shift to start Greek letter input. **Fortex: Insert Greek Letter** in the Command Palette starts the same input mode. Type a YaTeX-style code to preview its LaTeX command at the cursor. The preview does not change the document: `p` previews `\pi`, adding `h` changes it to `\phi`, and adding `-` changes it to `\varphi`.
+
+| Key during Greek input | Action |
+| --- | --- |
+| `Enter` | Insert the previewed command without a newline |
+| `Space` | Insert the command and a space |
+| `Esc` | Cancel without changing the document |
+| `Backspace` | Remove the last code character; cancel when the code is empty |
+| `Tab` | Open a candidate picker for the current code |
+| `Ctrl+Z` (`Cmd+Z` on macOS) | Cancel the preview without undoing earlier document edits |
+
+An English letter, digit, or supported punctuation character that cannot continue the code commits the current candidate and inserts that character. For example, `a` followed by `2` inserts `\alpha2`, and `a` followed by `x` inserts `\alpha x`; the separating space prevents two command names from joining. Since `p-` means `\varpi`, use `p`, `Enter`, then `-` to insert `\pi-`.
+
+The punctuation supported during input is `-`, `,`, `.`, `/`, `!`, `#`, `$`, `%`, `<`, `>`, and `?`. For other symbols such as `+`, `=`, `_`, `^`, and parentheses, press `Enter` to commit first, then type the symbol normally. Punctuation bindings are limited to the keys shared by standard US and Japanese layouts; using a layout-dependent key without committing first cancels the preview and performs normal input.
+
+Codes are case-sensitive. Use Shift for uppercase letters; these keybindings do not interpret Caps Lock. The standard Greek commands and their variant forms use the following codes:
+
+| Lowercase code | Command | Uppercase code | Command |
+| --- | --- | --- | --- |
+| `a` | `\alpha` | — | — |
+| `b` | `\beta` | — | — |
+| `g` | `\gamma` | `G` | `\Gamma` |
+| `d` | `\delta` | `D` | `\Delta` |
+| `e`, `e-` | `\epsilon`, `\varepsilon` | — | — |
+| `z` | `\zeta` | — | — |
+| `et` | `\eta` | — | — |
+| `th`, `th-` | `\theta`, `\vartheta` | `Th` | `\Theta` |
+| `i` | `\iota` | — | — |
+| `k` | `\kappa` | — | — |
+| `l` | `\lambda` | `L` | `\Lambda` |
+| `m` | `\mu` | — | — |
+| `n` | `\nu` | — | — |
+| `x` | `\xi` | `X` | `\Xi` |
+| `p`, `p-` | `\pi`, `\varpi` | `P` | `\Pi` |
+| `r`, `r-` | `\rho`, `\varrho` | — | — |
+| `s`, `s-` | `\sigma`, `\varsigma` | `S` | `\Sigma` |
+| `t` | `\tau` | — | — |
+| `u`, `y` | `\upsilon` | `U`, `Y` | `\Upsilon` |
+| `ph`, `ph-` | `\phi`, `\varphi` | `Ph` | `\Phi` |
+| `c` | `\chi` | — | — |
+| `ps` | `\psi` | `Ps` | `\Psi` |
+| `o`, `w` | `\omega` | `O`, `W` | `\Omega` |
+
+Greek input currently requires a single cursor with no selection. Moving the cursor, switching editors, or editing the document through another command, paste, or IME cancels the preview. A committed completion is inserted as one edit and can be undone normally.
+
+The code mapping follows [YaTeX's Greek completion table](https://github.com/hiroseyuuji/yatex/blob/master/yatexmth.el). AMS-only uppercase variants and the non-Greek `foo` entry are not included.
 
 ## What is this?
 

@@ -17,6 +17,7 @@ import { closeEnvironment } from './completion/environment/EnvironmentCloseComma
 import CommandCompletionProvider from './completion/command/CommandCompletionProvider';
 import LaTeXCompletionProvider from './completion/LaTeXCompletionProvider';
 import { goToCorresponding } from './navigation/CorrespondingCommand';
+import GreekCompletionController from './completion/greek/GreekCompletionController';
 
 const taskType = "fortex";
 
@@ -136,10 +137,18 @@ export function activate(context: vscode.ExtensionContext) {
   const citations = new CitationService();
   const labels = new LabelCompletionProvider();
   const commands = new CommandCompletionProvider();
+  const greek = new GreekCompletionController();
   context.subscriptions.push(
     citations,
     labels,
     commands,
+    greek,
+    vscode.commands.registerCommand('vscode-fortex.greekCompletion.start', () => greek.start()),
+    vscode.commands.registerCommand('vscode-fortex.greekCompletion.input', (args) => greek.input(args)),
+    vscode.commands.registerCommand('vscode-fortex.greekCompletion.commit', (args) => greek.commit(args)),
+    vscode.commands.registerCommand('vscode-fortex.greekCompletion.cancel', () => greek.cancel()),
+    vscode.commands.registerCommand('vscode-fortex.greekCompletion.backspace', () => greek.backspace()),
+    vscode.commands.registerCommand('vscode-fortex.greekCompletion.showCandidates', () => greek.showCandidates()),
     vscode.languages.registerCompletionItemProvider(
       { language: 'latex' },
       new LaTeXCompletionProvider({
