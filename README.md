@@ -70,6 +70,27 @@ Press `Ctrl+T G` on `\begin{...}`, `\end{...}`, `\[`, or `\]` to move to its str
 
 After typing `\`, IntelliSense lists common LaTeX commands and commands declared in the current document with `\newcommand`, `\renewcommand`, `\providecommand`, `\DeclareRobustCommand`, or xparse document-command declarations. Common commands and classic `\newcommand` declarations insert argument placeholders as snippets. Completing `\ref`, `\cite`, or `\begin` immediately opens the corresponding label, citation, or environment completion.
 
+## Math alphabet shortcuts
+
+Math alphabet shortcuts are disabled by default. Enable both `\mathcal` and `\mathfrak` shortcuts with one setting:
+
+```json
+{
+  "vscode-fortex.mathShortcuts.enabled": true
+}
+```
+
+In an editable LaTeX document, press `Ctrl+T`, release Ctrl, then press `X` or `F` without Shift, followed by a letter. Hold Shift for the final letter to insert an uppercase letter; otherwise a lowercase letter is inserted.
+
+| Key sequence | Inserted text |
+| --- | --- |
+| `Ctrl+T → X → a` | `\mathcal{a}` |
+| `Ctrl+T → X → Shift+A` | `\mathcal{A}` |
+| `Ctrl+T → F → a` | `\mathfrak{a}` |
+| `Ctrl+T → F → Shift+A` | `\mathfrak{A}` |
+
+All letters from `a` to `z` and `A` to `Z` are supported. The cursor moves after the closing brace. Set `vscode-fortex.mathShortcuts.enabled` to `false` to disable both shortcut families together.
+
 ## What is this?
 
 This is a Visual Studio Code version of "祝鳥" which is the macro package of Hidemaru for supporting LaTeX editing.

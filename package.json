@@ -125,6 +125,838 @@
         "command": "vscode-fortex.goToCorresponding",
         "key": "ctrl+t g",
         "when": "editorTextFocus && editorLangId == latex"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x a",
+        "args": {
+          "snippet": "\\mathcal{a}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x shift+a",
+        "args": {
+          "snippet": "\\mathcal{A}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x b",
+        "args": {
+          "snippet": "\\mathcal{b}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x shift+b",
+        "args": {
+          "snippet": "\\mathcal{B}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x c",
+        "args": {
+          "snippet": "\\mathcal{c}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x shift+c",
+        "args": {
+          "snippet": "\\mathcal{C}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x d",
+        "args": {
+          "snippet": "\\mathcal{d}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x shift+d",
+        "args": {
+          "snippet": "\\mathcal{D}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x e",
+        "args": {
+          "snippet": "\\mathcal{e}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x shift+e",
+        "args": {
+          "snippet": "\\mathcal{E}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x f",
+        "args": {
+          "snippet": "\\mathcal{f}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x shift+f",
+        "args": {
+          "snippet": "\\mathcal{F}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x g",
+        "args": {
+          "snippet": "\\mathcal{g}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x shift+g",
+        "args": {
+          "snippet": "\\mathcal{G}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x h",
+        "args": {
+          "snippet": "\\mathcal{h}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x shift+h",
+        "args": {
+          "snippet": "\\mathcal{H}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x i",
+        "args": {
+          "snippet": "\\mathcal{i}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x shift+i",
+        "args": {
+          "snippet": "\\mathcal{I}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x j",
+        "args": {
+          "snippet": "\\mathcal{j}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x shift+j",
+        "args": {
+          "snippet": "\\mathcal{J}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x k",
+        "args": {
+          "snippet": "\\mathcal{k}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x shift+k",
+        "args": {
+          "snippet": "\\mathcal{K}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x l",
+        "args": {
+          "snippet": "\\mathcal{l}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x shift+l",
+        "args": {
+          "snippet": "\\mathcal{L}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x m",
+        "args": {
+          "snippet": "\\mathcal{m}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x shift+m",
+        "args": {
+          "snippet": "\\mathcal{M}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x n",
+        "args": {
+          "snippet": "\\mathcal{n}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x shift+n",
+        "args": {
+          "snippet": "\\mathcal{N}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x o",
+        "args": {
+          "snippet": "\\mathcal{o}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x shift+o",
+        "args": {
+          "snippet": "\\mathcal{O}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x p",
+        "args": {
+          "snippet": "\\mathcal{p}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x shift+p",
+        "args": {
+          "snippet": "\\mathcal{P}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x q",
+        "args": {
+          "snippet": "\\mathcal{q}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x shift+q",
+        "args": {
+          "snippet": "\\mathcal{Q}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x r",
+        "args": {
+          "snippet": "\\mathcal{r}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x shift+r",
+        "args": {
+          "snippet": "\\mathcal{R}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x s",
+        "args": {
+          "snippet": "\\mathcal{s}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x shift+s",
+        "args": {
+          "snippet": "\\mathcal{S}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x t",
+        "args": {
+          "snippet": "\\mathcal{t}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x shift+t",
+        "args": {
+          "snippet": "\\mathcal{T}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x u",
+        "args": {
+          "snippet": "\\mathcal{u}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x shift+u",
+        "args": {
+          "snippet": "\\mathcal{U}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x v",
+        "args": {
+          "snippet": "\\mathcal{v}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x shift+v",
+        "args": {
+          "snippet": "\\mathcal{V}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x w",
+        "args": {
+          "snippet": "\\mathcal{w}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x shift+w",
+        "args": {
+          "snippet": "\\mathcal{W}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x x",
+        "args": {
+          "snippet": "\\mathcal{x}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x shift+x",
+        "args": {
+          "snippet": "\\mathcal{X}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x y",
+        "args": {
+          "snippet": "\\mathcal{y}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x shift+y",
+        "args": {
+          "snippet": "\\mathcal{Y}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x z",
+        "args": {
+          "snippet": "\\mathcal{z}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t x shift+z",
+        "args": {
+          "snippet": "\\mathcal{Z}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f a",
+        "args": {
+          "snippet": "\\mathfrak{a}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f shift+a",
+        "args": {
+          "snippet": "\\mathfrak{A}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f b",
+        "args": {
+          "snippet": "\\mathfrak{b}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f shift+b",
+        "args": {
+          "snippet": "\\mathfrak{B}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f c",
+        "args": {
+          "snippet": "\\mathfrak{c}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f shift+c",
+        "args": {
+          "snippet": "\\mathfrak{C}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f d",
+        "args": {
+          "snippet": "\\mathfrak{d}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f shift+d",
+        "args": {
+          "snippet": "\\mathfrak{D}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f e",
+        "args": {
+          "snippet": "\\mathfrak{e}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f shift+e",
+        "args": {
+          "snippet": "\\mathfrak{E}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f f",
+        "args": {
+          "snippet": "\\mathfrak{f}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f shift+f",
+        "args": {
+          "snippet": "\\mathfrak{F}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f g",
+        "args": {
+          "snippet": "\\mathfrak{g}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f shift+g",
+        "args": {
+          "snippet": "\\mathfrak{G}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f h",
+        "args": {
+          "snippet": "\\mathfrak{h}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f shift+h",
+        "args": {
+          "snippet": "\\mathfrak{H}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f i",
+        "args": {
+          "snippet": "\\mathfrak{i}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f shift+i",
+        "args": {
+          "snippet": "\\mathfrak{I}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f j",
+        "args": {
+          "snippet": "\\mathfrak{j}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f shift+j",
+        "args": {
+          "snippet": "\\mathfrak{J}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f k",
+        "args": {
+          "snippet": "\\mathfrak{k}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f shift+k",
+        "args": {
+          "snippet": "\\mathfrak{K}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f l",
+        "args": {
+          "snippet": "\\mathfrak{l}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f shift+l",
+        "args": {
+          "snippet": "\\mathfrak{L}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f m",
+        "args": {
+          "snippet": "\\mathfrak{m}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f shift+m",
+        "args": {
+          "snippet": "\\mathfrak{M}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f n",
+        "args": {
+          "snippet": "\\mathfrak{n}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f shift+n",
+        "args": {
+          "snippet": "\\mathfrak{N}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f o",
+        "args": {
+          "snippet": "\\mathfrak{o}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f shift+o",
+        "args": {
+          "snippet": "\\mathfrak{O}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f p",
+        "args": {
+          "snippet": "\\mathfrak{p}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f shift+p",
+        "args": {
+          "snippet": "\\mathfrak{P}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f q",
+        "args": {
+          "snippet": "\\mathfrak{q}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f shift+q",
+        "args": {
+          "snippet": "\\mathfrak{Q}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f r",
+        "args": {
+          "snippet": "\\mathfrak{r}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f shift+r",
+        "args": {
+          "snippet": "\\mathfrak{R}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f s",
+        "args": {
+          "snippet": "\\mathfrak{s}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f shift+s",
+        "args": {
+          "snippet": "\\mathfrak{S}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f t",
+        "args": {
+          "snippet": "\\mathfrak{t}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f shift+t",
+        "args": {
+          "snippet": "\\mathfrak{T}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f u",
+        "args": {
+          "snippet": "\\mathfrak{u}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f shift+u",
+        "args": {
+          "snippet": "\\mathfrak{U}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f v",
+        "args": {
+          "snippet": "\\mathfrak{v}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f shift+v",
+        "args": {
+          "snippet": "\\mathfrak{V}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f w",
+        "args": {
+          "snippet": "\\mathfrak{w}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f shift+w",
+        "args": {
+          "snippet": "\\mathfrak{W}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f x",
+        "args": {
+          "snippet": "\\mathfrak{x}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f shift+x",
+        "args": {
+          "snippet": "\\mathfrak{X}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f y",
+        "args": {
+          "snippet": "\\mathfrak{y}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f shift+y",
+        "args": {
+          "snippet": "\\mathfrak{Y}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f z",
+        "args": {
+          "snippet": "\\mathfrak{z}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
+      },
+      {
+        "command": "editor.action.insertSnippet",
+        "key": "ctrl+t f shift+z",
+        "args": {
+          "snippet": "\\mathfrak{Z}$0"
+        },
+        "when": "editorTextFocus && editorLangId == latex && !editorReadonly && config.vscode-fortex.mathShortcuts.enabled"
       }
     ],
     "configuration": {
@@ -267,6 +1099,13 @@
           "default": true,
           "order": 50,
           "markdownDescription": "Indent content by one editor indentation level when Fortex inserts or wraps a LaTeX environment. The indentation width and tabs/spaces follow the standard `editor.tabSize` and `editor.insertSpaces` settings."
+        },
+        "vscode-fortex.mathShortcuts.enabled": {
+          "type": "boolean",
+          "default": false,
+          "scope": "window",
+          "order": 60,
+          "markdownDescription": "Enable both math font shortcut families in LaTeX editors: `Ctrl+T X` followed by a letter inserts `\\mathcal{...}`, and `Ctrl+T F` followed by a letter inserts `\\mathfrak{...}`. Letters `a` to `z` are supported; hold Shift for the final letter to insert uppercase."
         }
       }
     }
