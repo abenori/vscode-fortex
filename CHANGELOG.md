@@ -6,6 +6,8 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+- Unified braced and bare input argument reading and reused the shared document parser for project class and inclusion discovery.
+- Added a shared document declaration parser for classes, packages, included files, and bibliography resources, preserving raw arguments and incomplete declarations.
 - Added shared LaTeX source and argument scanners with UTF-16 source ranges, literal handling, and incomplete-argument recovery.
 - Extracted build coordination and progress notifications into `BuildManager`.
 - Moved shared LaTeX project discovery from `src/compile` to `src/project`.

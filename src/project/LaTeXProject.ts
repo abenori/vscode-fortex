@@ -4,6 +4,7 @@ import * as path from 'path';
 import Log from '../log';
 import Config from "../Config";
 import * as Workspace from '../workspace';
+import * as LaTeXParser from '../latex-parser';
 
 type LaTeXFileType = typeof LaTeXProject.LaTeXFileType[keyof typeof LaTeXProject.LaTeXFileType];
 
@@ -146,18 +147,14 @@ export default class LaTeXProject {
   }
 
   // [class,option]を返す
-  private static get_classfile(txt: string): [string, string] {
-    // Comments are masked first so a documented-out `\documentclass` does not
-    // make a subfile look like a project root.
-    txt = LaTeXProject.strip_comments(txt);
-    const re = /\\documentclass(\[.*\])?\{(.*?)\}/g;
-    let m = re.exec(txt);
-    if (m) {
-      let opt = m[1] === undefined ? "" : m[1].slice(1,-1);
-      let cls = m[2] === undefined ? "" : m[2];
-      return [cls, opt];
-    }
-    return ["", ""];
+  private static get_classfile(source: string | LaTeXParser.SourceScanner, document?: LaTeXParser.DocumentParser): [string, string] {
+    const scanner = typeof source === 'string' ? new LaTeXParser.SourceScanner(source) : source;
+    const parsed = document ?? new LaTeXParser.DocumentParser(scanner);
+    const declaration = parsed.declarations.find(item => item.kind === 'documentClass' && item.complete);
+    if (!declaration?.argument) { return ["", ""]; }
+    const name = scanner.textWithoutComments(declaration.argument.contentStart, declaration.argument.contentEnd)?.trim() ?? '';
+    const options = declaration.options;
+    return [name, options ? scanner.textWithoutComments(options.contentStart, options.contentEnd) ?? '' : ''];
   }
 
   // 絶対パスに変換，.texがなければ.texを付ける
@@ -197,22 +194,23 @@ export default class LaTeXProject {
     // This intentionally parses only literal paths. Macro-generated inputs cannot
     // be resolved reliably without executing TeX.
     let txt = "";
-    let dir = vscode.Uri.file(path.dirname(file.fsPath));
     try {
       txt = await Workspace.readDocumentText(file);
     }
     catch (e) {
       return [[], "", ""];
     }
-    const reg = /\\(input|include)(\[[^\]]*\])?\{([^\}]+)\}/g;
-    let ms = LaTeXProject.strip_comments(txt).matchAll(reg);
+    const scanner = new LaTeXParser.SourceScanner(txt);
+    const document = new LaTeXParser.DocumentParser(scanner);
     let files: [vscode.Uri, LaTeXFileType][] = [];
-    //Log.debug_log("search included files in " + file);
-    for (const m of ms) {
-      //Log.debug_log("found " + m[0] + " in " + file);
-      const uri = LaTeXProject.resolveIncludedFile(file, m[3]);
+    for (const declaration of document.declarations) {
+      if (declaration.kind !== 'include' || !declaration.complete || !declaration.argument) { continue; }
+      const name = scanner.textWithoutComments(declaration.argument.contentStart, declaration.argument.contentEnd)?.trim();
+      // These tokens require TeX expansion rather than static path resolution.
+      if (!name || /[\\#${}]/.test(name)) { continue; }
+      const uri = LaTeXProject.resolveIncludedFile(file, name);
       if (!uri) { continue; }
-      if (m[1] === "input") {
+      if (declaration.command === "input") {
         files.push([uri, LaTeXProject.LaTeXFileType.input]);
       } else {
         files.push([uri, LaTeXProject.LaTeXFileType.include]);
@@ -221,7 +219,7 @@ export default class LaTeXProject {
     if (files.length === 0) {
       return [[], "", ""];
     }
-    let cls = LaTeXProject.get_classfile(txt);
+    let cls = LaTeXProject.get_classfile(scanner, document);
     return [files, cls[0], cls[1]];
   }
 
@@ -327,34 +325,6 @@ export default class LaTeXProject {
       Log.debug_log("Parsed %# directive: " + a + " => " + rv[a]);
     }*/
     return rv;
-  }
-
-  private static strip_comments(source: string): string {
-    // Preserve string length and newlines: callers can safely use match offsets
-    // against the original source after comments have been hidden.
-    let result = '';
-    let inComment = false;
-    let slashCount = 0;
-    for (const char of source) {
-      if (inComment) {
-        if (char === '\r' || char === '\n') {
-          inComment = false;
-          result += char;
-        } else {
-          result += ' ';
-        }
-        continue;
-      }
-      if (char === '%' && slashCount % 2 === 0) {
-        inComment = true;
-        result += ' ';
-        slashCount = 0;
-        continue;
-      }
-      result += char;
-      slashCount = char === '\\' ? slashCount + 1 : 0;
-    }
-    return result;
   }
 
 }

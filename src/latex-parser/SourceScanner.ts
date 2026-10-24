@@ -110,6 +110,79 @@ export default class SourceScanner {
     this.commands = commands;
     this.ignoredRanges = ignoredRanges;
   }
+
+  /**
+   * Skips whitespace and comments, stopping at literal text even when masked.
+   * Invalid offsets return undefined; EOF is a valid stopping position.
+   */
+  public skipTrivia(offset: number): number | undefined {
+    if (!Number.isInteger(offset) || offset < 0 || offset > this.source.length) {
+      return undefined;
+    }
+    while (offset < this.source.length) {
+      const ignored = this.ignoredRanges[this.ignoredIndexAt(offset)];
+      if (ignored && ignored.start <= offset) {
+        if (ignored.kind !== 'comment') {
+          return offset;
+        }
+        offset = ignored.end;
+      } else if (/\s/.test(this.source[offset])) {
+        offset++;
+      } else {
+        break;
+      }
+    }
+    return offset;
+  }
+
+  /**
+   * Returns source text with comments and their immediately following line
+   * endings removed. Literal text and other whitespace are retained. Bounds are
+   * half-open UTF-16 offsets; invalid ranges return undefined.
+   */
+  public textWithoutComments(start = 0, end = this.source.length): string | undefined {
+    if (!Number.isInteger(start) || !Number.isInteger(end)
+      || start < 0 || end < start || end > this.source.length) {
+      return undefined;
+    }
+    const parts: string[] = [];
+    let cursor = start;
+    for (let index = this.ignoredIndexAt(start); index < this.ignoredRanges.length; index++) {
+      const range = this.ignoredRanges[index];
+      if (range.start >= end) {
+        break;
+      }
+      if (range.kind !== 'comment') {
+        continue;
+      }
+      parts.push(this.source.slice(cursor, Math.max(cursor, range.start)));
+      let afterComment = range.end;
+      if (this.source[afterComment] === '\r') {
+        afterComment++;
+      }
+      if (this.source[afterComment] === '\n') {
+        afterComment++;
+      }
+      cursor = Math.min(afterComment, end);
+    }
+    parts.push(this.source.slice(cursor, end));
+    return parts.join('');
+  }
+
+  /** First ignored range whose end is strictly after the requested offset. */
+  private ignoredIndexAt(offset: number): number {
+    let low = 0;
+    let high = this.ignoredRanges.length;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (this.ignoredRanges[middle].end <= offset) {
+        low = middle + 1;
+      } else {
+        high = middle;
+      }
+    }
+    return low;
+  }
 }
 
 /** Whether an odd run of backslashes immediately precedes this source offset. */
