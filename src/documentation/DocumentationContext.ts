@@ -18,9 +18,9 @@ export function findDocumentationQuery(source: string, offset: number): string |
       || offset < declaration.start || offset > argument.contentEnd) {
       continue;
     }
-    // Locate comma boundaries without shifting source offsets. Validate original
+    // Locate top-level commas without shifting source offsets. Validate original
     // content so a masked literal or macro cannot become a plausible filename.
-    const names = scanner.maskedSource.slice(argument.contentStart, argument.contentEnd).split(',');
+    const names = LaTeXParser.splitclist(scanner, argument.contentStart, argument.contentEnd);
     const literalName = (start: number, end: number): string | undefined => {
       const name = scanner.textWithoutComments(start, end)?.trim() ?? '';
       return /^[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(name) ? name : undefined;
@@ -28,14 +28,11 @@ export function findDocumentationQuery(source: string, offset: number): string |
     if (offset <= argument.start) {
       return names.length === 1 ? literalName(argument.contentStart, argument.contentEnd) : undefined;
     }
-    let nameStart = argument.contentStart;
     for (const name of names) {
-      const nameEnd = nameStart + name.length;
       // Before a comma addresses the preceding name; after it addresses the next.
-      if (nameStart <= offset && offset <= nameEnd) {
-        return literalName(nameStart, nameEnd);
+      if (name.start <= offset && offset <= name.end) {
+        return literalName(name.start, name.end);
       }
-      nameStart = nameEnd + 1;
     }
   }
   return undefined;

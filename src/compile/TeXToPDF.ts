@@ -6,6 +6,7 @@ import Log from '../log';
 import Process from './Process';
 import Config from '../Config';
 import { singleProgramFromDirective } from './BuildSecurity';
+import * as Workspace from '../workspace';
 
 /**
  * Runs the TeX/BibTeX/index/PDF pipeline until auxiliary files stabilize.
@@ -321,12 +322,40 @@ export default class TeXToPDF {
     return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
 
+  /** Prefer an exact buffer URI, then accept an existing local path alias. */
+  private static findErrorDocument(uri: vscode.Uri): vscode.TextDocument | undefined {
+    const document = Workspace.findOpenDocument(uri);
+    if (document || uri.scheme !== 'file') { return document; }
+    let realPathKey: string;
+    try {
+      realPathKey = Workspace.uriKey(vscode.Uri.file(fs.realpathSync(uri.fsPath)));
+    } catch {
+      return undefined;
+    }
+    const active = vscode.window.activeTextEditor?.document;
+    const candidates = active ? [active, ...vscode.workspace.textDocuments] : vscode.workspace.textDocuments;
+    for (const candidate of candidates) {
+      if (candidate.isClosed || candidate.uri.scheme !== 'file') { continue; }
+      try {
+        if (Workspace.uriKey(vscode.Uri.file(fs.realpathSync(candidate.uri.fsPath))) === realPathKey) {
+          return candidate;
+        }
+      } catch {
+        // An unrelated new or deleted buffer must not interrupt log analysis.
+      }
+    }
+    return undefined;
+  }
+
   private static undef_double_subsup_errors(logline: number, lines: string[], errline: number, errmsg: string, error_file: string): [vscode.Uri, vscode.Range, string][] {
+    const doc = TeXToPDF.findErrorDocument(vscode.Uri.file(error_file));
+    const errorUri = doc?.uri ?? vscode.Uri.file(error_file);
+    const lineIndex = Math.max(0, errline - 1);
     const next_error_line_reg = /l\.(\d+)\s(.*)/;
     if (logline + 1 >= lines.length) { return [[
-          vscode.Uri.file(error_file),
-          new vscode.Range(new vscode.Position(errline - 1, 0),
-            new vscode.Position(errline - 1, Number.MAX_SAFE_INTEGER)),
+          errorUri,
+          new vscode.Range(new vscode.Position(lineIndex, 0),
+            new vscode.Position(lineIndex, Number.MAX_SAFE_INTEGER)),
           errmsg
         ]];
     }
@@ -364,19 +393,7 @@ export default class TeXToPDF {
       cs = error_string.trimEnd();
       error_string = "";
     }
-    let doc: vscode.TextDocument | undefined = undefined;
-    let editor = vscode.window.activeTextEditor;
-    if (!editor || fs.realpathSync(editor.document.fileName) !== fs.realpathSync(error_file)) {
-      for(const dc of vscode.workspace.textDocuments){
-        if(fs.realpathSync(dc.fileName) === fs.realpathSync(error_file)){
-          doc = dc;
-          break;
-        }
-      }
-    }else {
-      doc = editor.document;
-    }
-    if(doc) {
+    if(doc && errline >= 1 && errline <= doc.lineCount) {
       let target_line_txt = doc.lineAt(errline - 1).text;
       let regstr = TeXToPDF.escapeRegExp(error_string) + `\\s*` + `(` + TeXToPDF.escapeRegExp(cs) + `)\\s*` + TeXToPDF.escapeRegExp(next_line.trim());
       //Log.debug_log("RegExp for error: " + regstr);
@@ -388,7 +405,7 @@ export default class TeXToPDF {
         let end = new vscode.Position(errline - 1,
           (m.indices && m.indices[1]) ? m.indices[1][1] : target_line_txt.length);
         return [[
-          vscode.Uri.file(error_file),
+          errorUri,
           new vscode.Range(strat, end),
           errmsg + (errmsg.startsWith("Undefined control sequence") ? `: \\${cs}` : "")]];
       }else{
@@ -401,7 +418,7 @@ export default class TeXToPDF {
               let end = new vscode.Position(i - 1,
                 (m.indices && m.indices[1]) ? m.indices[1][1] : doc.lineAt(i - 1).text.length);
               return [[
-                vscode.Uri.file(error_file),
+                errorUri,
                 new vscode.Range(strat, end),
                 errmsg + `: \\${cs}`]];
             }
@@ -409,7 +426,7 @@ export default class TeXToPDF {
         }
 
         return [[
-          vscode.Uri.file(error_file),
+          errorUri,
           new vscode.Range(new vscode.Position(errline - 1, 0),
             new vscode.Position(errline - 1, target_line_txt.length)),
           errmsg
@@ -417,9 +434,9 @@ export default class TeXToPDF {
       }
     }else {
       return [[
-        vscode.Uri.file(error_file),
-        new vscode.Range(new vscode.Position(errline - 1, 0),
-          new vscode.Position(errline - 1, Number.MAX_SAFE_INTEGER)),
+        errorUri,
+        new vscode.Range(new vscode.Position(lineIndex, 0),
+          new vscode.Position(lineIndex, Number.MAX_SAFE_INTEGER)),
         errmsg
       ]];
     }

@@ -6,6 +6,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+- Shared top-level comma-list parsing through `LaTeXParser.splitclist` and made TeX error document lookup safe for missing files and linked directories.
 - Centralized main-file discovery caching, invalidation, and change notifications in `LaTeXProject` for builds, citation completion, and structure views.
 - Removed unused environment and reference compatibility wrappers and called citation search directly from its consumers.
 - Deduplicate bibliography files by resolved workspace URI identity and format equation summaries with shared environment tokens while preserving literal text.

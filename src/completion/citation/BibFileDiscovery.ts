@@ -30,9 +30,11 @@ export function discoverBibReferences(texSource: string): string[] {
       continue;
     }
     const argument = declaration.argument;
-    const raw = scanner.textWithoutComments(argument.contentStart, argument.contentEnd) ?? '';
-    for (const reference of declaration.command === 'bibliography' ? raw.split(',') : [raw]) {
-      add(reference, true);
+    const names = declaration.command === 'bibliography'
+      ? LaTeXParser.splitclist(scanner, argument.contentStart, argument.contentEnd)
+      : [{ start: argument.contentStart, end: argument.contentEnd }];
+    for (const name of names) {
+      add(scanner.textWithoutComments(name.start, name.end) ?? '', true);
     }
   }
 

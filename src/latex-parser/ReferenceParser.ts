@@ -1,5 +1,6 @@
 import SourceScanner from './SourceScanner';
 import ArgumentScanner from './ArgumentScanner';
+import { splitclist } from './CommaList';
 
 /** A label or one reference key, measured in original UTF-16 source offsets. */
 export interface ReferenceToken {
@@ -49,9 +50,9 @@ export default class ReferenceParser {
       }
       consumedEnd = argument.end;
       const segments = command.name === 'label'
-        ? [[argument.contentStart, argument.contentEnd] as const]
-        : this.keySegments(scanner, argument.contentStart, argument.contentEnd);
-      for (const [start, end] of segments) {
+        ? [{ start: argument.contentStart, end: argument.contentEnd }]
+        : splitclist(scanner, argument.contentStart, argument.contentEnd);
+      for (const { start, end } of segments) {
         const key = scanner.textWithoutComments(start, end)?.trim();
         if (!key) {
           continue;
@@ -89,32 +90,6 @@ export default class ReferenceParser {
       }
     }
     return nearest;
-  }
-
-  private keySegments(scanner: SourceScanner, start: number, end: number): Array<readonly [number, number]> {
-    const segments: Array<readonly [number, number]> = [];
-    let segmentStart = start;
-    let depth = 0;
-    let commandIndex = lowerBound(scanner.commands, start, command => command.start);
-    for (let cursor = start; cursor < end; cursor++) {
-      const command = scanner.commands[commandIndex];
-      if (command?.start === cursor) {
-        cursor = command.end - 1;
-        commandIndex++;
-        continue;
-      }
-      const character = scanner.maskedSource[cursor];
-      if (character === '{') {
-        depth++;
-      } else if (character === '}') {
-        depth--;
-      } else if (character === ',' && depth === 0) {
-        segments.push([segmentStart, cursor]);
-        segmentStart = cursor + 1;
-      }
-    }
-    segments.push([segmentStart, end]);
-    return segments;
   }
 
   private trimKeyEnd(scanner: SourceScanner, start: number, end: number): number {
