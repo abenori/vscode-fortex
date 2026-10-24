@@ -6,6 +6,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+- Added shared LaTeX source and argument scanners with UTF-16 source ranges, literal handling, and incomplete-argument recovery.
 - Extracted build coordination and progress notifications into `BuildManager`.
 - Moved shared LaTeX project discovery from `src/compile` to `src/project`.
 - Shared unsaved-buffer-first document reading and URI identity through the `Workspace` API across project discovery, outlines, citations, and PDF previews.
