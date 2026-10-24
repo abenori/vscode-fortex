@@ -121,16 +121,17 @@ export default class TeXToPDF {
     let LaTeXrunCount = 1;
     this.read_status();
     let latex_cmd = this.make_latex_command();
-    let output_pdf = false;
-    if (latex_cmd[0].indexOf("lua") >= 0) {
-      for (let i = 0; i < latex_cmd[1].length; ++i) {
-        if (latex_cmd[1][i] === "-output-format=dvi") {
-          output_pdf = false;
-          break;
-        }
+    let output_pdf = (
+      latex_cmd[0].startsWith("lua") ||
+      latex_cmd[0].startsWith("pdf") ||
+      latex_cmd[0].startsWith("xe") ||
+      latex_cmd[0] === "context"
+    );
+    for (let i = 0; i < latex_cmd[1].length; ++i) {
+      if (latex_cmd[1][i] === "-output-format=dvi") {
+        output_pdf = false;
+        break;
       }
-    } else if (latex_cmd[0].indexOf("pdf") >= 0 || latex_cmd[0] === "context") {
-      output_pdf = true;
     }
     let dir = path.dirname(this.LaTeXProject.mainfile.fsPath);
     let base = path.basename(this.LaTeXProject.mainfile.fsPath);
