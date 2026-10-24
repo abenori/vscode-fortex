@@ -487,24 +487,38 @@ export default class LaTeXProject {
   }
 
   private static parse_percent_sharp_doc(txt: string): { [key: string]: string } {
-    // `%#key value` directives are intentionally line-oriented and are read only
-    // from the originally active document during project detection.
-    const reg = /^%#([^ \r\n]*)( ?[^\r\n]*?)$/gm;
-    let rv: { [key: string]: string } = {};
-    let mm = txt.matchAll(reg);
-    for (const m of mm) {
-      if (m[2] && m[2].toString().length > 0) {
-        rv[m[1].toString().toLowerCase()] = m[2].toString();
-      } else {
-        if (m[1].toString().startsWith("!")) {
-          rv["!"] = m[1].toString().substring(1);
-        } else {
-          rv[m[1].toString().toLowerCase()] = "";
-        }
+    // Read full-line comments from the original document, excluding literal text.
+    // Keep values opaque here: quotes, internal whitespace and `%` are meaningful
+    // to their consumers. Only surrounding spaces and tabs are removed.
+    if (!txt.includes('%#')) { return {}; }
+    const scanner = new LaTeXParser.SourceScanner(txt);
+    const directives = new Map<string, string>();
+    const directive = /^%#(!|[^ \t\r\n]+)([^\r\n]*)$/;
+    for (const range of scanner.ignoredRanges) {
+      if (range.kind !== 'comment' || !txt.startsWith('%#', range.start)) { continue; }
+      let prefixStart = range.start;
+      while (prefixStart > 0 && (txt[prefixStart - 1] === ' ' || txt[prefixStart - 1] === '\t')) {
+        prefixStart--;
       }
+      // Indentation is allowed, with a BOM only at the beginning of the file.
+      if (prefixStart > 0 && txt[prefixStart - 1] !== '\r' && txt[prefixStart - 1] !== '\n'
+        && !(prefixStart === 1 && txt[0] === '\uFEFF')) { continue; }
+      const match = directive.exec(txt.slice(range.start, range.end));
+      if (!match) { continue; }
+      const value = match[2];
+      let valueStart = 0;
+      let valueEnd = value.length;
+      while (valueStart < valueEnd && (value[valueStart] === ' ' || value[valueStart] === '\t')) {
+        valueStart++;
+      }
+      while (valueEnd > valueStart && (value[valueEnd - 1] === ' ' || value[valueEnd - 1] === '\t')) {
+        valueEnd--;
+      }
+      // `!` is a prefix, so `%#!engine args` and `%#! engine args` are equivalent.
+      directives.set(match[1].toLowerCase(), value.slice(valueStart, valueEnd));
     }
-    return rv;
-
+    // Preserve unknown keys, including object property names; the last value wins.
+    return Object.fromEntries(directives);
   }
 
 }
