@@ -3,6 +3,7 @@ import * as path from 'path';
 import LaTeXProject from '../compile/LaTeXProject';
 import { isStructureTrivia, parseStructureEvents, StructureEvent, structurePlainText } from './LaTeXStructureParser';
 import { StructureKind, StructureLabelEntry, StructureLocation, StructureNode, StructureSnapshot } from './StructureTypes';
+import * as Workspace from '../workspace';
 
 interface ParsedSource {
   uri: vscode.Uri;
@@ -22,11 +23,6 @@ const defaultTheorems: Record<string, string> = {
   theorem: 'Theorem', lemma: 'Lemma', proposition: 'Proposition', corollary: 'Corollary',
   definition: 'Definition', remark: 'Remark', example: 'Example', conjecture: 'Conjecture'
 };
-
-export function structureUriKey(uri: vscode.Uri): string {
-  const value = uri.scheme === 'file' ? path.normalize(uri.fsPath) : uri.toString();
-  return process.platform === 'win32' ? value.toLowerCase() : value;
-}
 
 function location(parsed: ParsedSource, start: number, end = start): StructureLocation {
   return { uri: parsed.uri, start, end };
@@ -109,7 +105,7 @@ function buildStructure(events: ExpandedEvent[], configuredTheorems: Record<stri
       for (const env of environments.splice(index)) {
         if (!env.node) { continue; }
         env.node.end = location(parsed, event.end);
-        if (env.node.kind === 'equation' && structureUriKey(env.parsed.uri) === structureUriKey(parsed.uri)) {
+        if (env.node.kind === 'equation' && Workspace.uriKey(env.parsed.uri) === Workspace.uriKey(parsed.uri)) {
           const content = parsed.source.slice(env.contentStart, event.start)
             .replace(/\\(?:begin|end)\s*\{[^{}]*\}/g, '');
           env.node.title = structurePlainText(content).slice(0, 100) || env.name;
@@ -137,7 +133,7 @@ function labelEntries(roots: StructureNode[]): StructureLabelEntry[] {
   const visit = (nodes: StructureNode[]) => {
     for (const node of nodes) {
       for (const label of node.labels) {
-        const id = `${structureUriKey(label.location.uri)}:${label.location.start}`;
+        const id = `${Workspace.uriKey(label.location.uri)}:${label.location.start}`;
         const existing = declarations.get(id);
         if (existing) { existing.occurrences++; }
         else { declarations.set(id, { label, node, occurrences: 1, duplicate: false }); }
@@ -207,13 +203,13 @@ export default class StructureService implements vscode.Disposable {
       }),
       vscode.workspace.onDidChangeTextDocument(event => {
         if (event.document.languageId !== 'latex') { return; }
-        const key = structureUriKey(event.document.uri);
+        const key = Workspace.uriKey(event.document.uri);
         const old = this.sources.get(key);
         if (!old || projectSignature(old.source) !== projectSignature(event.document.getText())) { this.parents.clear(); }
-        if (key === (this.selected && structureUriKey(this.selected.uri)) || this.watches.has(key)) { this.schedule(); }
+        if (key === (this.selected && Workspace.uriKey(this.selected.uri)) || this.watches.has(key)) { this.schedule(); }
       }),
       vscode.workspace.onDidCloseTextDocument(document => {
-        if (this.watches.has(structureUriKey(document.uri))) { this.parents.clear(); this.schedule(); }
+        if (this.watches.has(Workspace.uriKey(document.uri))) { this.parents.clear(); this.schedule(); }
       }),
       vscode.workspace.onDidChangeConfiguration(event => {
         if (event.affectsConfiguration('vscode-fortex.mainFileOrder')
@@ -272,8 +268,8 @@ export default class StructureService implements vscode.Disposable {
   }
 
   private async read(uri: vscode.Uri): Promise<ParsedSource> {
-    const source = await LaTeXProject.read_file_text(uri);
-    const key = structureUriKey(uri);
+    const source = await Workspace.readDocumentText(uri);
+    const key = Workspace.uriKey(uri);
     const cached = this.sources.get(key);
     if (cached?.source === source) { return cached; }
     const parsed = { uri, source, events: parseStructureEvents(source) };
@@ -287,7 +283,7 @@ export default class StructureService implements vscode.Disposable {
     let main = document.uri;
     let message: string | undefined;
     if (followIncludes && document.uri.scheme === 'file') {
-      const key = structureUriKey(document.uri);
+      const key = Workspace.uriKey(document.uri);
       const signature = projectSignature(document.getText()) + JSON.stringify(config.get('mainFileOrder'));
       const cached = this.parents.get(key);
       try {
@@ -302,7 +298,7 @@ export default class StructureService implements vscode.Disposable {
     const expanded: ExpandedEvent[] = [];
     let sequence = 0;
     const visit = async (uri: vscode.Uri, ancestors: Set<string>, site?: ExpandedEvent): Promise<void> => {
-      const key = structureUriKey(uri);
+      const key = Workspace.uriKey(uri);
       files.set(key, uri);
       if (ancestors.has(key)) {
         if (site) { expanded.push({ ...site, event: { ...site.event, type: 'issue', title: `Circular include: ${path.basename(uri.fsPath)}` } }); }
@@ -334,20 +330,20 @@ export default class StructureService implements vscode.Disposable {
   }
 
   private updateWatches(files: vscode.Uri[]): void {
-    const needed = new Set(files.map(structureUriKey));
+    const needed = new Set(files.map(Workspace.uriKey));
     for (const key of this.sources.keys()) { if (!needed.has(key)) { this.sources.delete(key); } }
     for (const [key, watcher] of this.watches) {
       if (!needed.has(key)) { watcher.dispose(); this.watches.delete(key); this.sources.delete(key); }
     }
     for (const uri of files) {
-      const key = structureUriKey(uri);
+      const key = Workspace.uriKey(uri);
       if (this.watches.has(key) || uri.scheme !== 'file') { continue; }
       // Watch a literal directory, then compare URIs so glob characters in a
       // source filename (for example chapter[1].tex) remain literal.
       const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(
         vscode.Uri.file(path.dirname(uri.fsPath)), '*'));
       const invalidate = (changed: vscode.Uri) => {
-        if (structureUriKey(changed) === key) { this.parents.clear(); this.schedule(); }
+        if (Workspace.uriKey(changed) === key) { this.parents.clear(); this.schedule(); }
       };
       const subscriptions = [watcher, watcher.onDidChange(invalidate), watcher.onDidCreate(invalidate), watcher.onDidDelete(invalidate)];
       this.watches.set(key, vscode.Disposable.from(...subscriptions));

@@ -2,9 +2,10 @@ import * as vscode from 'vscode';
 import { discoverBibReferences, resolveBibUri } from './BibFileDiscovery';
 import { CitationEntry } from './Citation';
 import { searchCitations } from './CitationSearch';
-import BibFileCache, { citationUriKey } from './BibFileCache';
+import BibFileCache from './BibFileCache';
 import KpsewhichResolver from './KpsewhichResolver';
 import LaTeXProject from '../../compile/LaTeXProject';
+import * as Workspace from '../../workspace';
 
 interface ProjectScope {
   main: vscode.Uri;
@@ -43,7 +44,7 @@ export default class CitationService implements vscode.Disposable {
         if (isBibDocument(event.document)) {
           this.bibliography.invalidate(event.document.uri);
         } else if (event.document.languageId === 'latex') {
-          const key = citationUriKey(event.document.uri);
+          const key = Workspace.uriKey(event.document.uri);
           const signature = projectStructureSignature(event.document.getText());
           const previous = this.structuralSignatures.get(key);
           if (previous !== undefined && previous !== signature) {
@@ -56,7 +57,7 @@ export default class CitationService implements vscode.Disposable {
         if (isBibDocument(document)) {
           this.bibliography.invalidate(document.uri);
         } else if (document.languageId === 'latex') {
-          const key = citationUriKey(document.uri);
+          const key = Workspace.uriKey(document.uri);
           this.structuralSignatures.delete(key);
           this.bibliography.release(key);
           this.projectScopes.clear();
@@ -77,7 +78,7 @@ export default class CitationService implements vscode.Disposable {
     if (this.disposed || document.isClosed) {
       return [];
     }
-    const key = citationUriKey(document.uri);
+    const key = Workspace.uriKey(document.uri);
     const scopePromise = this.projectScope(document);
     const scope = await scopePromise;
     if (this.disposed || document.isClosed || this.projectScopes.get(key)?.scope !== scopePromise) {
@@ -121,7 +122,7 @@ export default class CitationService implements vscode.Disposable {
   }
 
   private projectScope(document: vscode.TextDocument): Promise<ProjectScope> {
-    const key = citationUriKey(document.uri);
+    const key = Workspace.uriKey(document.uri);
     const signature = projectStructureSignature(document.getText());
     this.structuralSignatures.set(key, signature);
     const cached = this.projectScopes.get(key);
@@ -141,11 +142,11 @@ export default class CitationService implements vscode.Disposable {
       }
       const files = await LaTeXProject.collectProjectFiles(main);
       const projectFiles = files.length > 0 ? files : [document.uri];
-      const sources = await Promise.all(projectFiles.map(async (uri) => ({ uri, source: await readTexSource(uri) })));
+      const sources = await Promise.all(projectFiles.map(async (uri) => ({ uri, source: await Workspace.readDocumentText(uri).catch(() => '') })));
       const references: string[] = [];
       const seen = new Set<string>();
       for (const { uri, source } of sources) {
-        this.structuralSignatures.set(citationUriKey(uri), projectStructureSignature(source));
+        this.structuralSignatures.set(Workspace.uriKey(uri), projectStructureSignature(source));
         for (const reference of discoverBibReferences(source)) {
           const referenceKey = reference.toLocaleLowerCase();
           if (!seen.has(referenceKey)) {
@@ -163,15 +164,6 @@ export default class CitationService implements vscode.Disposable {
 
 function isBibDocument(document: vscode.TextDocument): boolean {
   return document.uri.path.toLocaleLowerCase().endsWith('.bib');
-}
-
-async function readTexSource(uri: vscode.Uri): Promise<string> {
-  const openDocument = vscode.workspace.textDocuments.find((document) => citationUriKey(document.uri) === citationUriKey(uri));
-  try {
-    return openDocument?.getText() ?? Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8');
-  } catch {
-    return '';
-  }
 }
 
 function projectStructureSignature(source: string): string {

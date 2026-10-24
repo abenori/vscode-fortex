@@ -6,6 +6,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+- Shared unsaved-buffer-first document reading and URI identity through the `Workspace` API across project discovery, outlines, citations, and PDF previews.
 - Added a LaTeX Structure tree with project/local scope, shared build main-file discovery, headings, theorems, equations, figures, tables, attached labels, category filters, and complete label search/name-order display.
 - Added current-file heading navigation through Outline, breadcrumbs, and Go to Symbol.
 - Added TeX documentation search with `Ctrl+T I C`: choose a `texdoc` result from Quick Pick and open it in texdoc's configured viewer.

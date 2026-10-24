@@ -1,5 +1,5 @@
-import * as path from 'path';
 import * as vscode from 'vscode';
+import * as Workspace from '../../workspace';
 import { parseBibTeX } from './BibTeXParser';
 import { CitationEntry } from './Citation';
 import { latexToPlainText } from './CitationSearch';
@@ -38,7 +38,7 @@ export default class BibFileCache implements vscode.Disposable {
     }
     const keys = new Set<string>();
     for (const uri of uris) {
-      const key = citationUriKey(uri);
+      const key = Workspace.uriKey(uri);
       keys.add(key);
       if (!this.files.has(key)) {
         // Watching the parent also handles editors that save by replacing the
@@ -48,7 +48,7 @@ export default class BibFileCache implements vscode.Disposable {
           new vscode.RelativePattern(vscode.Uri.joinPath(uri, '..'), '*')
         );
         const changed = (eventUri: vscode.Uri, existenceChanged = false) => {
-          if (citationUriKey(eventUri) !== key) {
+          if (Workspace.uriKey(eventUri) !== key) {
             return;
           }
           this.invalidate(uri);
@@ -77,7 +77,7 @@ export default class BibFileCache implements vscode.Disposable {
   }
 
   public invalidate(uri: vscode.Uri): void {
-    const file = this.files.get(citationUriKey(uri));
+    const file = this.files.get(Workspace.uriKey(uri));
     if (file) {
       file.revision++;
       file.cached = undefined;
@@ -86,7 +86,7 @@ export default class BibFileCache implements vscode.Disposable {
   }
 
   public async read(uri: vscode.Uri): Promise<CitationEntry[]> {
-    const key = citationUriKey(uri);
+    const key = Workspace.uriKey(uri);
     const file = this.files.get(key);
     // Registration must precede reading, so an update during the first read
     // cannot be lost before the cache is populated.
@@ -99,7 +99,7 @@ export default class BibFileCache implements vscode.Disposable {
       if (this.disposed || this.files.get(key) !== file) {
         return [];
       }
-      const document = findOpenDocument(uri);
+      const document = Workspace.findOpenDocument(uri);
       const documentVersion = document?.version;
       if (file.cached && file.cached.document === document && file.cached.documentVersion === documentVersion) {
         return file.cached.entries;
@@ -111,7 +111,7 @@ export default class BibFileCache implements vscode.Disposable {
           revision: file.revision,
           document,
           documentVersion,
-          promise: this.parse(uri, document)
+          promise: this.parse(uri)
         };
         file.pending = pending;
       }
@@ -128,7 +128,7 @@ export default class BibFileCache implements vscode.Disposable {
       if (this.disposed || this.files.get(key) !== file) {
         return [];
       }
-      const currentDocument = findOpenDocument(uri);
+      const currentDocument = Workspace.findOpenDocument(uri);
       if (file.revision !== pending.revision || currentDocument !== document
         || currentDocument?.version !== documentVersion) {
         continue;
@@ -160,8 +160,8 @@ export default class BibFileCache implements vscode.Disposable {
     }
   }
 
-  private async parse(uri: vscode.Uri, document: vscode.TextDocument | undefined): Promise<CitationEntry[]> {
-    const source = document ? document.getText() : Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8');
+  private async parse(uri: vscode.Uri): Promise<CitationEntry[]> {
+    const source = await Workspace.readDocumentText(uri);
     return parseBibTeX(source).map((parsed): CitationEntry => ({
       key: parsed.key,
       type: parsed.type,
@@ -171,16 +171,4 @@ export default class BibFileCache implements vscode.Disposable {
       sourceUri: uri
     }));
   }
-}
-
-/** Normalize local Windows paths, without folding case on remote file systems. */
-export function citationUriKey(uri: vscode.Uri): string {
-  return uri.scheme === 'file' && process.platform === 'win32'
-    ? path.normalize(uri.fsPath).toLowerCase()
-    : uri.toString();
-}
-
-function findOpenDocument(uri: vscode.Uri): vscode.TextDocument | undefined {
-  const key = citationUriKey(uri);
-  return vscode.workspace.textDocuments.find((document) => !document.isClosed && citationUriKey(document.uri) === key);
 }

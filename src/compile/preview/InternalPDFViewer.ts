@@ -3,6 +3,7 @@ import * as vscode from "vscode";
 import SyncTeX, { SyncTeXForwardResult } from "./SyncTeX";
 import { assertWorkspaceTrusted } from "../../WorkspaceTrust";
 import PDFWorkerSource from "./PDFWorkerSource";
+import * as Workspace from '../../workspace';
 
 type ViewerEntry = {
   panel: vscode.WebviewPanel;
@@ -23,7 +24,7 @@ export default class InternalPDFViewer implements vscode.Disposable {
   public async open(pdf: vscode.Uri, preserveFocus = false): Promise<void> {
     assertWorkspaceTrusted("Internal PDF preview");
     await vscode.workspace.fs.stat(pdf);
-    const key = this.key(pdf);
+    const key = Workspace.uriKey(pdf);
     const existing = this.viewers.get(key);
     if (existing) {
       existing.panel.reveal(vscode.ViewColumn.Beside, preserveFocus);
@@ -78,7 +79,7 @@ export default class InternalPDFViewer implements vscode.Disposable {
 
   public async forwardSearch(pdf: vscode.Uri, source: vscode.Uri, line: number, column: number): Promise<void> {
     assertWorkspaceTrusted("Internal PDF preview");
-    const entry = this.viewers.get(this.key(pdf));
+    const entry = this.viewers.get(Workspace.uriKey(pdf));
     if (!entry) {
       throw new Error("Open the internal PDF viewer before running forward SyncTeX search.");
     }
@@ -102,7 +103,7 @@ export default class InternalPDFViewer implements vscode.Disposable {
 
   public async refresh(pdf: vscode.Uri): Promise<void> {
     assertWorkspaceTrusted("Internal PDF preview");
-    const entry = this.viewers.get(this.key(pdf));
+    const entry = this.viewers.get(Workspace.uriKey(pdf));
     if (entry?.ready) {
       await this.reload(entry);
     }
@@ -150,11 +151,6 @@ export default class InternalPDFViewer implements vscode.Disposable {
       const message = error instanceof Error ? error.message : String(error);
       void vscode.window.showWarningMessage(`SyncTeX reverse search failed: ${message}`);
     }
-  }
-
-  private key(uri: vscode.Uri): string {
-    const value = path.normalize(uri.fsPath);
-    return process.platform === "win32" ? value.toLowerCase() : value;
   }
 
   private html(webview: vscode.Webview, pdfjsRoot: vscode.Uri): string {
