@@ -6,6 +6,9 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+- Removed unused environment and reference compatibility wrappers and called citation search directly from its consumers.
+- Deduplicate bibliography files by resolved workspace URI identity and format equation summaries with shared environment tokens while preserving literal text.
+- Centralized environment, math, reference, and definition parsing and reused the shared parsers throughout outlines, completion, navigation, bibliography discovery, and documentation lookup.
 - Unified braced and bare input argument reading and reused the shared document parser for project class and inclusion discovery.
 - Added a shared document declaration parser for classes, packages, included files, and bibliography resources, preserving raw arguments and incomplete declarations.
 - Added shared LaTeX source and argument scanners with UTF-16 source ranges, literal handling, and incomplete-argument recovery.

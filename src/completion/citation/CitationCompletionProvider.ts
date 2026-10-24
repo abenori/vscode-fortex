@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { CitationContext } from './Citation';
 import CitationService from './CitationService';
+import { searchCitations } from './CitationSearch';
 
 /** Supplies BibTeX keys while the cursor is inside a cite-like command. */
 export default class CitationCompletionProvider {
@@ -20,8 +21,8 @@ export default class CitationCompletionProvider {
     if (token.isCancellationRequested) {
       return undefined;
     }
-    // Cap the UI list; the service still searches every entry before ranking.
-    const matches = this.service.search(entries, context.query).slice(0, 200);
+    // Rank all entries before capping the UI list.
+    const matches = searchCitations(entries, context.query).slice(0, 200);
     const range = new vscode.Range(document.positionAt(context.queryStart), position);
     const items = matches.map((entry, index) => {
       const item = new vscode.CompletionItem({

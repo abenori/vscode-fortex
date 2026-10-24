@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { DISPLAY_MATH_ENVIRONMENT, findUnclosedEnvironmentAtOffset } from './EnvironmentParser';
+import * as LaTeXParser from '../../latex-parser';
 
 /** Closes the innermost genuinely unclosed environment before the cursor. */
 export async function closeEnvironment(): Promise<void> {
@@ -11,7 +11,9 @@ export async function closeEnvironment(): Promise<void> {
 
   const document = editor.document;
   const cursor = editor.selection.active;
-  const environment = findUnclosedEnvironmentAtOffset(document.getText(), document.offsetAt(cursor));
+  const offset = document.offsetAt(cursor);
+  const environment = new LaTeXParser.EnvironmentParser(document.getText(), [], ['named', 'display']).unclosed
+    .filter(token => (token.style === 'named' || token.style === 'display') && token.end <= offset).at(-1);
   if (!environment) {
     vscode.window.setStatusBarMessage('Fortex: No unclosed environment was found before the cursor.', 3000);
     return;
@@ -19,7 +21,7 @@ export async function closeEnvironment(): Promise<void> {
 
   const openingLine = document.lineAt(document.positionAt(environment.start).line).text;
   const indentation = openingLine.match(/^\s*/)?.[0] ?? '';
-  const closing = environment.name === DISPLAY_MATH_ENVIRONMENT ? '\\]' : `\\end{${environment.name}}`;
+  const closing = environment.name === LaTeXParser.DISPLAY_MATH_ENVIRONMENT ? '\\]' : `\\end{${environment.name}}`;
   const currentLine = document.lineAt(cursor.line);
   let finalPosition: vscode.Position;
 

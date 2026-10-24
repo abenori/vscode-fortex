@@ -1,9 +1,11 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
+import * as LaTeXParser from '../../latex-parser';
 
 /** Finds literal bibliography paths declared by classic BibTeX or biblatex. */
 export function discoverBibReferences(texSource: string): string[] {
-  const source = stripTeXComments(texSource);
+  const scanner = new LaTeXParser.SourceScanner(texSource);
+  const document = new LaTeXParser.DocumentParser(scanner);
   const references: string[] = [];
   const seen = new Set<string>();
 
@@ -11,26 +13,27 @@ export function discoverBibReferences(texSource: string): string[] {
     let normalized = reference.trim();
     // Macro-expanded filenames cannot be resolved statically; defer them rather
     // than presenting a misleading path to kpsewhich.
-    if (!normalized || normalized.includes('\\')) {
+    if (!normalized || /[\\#${}]/.test(normalized)) {
       return;
     }
     if (appendExtension && !normalized.toLocaleLowerCase().endsWith('.bib')) {
       normalized += '.bib';
     }
-    const key = normalized.toLocaleLowerCase();
-    if (!seen.has(key)) {
-      seen.add(key);
+    if (!seen.has(normalized)) {
+      seen.add(normalized);
       references.push(normalized);
     }
   };
 
-  for (const match of source.matchAll(/\\bibliography\s*\{([^{}]*)\}/g)) {
-    for (const reference of match[1].split(',')) {
+  for (const declaration of document.declarations) {
+    if (declaration.kind !== 'bibliography' || !declaration.complete || !declaration.argument) {
+      continue;
+    }
+    const argument = declaration.argument;
+    const raw = scanner.textWithoutComments(argument.contentStart, argument.contentEnd) ?? '';
+    for (const reference of declaration.command === 'bibliography' ? raw.split(',') : [raw]) {
       add(reference, true);
     }
-  }
-  for (const match of source.matchAll(/\\addbibresource\s*(?:\[[^\]]*\]\s*)?\{([^{}]*)\}/g)) {
-    add(match[1], true);
   }
 
   return references;
@@ -47,34 +50,4 @@ export function resolveBibUri(texUri: vscode.Uri, reference: string): vscode.Uri
     return texUri.with({ path: normalized });
   }
   return vscode.Uri.joinPath(texUri, '..', normalized);
-}
-
-function stripTeXComments(source: string): string {
-  // An even number of preceding backslashes means `%` begins a real TeX comment;
-  // `\%` remains part of the document.
-  let result = '';
-  let inComment = false;
-  let slashCount = 0;
-
-  for (const char of source) {
-    if (inComment) {
-      if (char === '\n' || char === '\r') {
-        inComment = false;
-        result += char;
-      }
-      continue;
-    }
-    if (char === '%' && slashCount % 2 === 0) {
-      inComment = true;
-      slashCount = 0;
-      continue;
-    }
-    result += char;
-    if (char === '\\') {
-      slashCount++;
-    } else {
-      slashCount = 0;
-    }
-  }
-  return result;
 }

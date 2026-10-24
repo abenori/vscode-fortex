@@ -1,11 +1,11 @@
 import * as vscode from 'vscode';
 import { discoverBibReferences, resolveBibUri } from './BibFileDiscovery';
 import { CitationEntry } from './Citation';
-import { searchCitations } from './CitationSearch';
 import BibFileCache from './BibFileCache';
 import KpsewhichResolver from './KpsewhichResolver';
 import LaTeXProject from '../../project/LaTeXProject';
 import * as Workspace from '../../workspace';
+import * as LaTeXParser from '../../latex-parser';
 
 interface ProjectScope {
   main: vscode.Uri;
@@ -90,7 +90,16 @@ export default class CitationService implements vscode.Disposable {
     if (this.disposed || document.isClosed || this.projectScopes.get(key)?.scope !== scopePromise) {
       return [];
     }
-    const uris = scope.references.map((reference, index) => kpsewhichResults[index] ?? resolveBibUri(scope.main, reference));
+    const uris: vscode.Uri[] = [];
+    const seen = new Set<string>();
+    for (const [index, reference] of scope.references.entries()) {
+      const uri = kpsewhichResults[index] ?? resolveBibUri(scope.main, reference);
+      const uriKey = Workspace.uriKey(uri);
+      if (!seen.has(uriKey)) {
+        seen.add(uriKey);
+        uris.push(uri);
+      }
+    }
     this.bibliography.setReferences(key, uris);
     const groups = await Promise.all(uris.map((uri) => this.bibliography.read(uri)));
     if (this.disposed || document.isClosed || this.projectScopes.get(key)?.scope !== scopePromise) {
@@ -104,10 +113,6 @@ export default class CitationService implements vscode.Disposable {
       }
     }
     return Array.from(unique.values());
-  }
-
-  public search(entries: readonly CitationEntry[], query: string): CitationEntry[] {
-    return searchCitations(entries, query);
   }
 
   public dispose(): void {
@@ -148,9 +153,8 @@ export default class CitationService implements vscode.Disposable {
       for (const { uri, source } of sources) {
         this.structuralSignatures.set(Workspace.uriKey(uri), projectStructureSignature(source));
         for (const reference of discoverBibReferences(source)) {
-          const referenceKey = reference.toLocaleLowerCase();
-          if (!seen.has(referenceKey)) {
-            seen.add(referenceKey);
+          if (!seen.has(reference)) {
+            seen.add(reference);
             references.push(reference);
           }
         }
@@ -170,6 +174,8 @@ function projectStructureSignature(source: string): string {
   // Only directives that affect project discovery belong in this cheap signature;
   // ordinary text edits should not discard the project-scope cache.
   const directives = source.match(/^%#main\b[^\r\n]*/gm) ?? [];
-  const commands = source.match(/\\(?:documentclass|input|include|bibliography|addbibresource)\b(?:\s*\[[^\]]*\])?\s*\{[^{}]*\}/g) ?? [];
+  const commands = new LaTeXParser.DocumentParser(source).declarations
+    .filter(declaration => declaration.kind !== 'package')
+    .map(declaration => source.slice(declaration.start, declaration.end));
   return JSON.stringify([directives, commands]);
 }

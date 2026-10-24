@@ -1,3 +1,5 @@
+import * as LaTeXParser from '../latex-parser';
+
 /** Source offsets are UTF-16 offsets, matching VS Code's document offsets. */
 export type StructureEvent =
   | { type: 'heading'; command: string; title: string; level: number; start: number; end: number }
@@ -12,172 +14,167 @@ const headingLevels = new Map([
   ['part', 0], ['chapter', 1], ['section', 2], ['subsection', 3],
   ['subsubsection', 4], ['paragraph', 5], ['subparagraph', 6]
 ]);
-
-const literalEnvironments = new Set([
-  'verbatim', 'verbatim*', 'Verbatim', 'Verbatim*', 'BVerbatim', 'LVerbatim',
-  'SaveVerbatim', 'lstlisting', 'lstlisting*', 'minted', 'minted*', 'comment',
-  'filecontents', 'filecontents*'
-]);
 const displayEquationEnvironments = new Set([
   'equation', 'align', 'alignat', 'gather', 'multline', 'flalign', 'displaymath'
 ]);
 
-const commandDefinitions = new Set([
-  'newcommand', 'renewcommand', 'providecommand', 'DeclareRobustCommand', 'DeclareMathOperator'
-]);
-const documentCommandDefinitions = new Set([
-  'NewDocumentCommand', 'RenewDocumentCommand', 'ProvideDocumentCommand', 'DeclareDocumentCommand',
-  'NewExpandableDocumentCommand', 'RenewExpandableDocumentCommand',
-  'ProvideExpandableDocumentCommand', 'DeclareExpandableDocumentCommand'
-]);
-const environmentDefinitions = new Set(['newenvironment', 'renewenvironment']);
-const documentEnvironmentDefinitions = new Set([
-  'NewDocumentEnvironment', 'RenewDocumentEnvironment', 'ProvideDocumentEnvironment', 'DeclareDocumentEnvironment'
-]);
-const primitiveDefinitions = new Set(['def', 'gdef', 'edef', 'xdef']);
-
-interface Command { name: string; end: number }
-interface Group { start: number; end: number; contentStart: number; contentEnd: number }
-interface TitleArgument { start: number; end: number; contentStart: number; contentEnd: number }
-interface InlineLiteral { contentStart: number; contentEnd: number; end: number }
-
-/** A lexical structure reader; it deliberately does not expand user macros. */
+/** Builds outline events from shared syntax, without expanding user macros. */
 export function parseStructureEvents(source: string): StructureEvent[] {
-  const masked = maskIgnoredSource(source);
-  const groups = matchGroups(masked);
-  const events: StructureEvent[] = [];
-  let cursor = 0;
-  let displayDollars = false;
-  let inlineDollar = false;
-
-  while (cursor < masked.length) {
-    if (masked[cursor] === '$') {
-      if (masked[cursor + 1] === '$' && !inlineDollar) {
-        events.push({ type: displayDollars ? 'end' : 'begin', name: '$$', start: cursor, end: cursor + 2 });
-        displayDollars = !displayDollars;
-        cursor += 2;
-      } else {
-        if (!displayDollars) {
-          inlineDollar = !inlineDollar;
+  const scanner = new LaTeXParser.SourceScanner(source);
+  const argumentsScanner = new LaTeXParser.ArgumentScanner(scanner);
+  const definitionParser = new LaTeXParser.DefinitionParser(scanner);
+  const definitions = definitionParser.definitions;
+  // Completed definitions are hidden; partial bodies permit later recovery.
+  const hidden = mergeRanges(definitionParser.consumedRanges);
+  const commands = new Map(scanner.commands.map(command => [command.start, command]));
+  const labels = new Map(new LaTeXParser.ReferenceParser(scanner).tokens
+    .filter(token => token.kind === 'label').map(token => [token.commandStart, token]));
+  const includes = new Map(new LaTeXParser.DocumentParser(scanner).declarations
+    .filter(declaration => declaration.kind === 'include' && declaration.complete)
+    .map(declaration => [declaration.start, declaration]));
+  const titles = new Map<number, LaTeXParser.ScannedArgument>();
+  const environmentTitles = new Map<number, LaTeXParser.ScannedArgument>();
+  const mathExcluded = [...hidden];
+  for (const command of scanner.commands) {
+    if (rangeEndAt(hidden, command.start) !== undefined) { continue; }
+    if (headingLevels.has(command.name) || command.name === 'caption') {
+      const title = readTitle(argumentsScanner, command.end);
+      if (title) {
+        titles.set(command.start, title);
+        mathExcluded.push({ start: command.end, end: title.end });
+      }
+    } else if (command.name === 'begin') {
+      const nameArgument = argumentsScanner.readArgument(command.end);
+      if (!nameArgument?.complete) { continue; }
+      const name = scanner.textWithoutComments(nameArgument.contentStart, nameArgument.contentEnd)?.trim() ?? '';
+      if (!displayEquationEnvironments.has(name.replace(/\*$/, ''))) {
+        const title = argumentsScanner.readArgument(nameArgument.end, '[');
+        if (title?.complete) {
+          environmentTitles.set(command.start, title);
+          mathExcluded.push({ start: title.start, end: title.end });
         }
+      }
+    }
+  }
+  // Skipped argument contents must not affect later dollar-delimiter state.
+  const environments = new Map(new LaTeXParser.EnvironmentParser(scanner, mathExcluded).tokens
+    .map(token => [token.start, token]));
+  const events: StructureEvent[] = definitions
+    .filter(definition => definition.kind === 'theorem' && definition.complete)
+    .map(definition => ({
+      type: 'theoremDefinition', name: definition.name,
+      title: structurePlainText(definition.title ?? ''), start: definition.start, end: definition.end
+    }));
+
+  const collectTitleEvents = (start: number, end: number): void => {
+    for (let cursor = start; cursor < end;) {
+      const hiddenEnd = rangeEndAt(hidden, cursor);
+      if (hiddenEnd !== undefined) {
+        cursor = hiddenEnd;
+        continue;
+      }
+      const command = commands.get(cursor);
+      if (!command || scanner.maskedSource[cursor] !== '\\') {
         cursor++;
+        continue;
+      }
+      const label = labels.get(cursor);
+      if (label && label.commandEnd <= end) {
+        events.push({ type: 'label', key: label.key, start: cursor, end: label.commandEnd });
+        cursor = label.commandEnd;
+        continue;
+      }
+      if (command.name === 'caption') {
+        const title = titles.get(cursor);
+        if (title && title.end <= end) {
+          events.push({
+            type: 'caption', title: structurePlainText(source.slice(title.contentStart, title.contentEnd)),
+            start: cursor, end: title.end
+          });
+        }
+      }
+      cursor = command.end;
+    }
+  };
+
+  for (let cursor = 0; cursor < source.length;) {
+    const hiddenEnd = rangeEndAt(hidden, cursor);
+    if (hiddenEnd !== undefined) {
+      cursor = hiddenEnd;
+      continue;
+    }
+    const environment = environments.get(cursor);
+    if (environment) {
+      const start = cursor;
+      cursor = environment.end;
+      if (environment.style === 'named' || environment.style === 'display' || environment.style === 'doubleDollar') {
+        if (environment.kind === 'end') {
+          events.push({ type: 'end', name: environment.name, start, end: cursor });
+        } else {
+          const title = environmentTitles.get(start);
+          cursor = title?.end ?? cursor;
+          events.push({
+            type: 'begin', name: environment.name, start, end: cursor,
+            ...(title ? { title: structurePlainText(source.slice(title.contentStart, title.contentEnd)) } : {})
+          });
+          if (title) { collectTitleEvents(title.contentStart, title.contentEnd); }
+        }
       }
       continue;
     }
-    if (masked[cursor] !== '\\') {
+    const command = commands.get(cursor);
+    if (!command || scanner.maskedSource[cursor] !== '\\') {
       cursor++;
       continue;
     }
-
     const start = cursor;
-    const command = readCommand(masked, start);
     cursor = command.end;
+    const title = titles.get(start);
     const level = headingLevels.get(command.name);
-    if (level !== undefined) {
-      const title = readTitle(masked, command.end, groups);
-      if (title) {
-        events.push({
-          type: 'heading', command: command.name, level,
-          title: structurePlainText(source.slice(title.contentStart, title.contentEnd)),
-          start, end: title.end
-        });
-        collectTitleEvents(source, masked, groups, command.end, title.end, events);
-        cursor = title.end;
-      }
-      continue;
-    }
-
-    if (command.name === '[' || command.name === ']') {
-      events.push({ type: command.name === '[' ? 'begin' : 'end', name: '\\[', start, end: command.end });
-      continue;
-    }
-    if (command.name === 'begin' || command.name === 'end') {
-      const group = readGroup(masked, command.end, groups);
-      if (!group) {
-        continue;
-      }
-      const name = masked.slice(group.contentStart, group.contentEnd).trim();
-      if (!name || /[\\{}\s]/.test(name)) {
-        continue;
-      }
-      cursor = group.end;
-      if (command.name === 'end') {
-        events.push({ type: 'end', name, start, end: cursor });
-      } else {
-        // A leading interval is equation content, rather than a theorem title.
-        const optional = displayEquationEnvironments.has(name.replace(/\*$/, ''))
-          ? undefined
-          : readGroup(masked, cursor, groups, '[');
-        const title = optional ? structurePlainText(source.slice(optional.contentStart, optional.contentEnd)) : undefined;
-        cursor = optional?.end ?? cursor;
-        events.push({ type: 'begin', name, title, start, end: cursor });
-        if (optional) {
-          collectTitleEvents(source, masked, groups, optional.contentStart, optional.contentEnd, events);
-        }
-      }
-      continue;
-    }
-    if (command.name === 'label') {
-      const group = readGroup(masked, command.end, groups);
-      if (group) {
-        const key = masked.slice(group.contentStart, group.contentEnd).trim();
-        if (key) {
-          events.push({ type: 'label', key, start, end: group.end });
-        }
+    if (title && (level !== undefined || command.name === 'caption')) {
+      const text = structurePlainText(source.slice(title.contentStart, title.contentEnd));
+      events.push(level !== undefined
+        ? { type: 'heading', command: command.name, level, title: text, start, end: title.end }
+        : { type: 'caption', title: text, start, end: title.end });
+      collectTitleEvents(command.end, title.end);
+      cursor = title.end;
+    } else if (command.name === 'label') {
+      const group = argumentsScanner.readArgument(command.end);
+      if (group?.complete) {
+        const label = labels.get(start);
+        if (label) { events.push({ type: 'label', key: label.key, start, end: group.end }); }
         cursor = group.end;
       }
-      continue;
-    }
-    if (command.name === 'caption') {
-      const title = readTitle(masked, command.end, groups);
-      if (title) {
-        events.push({ type: 'caption', title: structurePlainText(source.slice(title.contentStart, title.contentEnd)), start, end: title.end });
-        collectTitleEvents(source, masked, groups, command.end, title.end, events);
-        cursor = title.end;
-      }
-      continue;
-    }
-    if (command.name === 'input' || command.name === 'include') {
-      const group = readGroup(masked, command.end, groups);
-      const pathStart = group?.contentStart ?? skipWhitespace(masked, command.end);
-      let pathEnd = group?.contentEnd ?? pathStart;
-      if (!group && masked[pathStart] !== '{') {
-        while (pathEnd < masked.length && !/[\s%\\{}]/.test(masked[pathEnd])) {
-          pathEnd++;
+    } else {
+      const declaration = includes.get(start);
+      const argument = declaration?.argument;
+      if (argument) {
+        const path = scanner.textWithoutComments(argument.contentStart, argument.contentEnd)?.trim();
+        if (path && !/[\\#${}]/.test(path)) {
+          events.push({ type: 'include', command: declaration.command as 'input' | 'include', path, start, end: declaration.end });
         }
+        cursor = declaration.end;
       }
-      const path = masked.slice(pathStart, pathEnd).trim();
-      if (path && !/[\\#${}]/.test(path)) {
-        cursor = group?.end ?? pathEnd;
-        events.push({ type: 'include', command: command.name, path, start, end: cursor });
-      }
-      continue;
     }
-    if (command.name === 'newtheorem') {
-      let position = skipStar(masked, command.end);
-      const name = readGroup(masked, position, groups);
-      if (!name) {
-        continue;
-      }
-      position = readGroup(masked, name.end, groups, '[')?.end ?? name.end;
-      const title = readGroup(masked, position, groups);
-      if (title) {
-        cursor = readGroup(masked, title.end, groups, '[')?.end ?? title.end;
-        events.push({
-          type: 'theoremDefinition', name: masked.slice(name.contentStart, name.contentEnd).trim(),
-          title: structurePlainText(source.slice(title.contentStart, title.contentEnd)), start, end: cursor
-        });
-      }
-      continue;
-    }
-    cursor = skipDefinition(masked, command, groups) ?? cursor;
   }
-  return events;
+  return events.sort((left, right) => left.start - right.start);
+}
+
+export interface StructurePlainTextOptions {
+  /** Omit real named begin/end declarations when formatting equation summaries. */
+  readonly omitEnvironmentCommands?: boolean;
 }
 
 /** Normalizes display text without erasing unknown commands such as math macros. */
-export function structurePlainText(source: string): string {
-  const groups = matchGroups(maskIgnoredSource(source));
+export function structurePlainText(source: string, options: StructurePlainTextOptions = {}): string {
+  const scanner = new LaTeXParser.SourceScanner(source);
+  const argumentsScanner = new LaTeXParser.ArgumentScanner(scanner);
+  const commands = new Map(scanner.commands.map(command => [command.start, command]));
+  const environmentCommands = options.omitEnvironmentCommands
+    ? new Map(new LaTeXParser.EnvironmentParser(scanner, [], ['named']).tokens.map(token => [token.start, token]))
+    : undefined;
+  const ignored = new Map(scanner.ignoredRanges.filter(range => range.start < range.end)
+    .map(range => [range.start, range]));
   const formatting = /^(?:text(?:bf|it|sl|sc|sf|tt|rm|up|normal)|emph|underline|mbox|ensuremath|bfseries|itshape|slshape|scshape|sffamily|ttfamily|rmfamily|normalfont|protect)$/;
   const braces: boolean[] = [];
   let result = '';
@@ -187,21 +184,27 @@ export function structurePlainText(source: string): string {
   let stripNextGroup = false;
   while (cursor < source.length) {
     const character = source[cursor];
-    if (character === '%') {
-      cursor = commentEnd(source, cursor);
-      result += ' ';
+    const range = ignored.get(cursor);
+    if (range) {
+      result += range.kind === 'comment' ? ' ' : source.slice(range.contentStart, range.contentEnd);
+      cursor = range.end;
       continue;
     }
-    if (character === '\\') {
-      const command = readCommand(source, cursor);
-      const literal = readInlineLiteral(source, command);
-      if (literal) {
-        result += source.slice(literal.contentStart, literal.contentEnd);
-        cursor = literal.end;
-        continue;
-      }
+    const environment = environmentCommands?.get(cursor);
+    if (environment) {
+      // Keep the original scan and literal ranges; a removed declaration must
+      // neither reinterpret literal contents nor join neighboring commands.
+      result += ' ';
+      cursor = environment.end;
+      preserveNextGroup = false;
+      stripNextGroup = false;
+      continue;
+    }
+    const command = commands.get(cursor);
+    if (command) {
       if (command.name === 'label') {
-        cursor = readGroup(source, command.end, groups)?.end ?? command.end;
+        const group = argumentsScanner.readArgument(command.end);
+        cursor = group?.complete ? group.end : command.end;
         continue;
       }
       if (formatting.test(command.name)) {
@@ -227,9 +230,9 @@ export function structurePlainText(source: string): string {
         continue;
       }
       if (/^["'`^~=.uvHckbdtr]$/.test(command.name)) {
-        const next = skipWhitespace(source, command.end);
-        const group = readGroup(source, next, groups);
-        if (group && group.contentEnd - group.contentStart === 1) {
+        const next = scanner.skipTrivia(command.end)!;
+        const group = argumentsScanner.readArgument(next);
+        if (group?.complete && group.contentEnd - group.contentStart === 1) {
           result += source[group.contentStart];
           cursor = group.end;
           continue;
@@ -254,16 +257,12 @@ export function structurePlainText(source: string): string {
     if (character === '{') {
       const preserve = !stripNextGroup && (math || preserveNextGroup);
       braces.push(preserve);
-      if (preserve) {
-        result += character;
-      }
+      if (preserve) { result += character; }
       preserveNextGroup = false;
       stripNextGroup = false;
     } else if (character === '}') {
       const preserve = braces.pop() ?? false;
-      if (preserve) {
-        result += character;
-      }
+      if (preserve) { result += character; }
       preserveNextGroup = preserve;
     } else {
       if (character === '$') {
@@ -285,275 +284,43 @@ export function structurePlainText(source: string): string {
 }
 
 export function isStructureTrivia(source: string): boolean {
-  return maskComments(source).trim().length === 0;
+  return new LaTeXParser.SourceScanner(source).skipTrivia(0) === source.length;
 }
 
-function collectTitleEvents(source: string, masked: string, groups: Map<number, number>, start: number, end: number, events: StructureEvent[]): void {
-  for (let cursor = start; cursor < end;) {
-    if (masked[cursor] !== '\\') {
-      cursor++;
-      continue;
-    }
-    const commandStart = cursor;
-    const command = readCommand(masked, cursor);
-    cursor = command.end;
-    if (command.name === 'label') {
-      const group = readGroup(masked, cursor, groups);
-      if (group && group.end <= end) {
-        const key = masked.slice(group.contentStart, group.contentEnd).trim();
-        if (key) {
-          events.push({ type: 'label', key, start: commandStart, end: group.end });
-        }
-        cursor = group.end;
-      }
-    } else if (command.name === 'caption') {
-      const title = readTitle(masked, cursor, groups);
-      if (title && title.end <= end) {
-        events.push({ type: 'caption', title: structurePlainText(source.slice(title.contentStart, title.contentEnd)), start: commandStart, end: title.end });
-      }
-    } else {
-      cursor = skipDefinition(masked, command, groups) ?? cursor;
-    }
-  }
-}
-
-function readCommand(source: string, start: number): Command {
-  let end = start + 1;
-  if (/[A-Za-z@]/.test(source[end] ?? '')) {
-    while (end < source.length && /[A-Za-z@]/.test(source[end])) {
-      end++;
-    }
-  } else if (end < source.length) {
-    end++;
-  }
-  return { name: source.slice(start + 1, end), end };
-}
-
-function skipWhitespace(source: string, start: number): number {
-  while (start < source.length && /\s/.test(source[start])) {
-    start++;
-  }
-  return start;
-}
-
-function skipStar(source: string, start: number): number {
-  const cursor = skipWhitespace(source, start);
-  return skipWhitespace(source, source[cursor] === '*' ? cursor + 1 : cursor);
-}
-
-function readGroup(source: string, start: number, groups: Map<number, number>, opening = '{'): Group | undefined {
-  start = skipWhitespace(source, start);
-  const closing = groups.get(start);
-  if (source[start] !== opening || closing === undefined) {
-    return undefined;
-  }
-  return { start, end: closing + 1, contentStart: start + 1, contentEnd: closing };
-}
-
-function readTitle(source: string, start: number, groups: Map<number, number>): TitleArgument | undefined {
-  let cursor = skipStar(source, start);
-  if (source[cursor] === '[') {
-    const optional = readGroup(source, cursor, groups, '[');
-    if (!optional) {
-      return undefined;
-    }
+function readTitle(scanner: LaTeXParser.ArgumentScanner, offset: number): LaTeXParser.ScannedArgument | undefined {
+  let cursor = scanner.readStar(offset)?.end ?? offset;
+  const optional = scanner.readArgument(cursor, '[');
+  if (optional) {
+    if (!optional.complete) { return undefined; }
     cursor = optional.end;
   }
-  return readGroup(source, cursor, groups);
+  const title = scanner.readArgument(cursor);
+  return title?.complete ? title : undefined;
 }
 
-/** Precomputing pairs lets incomplete arguments recover without repeated scans to EOF. */
-function matchGroups(source: string): Map<number, number> {
-  const pairs = new Map<number, number>();
-  const braces: number[] = [];
-  const brackets: number[][] = [[]];
-  for (let cursor = 0; cursor < source.length; cursor++) {
-    const character = source[cursor];
-    if (character === '\\') {
-      cursor = readCommand(source, cursor).end - 1;
-    } else if (character === '{') {
-      braces.push(cursor);
-      brackets.push([]);
-    } else if (character === '}' && braces.length > 0) {
-      pairs.set(braces.pop()!, cursor);
-      brackets.pop();
-    } else if (character === '[') {
-      brackets[brackets.length - 1].push(cursor);
-    } else if (character === ']') {
-      const opening = brackets[brackets.length - 1].pop();
-      if (opening !== undefined) {
-        pairs.set(opening, cursor);
-      }
-    }
-  }
-  return pairs;
-}
-
-function skipDefinition(source: string, command: Command, groups: Map<number, number>): number | undefined {
-  const primitive = primitiveDefinitions.has(command.name);
-  const ordinary = commandDefinitions.has(command.name);
-  const documentCommand = documentCommandDefinitions.has(command.name);
-  const environment = environmentDefinitions.has(command.name);
-  const documentEnvironment = documentEnvironmentDefinitions.has(command.name);
-  if (!primitive && !ordinary && !documentCommand && !environment && !documentEnvironment) {
-    return undefined;
-  }
-  let cursor = skipStar(source, command.end);
-  const name = readGroup(source, cursor, groups);
-  if (name) {
-    cursor = name.end;
-  } else if (source[cursor] === '\\') {
-    cursor = readCommand(source, cursor).end;
-  } else {
-    return cursor;
-  }
-  if (primitive) {
-    while (cursor < source.length && source[cursor] !== '{' && source[cursor] !== '\\') {
-      cursor++;
-    }
-    return readGroup(source, cursor, groups)?.end ?? cursor;
-  }
-  if (ordinary || environment) {
-    for (let argument = 0; argument < 2; argument++) {
-      cursor = readGroup(source, cursor, groups, '[')?.end ?? cursor;
-    }
-  }
-  const count = documentCommand ? 2 : documentEnvironment ? 3 : environment ? 2 : 1;
-  for (let argument = 0; argument < count; argument++) {
-    const group = readGroup(source, cursor, groups);
-    if (!group) {
-      break;
-    }
-    cursor = group.end;
-  }
-  return cursor;
-}
-
-function commentEnd(source: string, start: number): number {
-  while (start < source.length && source[start] !== '\r' && source[start] !== '\n') {
-    start++;
-  }
-  return start;
-}
-
-function maskComments(source: string): string {
-  const characters = source.split('');
-  for (let cursor = 0; cursor < source.length;) {
-    if (source[cursor] === '\\') {
-      cursor = readCommand(source, cursor).end;
-    } else if (source[cursor] === '%') {
-      const end = commentEnd(source, cursor);
-      characters.fill(' ', cursor, end);
-      cursor = end;
+function mergeRanges(ranges: readonly LaTeXParser.SourceRange[]): LaTeXParser.SourceRange[] {
+  const merged: { start: number; end: number }[] = [];
+  for (const range of [...ranges].sort((left, right) => left.start - right.start)) {
+    const previous = merged.at(-1);
+    if (previous && range.start <= previous.end) {
+      previous.end = Math.max(previous.end, range.end);
     } else {
-      cursor++;
+      merged.push({ start: range.start, end: range.end });
     }
   }
-  return characters.join('');
+  return merged;
 }
 
-function maskIgnoredSource(source: string): string {
-  const characters = source.split('');
-  const mask = (start: number, end: number): void => {
-    for (let cursor = start; cursor < end; cursor++) {
-      if (source[cursor] !== '\r' && source[cursor] !== '\n') {
-        characters[cursor] = ' ';
-      }
-    }
-  };
-  const environmentName = /\s*\{\s*([^{}\s]+)\s*\}/y;
-  for (let cursor = 0; cursor < source.length;) {
-    if (source[cursor] === '%') {
-      const end = commentEnd(source, cursor);
-      mask(cursor, end);
-      cursor = end;
-      continue;
-    }
-    if (source[cursor] !== '\\') {
-      cursor++;
-      continue;
-    }
-    const start = cursor;
-    const command = readCommand(source, cursor);
-    cursor = command.end;
-    const literal = readInlineLiteral(source, command);
-    if (literal) {
-      mask(start, literal.end);
-      cursor = literal.end;
-    } else if (command.name === 'begin') {
-      let nameStart = skipWhitespace(source, cursor);
-      while (source[nameStart] === '%') {
-        const end = commentEnd(source, nameStart);
-        mask(nameStart, end);
-        nameStart = skipWhitespace(source, end);
-      }
-      environmentName.lastIndex = nameStart;
-      const match = environmentName.exec(source);
-      if (match && literalEnvironments.has(match[1])) {
-        const openingEnd = environmentName.lastIndex;
-        const escapedName = match[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const closing = new RegExp(`\\\\end\\s*\\{\\s*${escapedName}\\s*\\}`, 'g');
-        closing.lastIndex = openingEnd;
-        const end = closing.exec(source);
-        mask(openingEnd, end?.index ?? source.length);
-        cursor = end ? closing.lastIndex : source.length;
-      }
+function rangeEndAt(ranges: readonly LaTeXParser.SourceRange[], offset: number): number | undefined {
+  let low = 0;
+  let high = ranges.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (ranges[middle].end <= offset) {
+      low = middle + 1;
+    } else {
+      high = middle;
     }
   }
-  return characters.join('');
-}
-
-function readInlineLiteral(source: string, command: Command): InlineLiteral | undefined {
-  if (command.name !== 'verb' && command.name !== 'Verb' && command.name !== 'lstinline' && command.name !== 'mintinline') {
-    return undefined;
-  }
-  let cursor = source[command.end] === '*' ? command.end + 1 : command.end;
-  if (command.name !== 'verb') {
-    cursor = skipWhitespace(source, cursor);
-    if (source[cursor] === '[') {
-      const optionalEnd = rawGroupEnd(source, cursor, '[', ']');
-      if (optionalEnd === undefined) {
-        return undefined;
-      }
-      cursor = skipWhitespace(source, optionalEnd);
-    }
-  }
-  if (command.name === 'mintinline') {
-    const languageEnd = source[cursor] === '{' ? rawGroupEnd(source, cursor) : undefined;
-    if (languageEnd === undefined) {
-      return undefined;
-    }
-    cursor = skipWhitespace(source, languageEnd);
-  }
-  if ((command.name === 'lstinline' || command.name === 'mintinline') && source[cursor] === '{') {
-    const end = rawGroupEnd(source, cursor);
-    return end === undefined ? undefined : { contentStart: cursor + 1, contentEnd: end - 1, end };
-  }
-  if (cursor >= source.length || /\s/.test(source[cursor])) {
-    return undefined;
-  }
-  let end = cursor + 1;
-  while (end < source.length && source[end] !== source[cursor] && source[end] !== '\r' && source[end] !== '\n') {
-    end++;
-  }
-  const contentEnd = end;
-  if (source[end] === source[cursor]) {
-    end++;
-  }
-  return { contentStart: cursor + 1, contentEnd, end };
-}
-
-/** Raw code arguments have literal percent characters, so comment rules do not apply. */
-function rawGroupEnd(source: string, start: number, opening = '{', closing = '}'): number | undefined {
-  let depth = 1;
-  for (let cursor = start + 1; cursor < source.length; cursor++) {
-    if (source[cursor] === '\\') {
-      cursor++;
-    } else if (source[cursor] === opening) {
-      depth++;
-    } else if (source[cursor] === closing && --depth === 0) {
-      return cursor + 1;
-    }
-  }
-  return undefined;
+  return ranges[low]?.start <= offset ? ranges[low].end : undefined;
 }

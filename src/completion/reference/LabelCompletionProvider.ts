@@ -1,9 +1,16 @@
 import * as vscode from 'vscode';
 import { findLabels, LabelEntry, ReferenceContext } from './LabelParser';
+import * as LaTeXParser from '../../latex-parser';
+
+interface LabelArgumentRange {
+  start: number;
+  end: number;
+}
 
 interface LabelCacheEntry {
   source: string;
   labels: LabelEntry[];
+  labelArguments: LabelArgumentRange[];
 }
 
 const maximumCompletionItems = 200;
@@ -79,8 +86,22 @@ export default class LabelCompletionProvider implements vscode.Disposable {
 
   private index(document: vscode.TextDocument): LabelCacheEntry {
     const source = document.getText();
-    const labels = findLabels(source).sort((left, right) => left.key.localeCompare(right.key));
-    const entry = { source, labels };
+    const scanner = new LaTeXParser.SourceScanner(source);
+    const argumentsScanner = new LaTeXParser.ArgumentScanner(scanner);
+    const labels = findLabels(new LaTeXParser.ReferenceParser(scanner))
+      .sort((left, right) => left.key.localeCompare(right.key));
+    // Keep empty and unfinished label arguments too: typing into their middle
+    // can create a label far from the line containing the command itself.
+    const labelArguments: LabelArgumentRange[] = [];
+    for (const command of scanner.commands) {
+      if (command.name === 'label') {
+        const argument = argumentsScanner.readArgument(command.end);
+        if (argument) {
+          labelArguments.push({ start: argument.start, end: argument.end });
+        }
+      }
+    }
+    const entry = { source, labels, labelArguments };
     this.cache.set(document.uri.toString(), entry);
     return entry;
   }
@@ -100,6 +121,7 @@ export default class LabelCompletionProvider implements vscode.Disposable {
     const oldSource = cached.source;
     const relevant = event.contentChanges.some((change) => this.affectsLabelIndex(event.document, cached, oldSource, change));
     cached.source = applyContentChanges(oldSource, event.contentChanges);
+    updateArgumentRanges(cached.labelArguments, event.contentChanges);
     if (!relevant) {
       return;
     }
@@ -123,7 +145,11 @@ export default class LabelCompletionProvider implements vscode.Disposable {
     change: vscode.TextDocumentContentChangeEvent
   ): boolean {
     const removed = oldSource.slice(change.rangeOffset, change.rangeOffset + change.rangeLength);
-    if (/\r|\n|\\label\b/.test(change.text) || /\r|\n|\\label\b/.test(removed)) {
+    if (/[\r\n\\%{}\[\]]/.test(change.text) || /[\r\n\\%{}\[\]]/.test(removed)) {
+      return true;
+    }
+    const changeEnd = change.rangeOffset + change.rangeLength;
+    if (cached.labelArguments.some(range => range.start <= changeEnd && change.rangeOffset <= range.end)) {
       return true;
     }
 
@@ -136,7 +162,17 @@ export default class LabelCompletionProvider implements vscode.Disposable {
     }
 
     const currentLine = Math.min(changedStartLine, Math.max(0, document.lineCount - 1));
-    return /\\label\b/.test(document.lineAt(currentLine).text);
+    const oldLineStart = Math.max(
+      oldSource.lastIndexOf('\n', change.rangeOffset - 1),
+      oldSource.lastIndexOf('\r', change.rangeOffset - 1)
+    ) + 1;
+    const oldLineEnd = oldSource.slice(change.rangeOffset).search(/[\r\n]/);
+    const oldLine = oldSource.slice(oldLineStart,
+      oldLineEnd === -1 ? oldSource.length : change.rangeOffset + oldLineEnd);
+    // Renaming a control word, literal delimiter or environment name may expose
+    // labels many lines away. Examine only the changed line, rather than parsing
+    // the whole document for each ordinary prose edit.
+    return /[\\%{}]/.test(oldLine) || /[\\%{}]/.test(document.lineAt(currentLine).text);
   }
 
   private remove(document: vscode.TextDocument): void {
@@ -191,4 +227,25 @@ function applyContentChanges(source: string, changes: readonly vscode.TextDocume
     source = source.slice(0, change.rangeOffset) + change.text + source.slice(change.rangeOffset + change.rangeLength);
   }
   return source;
+}
+
+/** Keeps indexed ranges aligned while a debounced rebuild is pending. */
+function updateArgumentRanges(ranges: LabelArgumentRange[], changes: readonly vscode.TextDocumentContentChangeEvent[]): void {
+  for (const change of [...changes].sort((left, right) => right.rangeOffset - left.rangeOffset)) {
+    const start = change.rangeOffset;
+    const end = start + change.rangeLength;
+    const delta = change.text.length - change.rangeLength;
+    for (const range of ranges) {
+      if (range.start > end) {
+        range.start += delta;
+      } else if (range.start >= start) {
+        range.start = start;
+      }
+      if (range.end >= end) {
+        range.end += delta;
+      } else if (range.end > start) {
+        range.end = start + change.text.length;
+      }
+    }
+  }
 }

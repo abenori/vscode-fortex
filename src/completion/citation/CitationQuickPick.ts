@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { CitationEntry } from './Citation';
-import { findCitationContext } from './CitationSearch';
+import { findCitationContext, searchCitations } from './CitationSearch';
 import CitationService from './CitationService';
 
 interface CitationQuickPickItem extends vscode.QuickPickItem {
@@ -35,7 +35,7 @@ export async function showCitationQuickPick(service: CitationService): Promise<v
   let refreshing = false;
   const updateItems = () => {
     refreshing = true;
-    const items = service.search(entries, quickPick.value).map(toQuickPickItem);
+    const items = searchCitations(entries, quickPick.value).map(toQuickPickItem);
     quickPick.items = items;
     quickPick.selectedItems = items.filter((item) => selectedKeys.has(item.entry.key));
     refreshing = false;

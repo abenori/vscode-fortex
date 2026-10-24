@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
 import Config from '../../Config';
+import * as LaTeXParser from '../../latex-parser';
 import {
   collectEnvironmentNames,
-  DISPLAY_MATH_ENVIRONMENT,
   EnvironmentCompletionContext
 } from './EnvironmentParser';
 
@@ -45,9 +45,9 @@ export default class EnvironmentCompletionProvider {
     context: EnvironmentCompletionContext
   ): vscode.CompletionItem {
     const item = new vscode.CompletionItem('\\[ … \\]', vscode.CompletionItemKind.Snippet);
-    item.filterText = DISPLAY_MATH_ENVIRONMENT;
+    item.filterText = LaTeXParser.DISPLAY_MATH_ENVIRONMENT;
     item.range = this.range(document, context);
-    item.insertText = environmentSnippet(document, position, DISPLAY_MATH_ENVIRONMENT, true);
+    item.insertText = environmentSnippet(document, position, LaTeXParser.DISPLAY_MATH_ENVIRONMENT, true);
     return item;
   }
 
@@ -68,8 +68,8 @@ export function environmentSnippet(
   const line = document.lineAt(position.line).text;
   const indentation = line.match(/^\s*/)?.[0] ?? '';
   const indentUnit = environmentContentIndentation(document.uri);
-  const opening = name === DISPLAY_MATH_ENVIRONMENT ? '\\[' : `\\begin{${name}}`;
-  const closing = name === DISPLAY_MATH_ENVIRONMENT ? '\\]' : `\\end{${name}}`;
+  const opening = name === LaTeXParser.DISPLAY_MATH_ENVIRONMENT ? '\\[' : `\\begin{${name}}`;
+  const closing = name === LaTeXParser.DISPLAY_MATH_ENVIRONMENT ? '\\]' : `\\end{${name}}`;
   const snippet = new vscode.SnippetString();
 
   if (includeOpening) {

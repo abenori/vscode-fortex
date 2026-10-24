@@ -1,16 +1,8 @@
 import * as vscode from 'vscode';
-import {
-  EnvironmentToken,
-  findEnvironmentPairAtOffset
-} from '../completion/environment/EnvironmentParser';
-import {
-  ReferenceNavigationToken,
-  findReferenceNavigationTokenAtOffset,
-  findReferenceNavigationTokens
-} from './ReferenceNavigationParser';
+import * as LaTeXParser from '../latex-parser';
 
 interface NavigationQuickPickItem extends vscode.QuickPickItem {
-  token: ReferenceNavigationToken;
+  token: LaTeXParser.ReferenceToken;
 }
 
 /** Moves from an environment, label, or reference command to its counterpart. */
@@ -24,14 +16,16 @@ export async function goToCorresponding(): Promise<void> {
   const document = editor.document;
   const source = document.getText();
   const offset = document.offsetAt(editor.selection.active);
-  const environmentPair = findEnvironmentPairAtOffset(source, offset);
+  const scanner = new LaTeXParser.SourceScanner(source);
+  const environmentPair = new LaTeXParser.EnvironmentParser(scanner, [], ['named', 'display']).pairAt(offset);
   if (environmentPair) {
     const target = isWithin(environmentPair.begin, offset) ? environmentPair.end : environmentPair.begin;
     moveCursor(editor, target.style === 'named' ? target.nameStart : target.start);
     return;
   }
 
-  const current = findReferenceNavigationTokenAtOffset(source, offset);
+  const references = new LaTeXParser.ReferenceParser(scanner);
+  const current = references.tokenAt(offset);
   if (!current) {
     vscode.window.setStatusBarMessage(
       'Place the cursor on \\begin, \\end, \\label, or a reference command.',
@@ -41,7 +35,7 @@ export async function goToCorresponding(): Promise<void> {
   }
 
   const targetKind = current.kind === 'label' ? 'reference' : 'label';
-  const targets = findReferenceNavigationTokens(source).filter(
+  const targets = references.tokens.filter(
     (token) => token.kind === targetKind && token.key === current.key
   );
   if (targets.length === 0) {
@@ -70,7 +64,7 @@ export async function goToCorresponding(): Promise<void> {
 
 function createQuickPickItem(
   document: vscode.TextDocument,
-  token: ReferenceNavigationToken
+  token: LaTeXParser.ReferenceToken
 ): NavigationQuickPickItem {
   const position = document.positionAt(token.keyStart);
   const command = document.getText(new vscode.Range(
@@ -91,6 +85,6 @@ function moveCursor(editor: vscode.TextEditor, offset: number): void {
   editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenterIfOutsideViewport);
 }
 
-function isWithin(token: EnvironmentToken, offset: number): boolean {
+function isWithin(token: LaTeXParser.EnvironmentToken, offset: number): boolean {
   return token.start <= offset && offset <= token.end;
 }

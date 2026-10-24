@@ -1,12 +1,8 @@
 import * as vscode from 'vscode';
+import * as LaTeXParser from '../../latex-parser';
 import { environmentContentIndentation, environmentSnippet } from './EnvironmentCompletionProvider';
 import EnvironmentRenameProvider, { normalizeNewName } from './EnvironmentRenameProvider';
-import {
-  collectEnvironmentNames,
-  DISPLAY_MATH_ENVIRONMENT,
-  findEnvironmentPairAtOffset,
-  findEnvironmentTokenAtOffset
-} from './EnvironmentParser';
+import { collectEnvironmentNames } from './EnvironmentParser';
 
 interface EnvironmentQuickPickItem extends vscode.QuickPickItem {
   name: string;
@@ -26,8 +22,10 @@ export async function insertOrRenameEnvironment(): Promise<void> {
   const offset = editor.document.offsetAt(selection.active);
   // A non-empty selection always means "wrap". Rename applies only to an empty
   // cursor positioned on an existing environment command.
-  const token = selection.isEmpty ? findEnvironmentTokenAtOffset(source, offset) : undefined;
-  if (token && !findEnvironmentPairAtOffset(source, offset)) {
+  const parser = new LaTeXParser.EnvironmentParser(source, [], ['named', 'display']);
+  const currentToken = selection.isEmpty ? parser.tokenAt(offset) : undefined;
+  const token = currentToken?.style === 'named' || currentToken?.style === 'display' ? currentToken : undefined;
+  if (token && !parser.pairAt(offset)) {
     void vscode.window.showWarningMessage(`A matching ${token.kind === 'begin' ? '\\end' : '\\begin'} was not found.`);
     return;
   }
@@ -36,7 +34,7 @@ export async function insertOrRenameEnvironment(): Promise<void> {
     {
       label: '\\[ … \\]',
       description: 'Display math',
-      name: DISPLAY_MATH_ENVIRONMENT
+      name: LaTeXParser.DISPLAY_MATH_ENVIRONMENT
     },
     ...collectEnvironmentNames(source).map((name) => ({ label: name, name }))
   ];
@@ -61,8 +59,8 @@ export async function insertOrRenameEnvironment(): Promise<void> {
 
   const position = selection.active;
   const eol = editor.document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n';
-  const opening = picked.name === DISPLAY_MATH_ENVIRONMENT ? '\\[' : `\\begin{${picked.name}}`;
-  const closing = picked.name === DISPLAY_MATH_ENVIRONMENT ? '\\]' : `\\end{${picked.name}}`;
+  const opening = picked.name === LaTeXParser.DISPLAY_MATH_ENVIRONMENT ? '\\[' : `\\begin{${picked.name}}`;
+  const closing = picked.name === LaTeXParser.DISPLAY_MATH_ENVIRONMENT ? '\\]' : `\\end{${picked.name}}`;
 
   if (selection.isEmpty) {
     await editor.insertSnippet(environmentSnippet(editor.document, position, picked.name, true), selection);
@@ -100,7 +98,7 @@ function pickReplacementEnvironment(
           quickPick.items = items;
           return;
         }
-        if (name === DISPLAY_MATH_ENVIRONMENT) {
+        if (name === LaTeXParser.DISPLAY_MATH_ENVIRONMENT) {
           // The old closing-delimiter alias also needs to match the display item.
           quickPick.items = items.filter((item) => item.name === name).map((item) => ({ ...item, alwaysShow: true }));
         } else {

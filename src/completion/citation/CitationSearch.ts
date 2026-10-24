@@ -1,4 +1,5 @@
 import { CitationContext, CitationEntry } from './Citation';
+import * as LaTeXParser from '../../latex-parser';
 
 /** Ranks entries using one query shared across author and title fields. */
 export function searchCitations(entries: readonly CitationEntry[], query: string): CitationEntry[] {
@@ -79,38 +80,53 @@ export function latexToPlainText(value: string): string {
 
 /** Finds the currently edited key fragment in a cite-like command. */
 export function findCitationContext(text: string, offset = text.length): CitationContext | undefined {
-  const lineStart = Math.max(text.lastIndexOf('\n', offset - 1), text.lastIndexOf('\r', offset - 1)) + 1;
-  for (let cursor = lineStart; cursor < offset; cursor++) {
-    if (text[cursor] === '%' && !isEscaped(text, cursor)) {
-      return undefined;
-    }
-  }
-
-  // Limit backward scanning so completion stays responsive in very large files.
-  const prefix = text.slice(Math.max(0, offset - 20000), offset);
-  const baseOffset = Math.max(0, offset - 20000);
-  const citePattern = /\\(?:cite|citep|citet|citealp|citealt|citeauthor|citeyear|citeyearpar|autocite|parencite|textcite|footcite|footcitetext|smartcite|supercite|fullcite|volcite|pvolcite|fvolcite|notecite|nocite)\*?\s*(?:\[[^\]]*\]\s*)*\{([^{}]*)$/i;
-  const match = citePattern.exec(prefix);
-  if (!match) {
+  if (!Number.isInteger(offset) || offset < 0 || offset > text.length) {
     return undefined;
   }
-
-  const content = match[1];
-  // Only replace the key currently being typed, preserving earlier keys in a
-  // multi-citation command.
-  const comma = content.lastIndexOf(',');
-  const fragment = content.slice(comma + 1);
-  const leadingWhitespace = fragment.match(/^\s*/)?.[0].length ?? 0;
-  return {
-    query: fragment.slice(leadingWhitespace),
-    queryStart: baseOffset + match.index + match[0].length - fragment.length + leadingWhitespace
-  };
-}
-
-function isEscaped(text: string, offset: number): boolean {
-  let slashCount = 0;
-  for (let cursor = offset - 1; cursor >= 0 && text[cursor] === '\\'; cursor--) {
-    slashCount++;
+  // The dispatcher supplies only the current line. Retain a bounded look-behind
+  // for callers that supply a longer source snapshot.
+  const baseOffset = Math.max(0, offset - 20000);
+  const prefix = text.slice(baseOffset, offset);
+  const scanner = new LaTeXParser.SourceScanner(prefix);
+  if (scanner.ignoredRanges.some(range => range.end === prefix.length
+    && (range.kind === 'comment' || !range.closed))) {
+    return undefined;
   }
-  return slashCount % 2 === 1;
+  const argumentsScanner = new LaTeXParser.ArgumentScanner(scanner);
+  const citeCommand = /^(?:cite|citep|citet|citealp|citealt|citeauthor|citeyear|citeyearpar|autocite|parencite|textcite|footcite|footcitetext|smartcite|supercite|fullcite|volcite|pvolcite|fvolcite|notecite|nocite)$/i;
+  for (let index = scanner.commands.length - 1; index >= 0; index--) {
+    const command = scanner.commands[index];
+    if (!citeCommand.test(command.name)) { continue; }
+    let cursor = argumentsScanner.readStar(command.end)?.end ?? command.end;
+    let optional = argumentsScanner.readArgument(cursor, '[');
+    while (optional?.complete) {
+      cursor = optional.end;
+      optional = argumentsScanner.readArgument(cursor, '[');
+    }
+    if (optional) { continue; }
+    const argument = argumentsScanner.readArgument(cursor);
+    if (!argument || argument.complete) { continue; }
+    let fragmentStart = argument.contentStart;
+    let commandIndex = index + 1;
+    for (let position = argument.contentStart; position < prefix.length; position++) {
+      while (commandIndex < scanner.commands.length && scanner.commands[commandIndex].start < position) {
+        commandIndex++;
+      }
+      const nested = scanner.commands[commandIndex];
+      if (nested?.start === position) {
+        position = nested.end - 1;
+        commandIndex++;
+        continue;
+      }
+      const character = scanner.maskedSource[position];
+      if (character === '{' || character === '}') { return undefined; }
+      if (character === ',') { fragmentStart = position + 1; }
+    }
+    const queryStart = scanner.skipTrivia(fragmentStart)!;
+    return {
+      query: scanner.textWithoutComments(queryStart, prefix.length) ?? '',
+      queryStart: baseOffset + queryStart
+    };
+  }
+  return undefined;
 }

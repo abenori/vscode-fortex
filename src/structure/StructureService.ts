@@ -4,6 +4,7 @@ import LaTeXProject from '../project/LaTeXProject';
 import { isStructureTrivia, parseStructureEvents, StructureEvent, structurePlainText } from './LaTeXStructureParser';
 import { StructureKind, StructureLabelEntry, StructureLocation, StructureNode, StructureSnapshot } from './StructureTypes';
 import * as Workspace from '../workspace';
+import * as LaTeXParser from '../latex-parser';
 
 interface ParsedSource {
   uri: vscode.Uri;
@@ -106,9 +107,8 @@ function buildStructure(events: ExpandedEvent[], configuredTheorems: Record<stri
         if (!env.node) { continue; }
         env.node.end = location(parsed, event.end);
         if (env.node.kind === 'equation' && Workspace.uriKey(env.parsed.uri) === Workspace.uriKey(parsed.uri)) {
-          const content = parsed.source.slice(env.contentStart, event.start)
-            .replace(/\\(?:begin|end)\s*\{[^{}]*\}/g, '');
-          env.node.title = structurePlainText(content).slice(0, 100) || env.name;
+          const content = parsed.source.slice(env.contentStart, event.start);
+          env.node.title = structurePlainText(content, { omitEnvironmentCommands: true }).slice(0, 100) || env.name;
         }
       }
     } else if (event.type === 'caption') {
@@ -173,8 +173,10 @@ export async function localDocumentStructure(document: vscode.TextDocument): Pro
 }
 
 function projectSignature(source: string): string {
-  return JSON.stringify([source.match(/^%#main\b[^\r\n]*/gm),
-    source.match(/\\(?:documentclass|input|include)\b\s*(?:\[[^\]]*\])?\s*\{[^{}]*\}/g)]);
+  const commands = new LaTeXParser.DocumentParser(source).declarations
+    .filter(declaration => declaration.kind === 'documentClass' || declaration.kind === 'include')
+    .map(declaration => source.slice(declaration.start, declaration.end));
+  return JSON.stringify([source.match(/^%#main\b[^\r\n]*/gm), commands]);
 }
 
 export default class StructureService implements vscode.Disposable {

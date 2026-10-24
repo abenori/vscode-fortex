@@ -1,4 +1,5 @@
 import { latexToPlainText } from '../citation/CitationSearch';
+import * as LaTeXParser from '../../latex-parser';
 
 /** A label and the nearby source shown in reference completion details. */
 export interface LabelEntry {
@@ -13,61 +14,104 @@ export interface ReferenceContext {
   queryStart: number;
 }
 
-/** Extracts unique, uncommented labels from the current document. */
-export function findLabels(source: string): LabelEntry[] {
-  const masked = maskComments(source);
-  const sourceLines = source.split(/\r?\n/);
+/** Extracts unique labels and completion-specific descriptions. */
+export function findLabels(input: string | LaTeXParser.ReferenceParser): LabelEntry[] {
+  const parser = typeof input === 'string' ? new LaTeXParser.ReferenceParser(input) : input;
+  const source = parser.source;
+  const tokens = parser.tokens.filter(token => token.kind === 'label');
+  const sourceLines = source.split(/\r\n|\r|\n/);
+  const summaryCharacters = source.split('');
+  for (const token of tokens) {
+    for (let offset = token.commandStart; offset < token.commandEnd; offset++) {
+      if (source[offset] !== '\r' && source[offset] !== '\n') {
+        summaryCharacters[offset] = ' ';
+      }
+    }
+  }
+  const summaryLines = summaryCharacters.join('').split(/\r\n|\r|\n/);
   const lineOffsets = makeLineOffsets(source);
   const labels: LabelEntry[] = [];
   const seen = new Set<string>();
 
-  for (const match of masked.matchAll(/\\label\s*\{([^{}\r\n]+)\}/g)) {
-    const key = match[1].trim();
-    if (!key || seen.has(key)) {
+  for (const token of tokens) {
+    const key = token.key;
+    if (seen.has(key)) {
       continue;
     }
     seen.add(key);
-    const line = lineAtOffset(lineOffsets, match.index);
+    const line = lineAtOffset(lineOffsets, token.commandStart);
     labels.push({
       key,
       line,
       context: makeContext(sourceLines, line),
-      summary: makeSummary(sourceLines, line)
+      summary: makeSummary(summaryLines, line)
     });
   }
   return labels;
 }
 
 export function findReferenceContext(source: string, offset = source.length): ReferenceContext | undefined {
-  const lineStart = Math.max(source.lastIndexOf('\n', offset - 1), source.lastIndexOf('\r', offset - 1)) + 1;
-  for (let cursor = lineStart; cursor < offset; cursor++) {
-    if (source[cursor] === '%' && !isEscaped(source, cursor)) {
-      return undefined;
-    }
+  if (!Number.isInteger(offset) || offset < 0 || offset > source.length) {
+    return undefined;
   }
 
   // As with citation completion, a bounded look-behind avoids rescanning an entire
   // large document on every keystroke.
   const start = Math.max(0, offset - 20000);
   const prefix = source.slice(start, offset);
-  const match = /\\(?:ref|pageref|eqref|autoref|nameref|cref|Cref|vref|Vref)\*?\s*\{([^{}]*)$/.exec(prefix);
-  if (!match) {
+  const scanner = new LaTeXParser.SourceScanner(prefix);
+  if (scanner.ignoredRanges.some(range => range.end === prefix.length
+    && (range.kind === 'comment' || !range.closed))) {
     return undefined;
   }
-  const content = match[1];
-  const comma = content.lastIndexOf(',');
-  const fragment = content.slice(comma + 1);
-  const leadingWhitespace = fragment.match(/^\s*/)?.[0].length ?? 0;
-  return {
-    query: fragment.slice(leadingWhitespace),
-    queryStart: start + match.index + match[0].length - fragment.length + leadingWhitespace
-  };
+  const argumentsScanner = new LaTeXParser.ArgumentScanner(scanner);
+  for (let index = scanner.commands.length - 1; index >= 0; index--) {
+    const command = scanner.commands[index];
+    if (!LaTeXParser.ReferenceParser.isReferenceCommand(command.name)) {
+      continue;
+    }
+    const star = argumentsScanner.readStar(command.end);
+    const argument = argumentsScanner.readArgument(star?.end ?? command.end);
+    if (!argument || argument.complete) {
+      continue;
+    }
+    let fragmentStart = argument.contentStart;
+    let nestedCommandIndex = index + 1;
+    for (let cursor = argument.contentStart; cursor < prefix.length; cursor++) {
+      const nestedCommand = scanner.commands[nestedCommandIndex];
+      if (nestedCommand?.start === cursor) {
+        cursor = nestedCommand.end - 1;
+        nestedCommandIndex++;
+        continue;
+      }
+      const character = scanner.maskedSource[cursor];
+      // A nested argument is not a reference-key fragment. The dispatch layer
+      // can still offer command completion within it.
+      if (character === '{' || character === '}') {
+        return undefined;
+      }
+      if (character === ',') {
+        fragmentStart = cursor + 1;
+      }
+    }
+    const queryStart = scanner.skipTrivia(fragmentStart)!;
+    return {
+      query: scanner.textWithoutComments(queryStart, prefix.length) ?? '',
+      queryStart: start + queryStart
+    };
+  }
+  return undefined;
 }
 
 function makeLineOffsets(source: string): number[] {
   const offsets = [0];
   for (let offset = 0; offset < source.length; offset++) {
-    if (source[offset] === '\n') {
+    if (source[offset] === '\r') {
+      if (source[offset + 1] === '\n') {
+        offset++;
+      }
+      offsets.push(offset + 1);
+    } else if (source[offset] === '\n') {
       offsets.push(offset + 1);
     }
   }
@@ -111,46 +155,10 @@ function makeSummary(lines: readonly string[], targetLine: number): string {
     ...lines.slice(targetLine + 1, Math.min(lines.length, targetLine + 3))
   ];
   for (const line of candidateLines) {
-    const plain = latexToPlainText(line.replace(/\\label\s*\{[^{}]*\}/g, '')).trim();
+    const plain = latexToPlainText(line).trim();
     if (plain) {
       return plain.length > 100 ? `${plain.slice(0, 97)}...` : plain;
     }
   }
   return '(No nearby text)';
-}
-
-function maskComments(source: string): string {
-  // Replace comment characters with spaces to preserve offsets used against the
-  // unmasked source.
-  let result = '';
-  let inComment = false;
-  let slashCount = 0;
-  for (const char of source) {
-    if (inComment) {
-      if (char === '\r' || char === '\n') {
-        inComment = false;
-        result += char;
-      } else {
-        result += ' ';
-      }
-      continue;
-    }
-    if (char === '%' && slashCount % 2 === 0) {
-      inComment = true;
-      result += ' ';
-      slashCount = 0;
-      continue;
-    }
-    result += char;
-    slashCount = char === '\\' ? slashCount + 1 : 0;
-  }
-  return result;
-}
-
-function isEscaped(source: string, offset: number): boolean {
-  let slashCount = 0;
-  for (let cursor = offset - 1; cursor >= 0 && source[cursor] === '\\'; cursor--) {
-    slashCount++;
-  }
-  return slashCount % 2 === 1;
 }

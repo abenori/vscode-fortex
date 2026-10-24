@@ -1,14 +1,15 @@
 import * as vscode from 'vscode';
 import { COMMAND_CATALOG, CommandCatalogEntry } from './CommandCatalog';
 import { CommandContext, CustomCommandDefinition, findCustomCommands } from './CommandParser';
+import * as LaTeXParser from '../../latex-parser';
 
 interface CommandCacheEntry {
   source: string;
   commands: CustomCommandDefinition[];
+  declarationLines: readonly { start: number; end: number }[];
 }
 
 const reindexDelayMilliseconds = 300;
-const declarationPattern = /\\(?:newcommand|renewcommand|providecommand|DeclareRobustCommand|NewDocumentCommand|RenewDocumentCommand|ProvideDocumentCommand|DeclareDocumentCommand)\b/;
 
 /** Provides cached standard and document-local LaTeX command completions. */
 export default class CommandCompletionProvider implements vscode.Disposable {
@@ -76,7 +77,12 @@ export default class CommandCompletionProvider implements vscode.Disposable {
 
   private index(document: vscode.TextDocument): CommandCacheEntry {
     const source = document.getText();
-    const entry = { source, commands: findCustomCommands(source) };
+    const parser = new LaTeXParser.DefinitionParser(source);
+    const declarationLines = parser.definitions.map(definition => ({
+      start: document.positionAt(definition.start).line,
+      end: document.positionAt(definition.end).line
+    }));
+    const entry = { source, commands: findCustomCommands(parser), declarationLines };
     this.cache.set(document.uri.toString(), entry);
     return entry;
   }
@@ -95,14 +101,19 @@ export default class CommandCompletionProvider implements vscode.Disposable {
     const oldSource = cached.source;
     const relevant = event.contentChanges.some((change) => {
       const removed = oldSource.slice(change.rangeOffset, change.rangeOffset + change.rangeLength);
-      if (/\r|\n/.test(change.text) || /\r|\n/.test(removed) || declarationPattern.test(change.text) || declarationPattern.test(removed)) {
+      if (/[\r\n\\%{}\[\]]/.test(change.text) || /[\r\n\\%{}\[\]]/.test(removed)) {
         return true;
       }
-      if (cached.commands.some((command) => change.range.start.line <= command.line && change.range.end.line >= command.line)) {
+      if (cached.declarationLines.some(range => change.range.start.line <= range.end && change.range.end.line >= range.start)) {
         return true;
       }
       const lineNumber = Math.min(change.range.start.line, Math.max(0, event.document.lineCount - 1));
-      return declarationPattern.test(event.document.lineAt(lineNumber).text);
+      const oldLineStart = Math.max(oldSource.lastIndexOf('\n', change.rangeOffset - 1), oldSource.lastIndexOf('\r', change.rangeOffset - 1)) + 1;
+      const oldLineEnd = oldSource.slice(change.rangeOffset).search(/[\r\n]/);
+      const oldLine = oldSource.slice(oldLineStart, oldLineEnd < 0 ? oldSource.length : change.rangeOffset + oldLineEnd);
+      // Changing an existing literal introducer or environment name can expose
+      // declarations far away from the edited line.
+      return /[\\%{}]/.test(oldLine) || /[\\%{}]/.test(event.document.lineAt(lineNumber).text);
     });
     cached.source = applyContentChanges(oldSource, event.contentChanges);
     if (!relevant) {
