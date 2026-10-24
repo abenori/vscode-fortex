@@ -4,7 +4,7 @@ import { CitationEntry } from './Citation';
 import { searchCitations } from './CitationSearch';
 import BibFileCache from './BibFileCache';
 import KpsewhichResolver from './KpsewhichResolver';
-import LaTeXProject from '../../compile/LaTeXProject';
+import LaTeXProject from '../../project/LaTeXProject';
 import * as Workspace from '../../workspace';
 
 interface ProjectScope {

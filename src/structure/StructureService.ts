@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import LaTeXProject from '../compile/LaTeXProject';
+import LaTeXProject from '../project/LaTeXProject';
 import { isStructureTrivia, parseStructureEvents, StructureEvent, structurePlainText } from './LaTeXStructureParser';
 import { StructureKind, StructureLabelEntry, StructureLocation, StructureNode, StructureSnapshot } from './StructureTypes';
 import * as Workspace from '../workspace';

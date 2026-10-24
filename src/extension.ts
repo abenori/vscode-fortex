@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import LaTeXCompile from './compile/LaTeXCompile';
-import LaTeXProject from './compile/LaTeXProject';
+import LaTeXProject from './project/LaTeXProject';
 import Log from './log';
 import ErrorManager from './compile/ErrorManager';
 import Process from './compile/Process';

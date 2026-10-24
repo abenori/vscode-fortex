@@ -1,6 +1,6 @@
 import * as path from 'path';
 import Process from './Process';
-import LaTeXProject from './LaTeXProject';
+import LaTeXProject from '../project/LaTeXProject';
 import TeXToPDF from './TeXToPDF';
 import Log from '../log';
 import ErrorManager from './ErrorManager';
