@@ -18,6 +18,11 @@ import CommandCompletionProvider from './completion/command/CommandCompletionPro
 import LaTeXCompletionProvider from './completion/LaTeXCompletionProvider';
 import { goToCorresponding } from './navigation/CorrespondingCommand';
 import GreekCompletionController from './completion/greek/GreekCompletionController';
+import TexdocService from './documentation/TexdocService';
+import { openDocumentation } from './documentation/DocumentationCommand';
+import StructureService from './structure/StructureService';
+import StructureView from './structure/StructureView';
+import LaTeXDocumentSymbolProvider from './structure/LaTeXDocumentSymbolProvider';
 
 const taskType = "fortex";
 
@@ -132,17 +137,40 @@ export function activate(context: vscode.ExtensionContext) {
   registerPreview('vscode-fortex.viewPdfInSumatraPDF', 'sumatra');
   registerPreview('vscode-fortex.syncTeXFromCursor', undefined, true);
 
+  const documentation = new TexdocService();
+  context.subscriptions.push(
+    documentation,
+    vscode.commands.registerCommand('vscode-fortex.openDocumentation', async () => {
+      try {
+        await openDocumentation(documentation);
+      } catch (error) {
+        if (error instanceof vscode.CancellationError) {
+          return;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        Log.error(`Unable to open TeX documentation: ${message}`);
+        void vscode.window.showErrorMessage(`Unable to open TeX documentation: ${message}`);
+      }
+    })
+  );
+
   // Providers and commands are registered together so every disposable follows
   // the extension context lifetime.
   const citations = new CitationService();
   const labels = new LabelCompletionProvider();
   const commands = new CommandCompletionProvider();
   const greek = new GreekCompletionController();
+  const structure = new StructureService();
   context.subscriptions.push(
     citations,
     labels,
     commands,
     greek,
+    structure,
+    new StructureView(context, structure),
+    vscode.languages.registerDocumentSymbolProvider(
+      { language: 'latex' }, new LaTeXDocumentSymbolProvider(), { label: 'Fortex' }
+    ),
     vscode.commands.registerCommand('vscode-fortex.greekCompletion.start', () => greek.start()),
     vscode.commands.registerCommand('vscode-fortex.greekCompletion.input', (args) => greek.input(args)),
     vscode.commands.registerCommand('vscode-fortex.greekCompletion.commit', (args) => greek.commit(args)),

@@ -6,6 +6,9 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+- Added a LaTeX Structure tree with project/local scope, shared build main-file discovery, headings, theorems, equations, figures, tables, attached labels, category filters, and complete label search/name-order display.
+- Added current-file heading navigation through Outline, breadcrumbs, and Go to Symbol.
+- Added TeX documentation search with `Ctrl+T I C`: choose a `texdoc` result from Quick Pick and open it in texdoc's configured viewer.
 - Added YaTeX-style Greek letter input with an inline preview, started by `Ctrl+T J`. It is always available independently of the `vscode-fortex.mathShortcuts.enabled` setting for math alphabet shortcuts.
 - Moved the build, PDF preview, and forward SyncTeX shortcuts from `Ctrl+T T`, `Ctrl+T P`, and `Ctrl+T J` to `Ctrl+T T T`, `Ctrl+T T P`, and `Ctrl+T T J`, respectively.
 - Added an allowlist for programs selected by `%#` build directives and reject disallowed programs before starting a build.

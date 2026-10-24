@@ -8,7 +8,15 @@ Programs named by source-file build directives such as `%#!`, `%#bibtex`, `%#mak
 
 Fortex parses `%#!` command lines itself and starts the executable with `shell: false`. Quotes may be used for arguments containing spaces. Shell operators such as `|`, `&&`, `<`, and `>` are passed as ordinary arguments and are not interpreted. Semicolons outside quotes retain their existing meaning as separators between build actions. All programs named by `%#` directives are checked before the first build process starts. Programs selected without a `%#` directive are not restricted by this setting.
 
-LaTeX builds, PDF previews, SyncTeX, SumatraPDF, and `kpsewhich` execution run only when VS Code trusts the current workspace. In Restricted Mode, the corresponding commands and keybindings are disabled, and runtime checks also block programmatic calls. Citation completion can still read bibliography files resolved directly from the project, but does not start `kpsewhich`. Editing, navigation, and other completion features remain available.
+LaTeX builds, PDF previews, SyncTeX, SumatraPDF, `kpsewhich`, and `texdoc` execution run only when VS Code trusts the current workspace. In Restricted Mode, the corresponding commands and keybindings are disabled, and runtime checks also block programmatic calls. Citation completion can still read bibliography files resolved directly from the project, but does not start `kpsewhich`. Editing, navigation, and other completion features remain available.
+
+## TeX documentation
+
+Press `Ctrl+T`, release Ctrl, then press `I` and `C` without Shift in a LaTeX editor, or run **Fortex: Open Documentation** from the Command Palette. Enter a package, class, or documentation name. The input is prefilled with selected text or the literal name at the cursor in `\usepackage{...}`, `\RequirePackage{...}`, or `\documentclass{...}` when available. The Command Palette also works without an open editor.
+
+Fortex searches installed documentation using TeX Live's `texdoc --list --machine`. Choose a result from Quick Pick, which shows its description, language, and file path in texdoc's relevance order. Even a single result is offered for selection. The selected document opens through `texdoc --just-view`, using texdoc's configured viewer. Cancelling either the input, search, or picker does not open a document.
+
+Set `vscode-fortex.texdoc.path` to the full executable path when `texdoc` is not on `PATH`. This feature targets TeX Live's texdoc; MiKTeX's separate help utility is not supported. Documentation opens on the machine running the extension, so a remote extension host needs its own TeX installation and a usable viewer.
 
 ## PDF preview
 
@@ -49,6 +57,20 @@ When completion is requested from a subfile, Fortex first determines the main fi
 Run **Fortex: Insert Citation** from the Command Palette, or press `Ctrl+T [`, for a larger Quick Pick search. Search terms may match either authors or titles without selecting a field. Select one or more entries; Fortex replaces the current citation fragment when the cursor is already inside a cite command, or inserts a complete `\cite{...}` command otherwise.
 
 Resolved bibliography files are cached and watched through VS Code, including files outside the workspace that are not open in an editor. Changes, deletion, and recreation invalidate the cached entries; the next citation request reads the current contents. Open bibliography documents use their unsaved contents. Watches are shared between documents and released when their last referencing document closes or a later citation request no longer uses that bibliography.
+
+## LaTeX structure
+
+The Explorer's **LaTeX Structure** view shows headings, theorems, display equations, figures, and tables in document order. Labels are attached to their heading or containing environment and shown beside its title. Select an item to open its source, or use **Go to Attached Label** from its context menu to jump directly to a label. Labels without an identifiable owner appear as standalone items.
+
+By default, Fortex uses the same main-file detection as a build (`vscode-fortex.mainFileOrder`, including `%#main`), then expands literal `\input` and `\include` commands at their source positions. Included headings participate in the surrounding document hierarchy. Set `vscode-fortex.outline.followIncludes` to `false` to display only the current file without main-file discovery. This setting affects structure display only. The view identifies its main file or indicates **Current file only**. Untitled documents are local only.
+
+The view's toolbar offers **Refresh LaTeX Structure**, **Go to LaTeX Label**, and **Filter LaTeX Structure**. The filter chooses visible categories and whether to show labeled, all, or no display equations. Its menu also switches to **Show Labels in Name Order**, toggles attached label names, and enables **Show Only Labeled Items**. Hidden parents promote visible descendants; labeled-only mode keeps the headings needed to locate visible items. Label mode and label search include every label in the selected scope, independently of category filters. Labels declared at different positions with the same key are marked as duplicates; repeated inclusion of one declaration shows its inclusion count. Display choices are saved for the workspace (or in the window's workspace state when no folder is open).
+
+`\newtheorem` and `\newtheorem*` declarations in the parsed sources supply theorem environment names and titles. Use `vscode-fortex.outline.theoremEnvironments` to add names defined in a class or package, for example `{ "claim": "Claim" }`. Headings use their full titles; theorems use their declared name and optional title, figures and tables use their first caption, and equations show a source excerpt. An `align` block remains one item with all its labels. Inline math and nested equation helpers such as `aligned` are not separate items.
+
+Unsaved editor contents and changes to included files update the view without compiling. Comments, verbatim examples, and macro definition bodies are ignored. Missing files and circular includes appear at the relevant inclusion site. This is a source structure index: macros, conditionals, and `\includeonly` are not evaluated, and LaTeX-generated numbering is not reproduced. Label attachment describes source containment, rather than guaranteeing the counter to which a compiled reference resolves.
+
+The standard **Outline**, breadcrumbs, and **Go to Symbol in Editor** (`Ctrl+Shift+O`, or `Cmd+Shift+O` on macOS) show the current file's heading hierarchy regardless of the project view's filters.
 
 ## Label reference completion
 

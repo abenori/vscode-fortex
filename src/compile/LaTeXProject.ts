@@ -213,10 +213,8 @@ export default class LaTeXProject {
     //Log.debug_log("search included files in " + file);
     for (const m of ms) {
       //Log.debug_log("found " + m[0] + " in " + file);
-      let f = m[3].trim();
-      if (!f || f.includes('\\')) { continue; }
-      if (path.extname(f).toLowerCase() !== ".tex") { f = f + ".tex"; }
-      const uri = vscode.Uri.file(path.resolve(dir.fsPath, f));
+      const uri = LaTeXProject.resolveIncludedFile(file, m[3]);
+      if (!uri) { continue; }
       if (m[1] === "input") {
         files.push([uri, LaTeXProject.LaTeXFileType.input]);
       } else {
@@ -283,6 +281,14 @@ export default class LaTeXProject {
     return files;
   }
 
+  /** Shared literal-path resolution for compilation and the structure view. */
+  public static resolveIncludedFile(from: vscode.Uri, name: string): vscode.Uri | undefined {
+    let file = name.trim();
+    if (!file || file.includes('\\')) { return undefined; }
+    if (path.extname(file).toLowerCase() !== '.tex') { file += '.tex'; }
+    return vscode.Uri.file(path.resolve(path.dirname(from.fsPath), file));
+  }
+
   private make_filelist() {
     this.filelist_ = [[this.mainfile_, LaTeXProject.LaTeXFileType.main]];
     void this.make_filelist_from_file(this.mainfile_);
@@ -326,7 +332,7 @@ export default class LaTeXProject {
     return rv;
   }
 
-  private static async read_file_text(file: vscode.Uri): Promise<string> {
+  public static async read_file_text(file: vscode.Uri): Promise<string> {
     // Prefer unsaved editor contents so project and completion behavior matches
     // what the user currently sees rather than the last saved version.
     const openDocument = vscode.workspace.textDocuments.find((document) => LaTeXProject.uri_key(document.uri) === LaTeXProject.uri_key(file));

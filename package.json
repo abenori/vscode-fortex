@@ -16,15 +16,17 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",
-      "description": "Editing and navigation remain available, but builds, PDF previews, SyncTeX, SumatraPDF, and kpsewhich execution are disabled until the workspace is trusted."
+      "description": "Editing and navigation remain available, but builds, PDF previews, SyncTeX, SumatraPDF, kpsewhich, and texdoc execution are disabled until the workspace is trusted."
     }
   },
   "activationEvents": [
     "onLanguage:latex",
+    "onView:fortex.structure",
     "onCommand:vscode-fortex.viewPdf",
     "onCommand:vscode-fortex.viewPdfInVSCode",
     "onCommand:vscode-fortex.viewPdfInSumatraPDF",
     "onCommand:vscode-fortex.syncTeXFromCursor",
+    "onCommand:vscode-fortex.openDocumentation",
     "onCommand:vscode-fortex.insertCitation",
     "onCommand:vscode-fortex.insertOrRenameEnvironment",
     "onCommand:vscode-fortex.closeEnvironment",
@@ -43,7 +45,35 @@
         ]
       }
     ],
+    "views": {
+      "explorer": [{ "id": "fortex.structure", "name": "LaTeX Structure" }]
+    },
+    "menus": {
+      "view/title": [
+        { "command": "vscode-fortex.outline.refresh", "when": "view == fortex.structure", "group": "navigation@1" },
+        { "command": "vscode-fortex.outline.searchLabels", "when": "view == fortex.structure", "group": "navigation@2" },
+        { "command": "vscode-fortex.outline.filter", "when": "view == fortex.structure", "group": "navigation@3" },
+        { "command": "vscode-fortex.outline.toggleMode", "when": "view == fortex.structure", "group": "1_display@1" },
+        { "command": "vscode-fortex.outline.toggleLabels", "when": "view == fortex.structure", "group": "1_display@2" },
+        { "command": "vscode-fortex.outline.toggleLabeledOnly", "when": "view == fortex.structure", "group": "1_display@3" }
+      ],
+      "view/item/context": [
+        { "command": "vscode-fortex.outline.goToLabel", "when": "view == fortex.structure && (viewItem == fortex.structure.node.labeled || viewItem == fortex.structure.label)", "group": "navigation@1" }
+      ],
+      "commandPalette": [
+        { "command": "vscode-fortex.outline.open", "when": "false" },
+        { "command": "vscode-fortex.outline.goToLabel", "when": "false" }
+      ]
+    },
     "commands": [
+      { "command": "vscode-fortex.outline.refresh", "title": "Refresh LaTeX Structure", "category": "Fortex", "icon": "$(refresh)" },
+      { "command": "vscode-fortex.outline.searchLabels", "title": "Go to LaTeX Label", "category": "Fortex", "icon": "$(search)" },
+      { "command": "vscode-fortex.outline.filter", "title": "Filter LaTeX Structure", "category": "Fortex", "icon": "$(filter)" },
+      { "command": "vscode-fortex.outline.toggleMode", "title": "Show Labels in Name Order", "category": "Fortex", "toggled": "fortex.structure.labelMode" },
+      { "command": "vscode-fortex.outline.toggleLabels", "title": "Show Attached Label Names", "category": "Fortex", "toggled": "fortex.structure.showLabels" },
+      { "command": "vscode-fortex.outline.toggleLabeledOnly", "title": "Show Only Labeled Items", "category": "Fortex", "toggled": "fortex.structure.labeledOnly" },
+      { "command": "vscode-fortex.outline.open", "title": "Go to Structure Source", "category": "Fortex" },
+      { "command": "vscode-fortex.outline.goToLabel", "title": "Go to Attached Label", "category": "Fortex" },
       {
         "command": "vscode-fortex.build",
         "title": "Build LaTeX Project",
@@ -67,6 +97,12 @@
       {
         "command": "vscode-fortex.syncTeXFromCursor",
         "title": "SyncTeX from Cursor",
+        "enablement": "isWorkspaceTrusted"
+      },
+      {
+        "command": "vscode-fortex.openDocumentation",
+        "title": "Open Documentation",
+        "category": "Fortex",
         "enablement": "isWorkspaceTrusted"
       },
       {
@@ -111,6 +147,11 @@
         "command": "vscode-fortex.syncTeXFromCursor",
         "key": "ctrl+t t j",
         "when": "editorTextFocus && editorLangId == latex && isWorkspaceTrusted"
+      },
+      {
+        "command": "vscode-fortex.openDocumentation",
+        "key": "ctrl+t i c",
+        "when": "editorTextFocus && editorLangId == latex && isWorkspaceTrusted && !isComposing"
       },
       {
         "command": "vscode-fortex.insertCitation",
@@ -1723,11 +1764,48 @@
           "scope": "machine",
           "description": "kpsewhich command used to resolve bibliography files through the Kpathsea search path."
         },
+        "vscode-fortex.texdoc.path": {
+          "type": "string",
+          "default": "texdoc",
+          "scope": "machine",
+          "markdownDescription": "TeX Live `texdoc` executable used by **Fortex: Open Documentation** (`Ctrl+T I C`). Set a full executable path if `texdoc` is not on `PATH`."
+        },
         "vscode-fortex.environment.indentContent": {
           "type": "boolean",
           "default": true,
           "order": 50,
           "markdownDescription": "Indent content by one editor indentation level when Fortex inserts or wraps a LaTeX environment. The indentation width and tabs/spaces follow the standard `editor.tabSize` and `editor.insertSpaces` settings."
+        },
+        "vscode-fortex.outline.followIncludes": {
+          "type": "boolean", "default": true, "scope": "window",
+          "markdownDescription": "Use the build's main-file detection and recursively expand literal `\\input` / `\\include` commands in the LaTeX Structure view. Disable to show only the current file. Does not change build behavior."
+        },
+        "vscode-fortex.outline.theoremEnvironments": {
+          "type": "object", "default": {}, "scope": "window",
+          "additionalProperties": { "type": "string" },
+          "markdownDescription": "Additional theorem-like environment names and their display names, for example `{\"claim\": \"Claim\"}`. Declarations using `\\newtheorem` in parsed TeX sources are discovered automatically."
+        },
+        "vscode-fortex.outline.visibleKinds": {
+          "type": "array", "default": ["section", "theorem", "figure", "table", "label"], "scope": "window",
+          "items": { "type": "string", "enum": ["section", "theorem", "figure", "table", "label"] },
+          "uniqueItems": true,
+          "description": "Categories displayed in the structure tree. Equations are controlled separately. Hidden parents promote visible children."
+        },
+        "vscode-fortex.outline.equations": {
+          "type": "string", "enum": ["labeled", "all", "hidden"], "default": "labeled", "scope": "window",
+          "description": "Display labeled equations, all display equations, or no equations in the structure tree."
+        },
+        "vscode-fortex.outline.showLabels": {
+          "type": "boolean", "default": true, "scope": "window",
+          "description": "Show attached label names next to structure items."
+        },
+        "vscode-fortex.outline.labeledOnly": {
+          "type": "boolean", "default": false, "scope": "window",
+          "description": "Show only labeled structure items and their heading ancestors."
+        },
+        "vscode-fortex.outline.viewMode": {
+          "type": "string", "enum": ["structure", "labels"], "default": "structure", "scope": "window",
+          "description": "Show the document hierarchy or a complete list of labels sorted by name. Label mode ignores category filters."
         },
         "vscode-fortex.mathShortcuts.enabled": {
           "type": "boolean",

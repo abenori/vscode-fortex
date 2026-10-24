@@ -58,6 +58,10 @@ export default class Config {
     return Config.get<string>("kpsewhich.path", "kpsewhich");
   }
 
+  public static texdocPath(): string {
+    return Config.get<string>("texdoc.path", "texdoc");
+  }
+
   public static environmentIndentContent(): boolean {
     return Config.get<boolean>("environment.indentContent", true);
   }
