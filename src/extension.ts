@@ -22,6 +22,7 @@ import { openDocumentation } from './documentation/DocumentationCommand';
 import StructureService from './structure/StructureService';
 import StructureView from './structure/StructureView';
 import LaTeXDocumentSymbolProvider from './structure/LaTeXDocumentSymbolProvider';
+import LaTeXProject from './project/LaTeXProject';
 
 const taskType = "fortex";
 
@@ -30,6 +31,8 @@ let preview: PDFPreview | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
 	//Log.debug_log("Activate vscode-fortex extension");
+
+  context.subscriptions.push(new vscode.Disposable(() => LaTeXProject.dispose()));
 
   preview = new PDFPreview(context);
   buildManager = new BuildManager(preview);

@@ -5,17 +5,11 @@ import BibFileCache from './BibFileCache';
 import KpsewhichResolver from './KpsewhichResolver';
 import LaTeXProject from '../../project/LaTeXProject';
 import * as Workspace from '../../workspace';
-import * as LaTeXParser from '../../latex-parser';
 
 interface ProjectScope {
   main: vscode.Uri;
   files: vscode.Uri[];
   references: string[];
-}
-
-interface ProjectScopeCacheEntry {
-  signature: string;
-  scope: Promise<ProjectScope>;
 }
 
 /**
@@ -26,31 +20,27 @@ export default class CitationService implements vscode.Disposable {
   private readonly disposables: vscode.Disposable[] = [];
   private readonly kpsewhich = new KpsewhichResolver();
   private readonly bibliography = new BibFileCache(() => this.kpsewhich.clear());
-  private readonly projectScopes = new Map<string, ProjectScopeCacheEntry>();
-  private readonly structuralSignatures = new Map<string, string>();
+  private readonly projectScopes = new Map<string, Promise<ProjectScope>>();
+  private readonly bibliographySignatures = new Map<string, string>();
   private disposed = false;
 
   public constructor() {
-    // Bibliographies are watched individually when resolved. Structural .tex
-    // changes can alter the main file, include graph, or bibliography list.
-    const texWatcher = vscode.workspace.createFileSystemWatcher('**/*.tex');
+    // LaTeXProject reports project and on-disk TeX changes. Only bibliography
+    // declarations need additional tracking for unsaved edits in this service.
     const invalidateProjects = () => this.projectScopes.clear();
     this.disposables.push(
-      texWatcher,
-      texWatcher.onDidChange(invalidateProjects),
-      texWatcher.onDidCreate(invalidateProjects),
-      texWatcher.onDidDelete(invalidateProjects),
+      LaTeXProject.onDidChange(invalidateProjects),
       vscode.workspace.onDidChangeTextDocument((event) => {
         if (isBibDocument(event.document)) {
           this.bibliography.invalidate(event.document.uri);
         } else if (event.document.languageId === 'latex') {
           const key = Workspace.uriKey(event.document.uri);
-          const signature = projectStructureSignature(event.document.getText());
-          const previous = this.structuralSignatures.get(key);
+          const signature = JSON.stringify(discoverBibReferences(event.document.getText()));
+          const previous = this.bibliographySignatures.get(key);
           if (previous !== undefined && previous !== signature) {
             this.projectScopes.clear();
           }
-          this.structuralSignatures.set(key, signature);
+          this.bibliographySignatures.set(key, signature);
         }
       }),
       vscode.workspace.onDidCloseTextDocument((document) => {
@@ -58,7 +48,7 @@ export default class CitationService implements vscode.Disposable {
           this.bibliography.invalidate(document.uri);
         } else if (document.languageId === 'latex') {
           const key = Workspace.uriKey(document.uri);
-          this.structuralSignatures.delete(key);
+          this.bibliographySignatures.delete(key);
           this.bibliography.release(key);
           this.projectScopes.clear();
         }
@@ -66,9 +56,6 @@ export default class CitationService implements vscode.Disposable {
       vscode.workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration('vscode-fortex.kpsewhich.path')) {
           this.kpsewhich.clear();
-        }
-        if (event.affectsConfiguration('vscode-fortex.mainFileOrder')) {
-          this.projectScopes.clear();
         }
       })
     );
@@ -81,13 +68,13 @@ export default class CitationService implements vscode.Disposable {
     const key = Workspace.uriKey(document.uri);
     const scopePromise = this.projectScope(document);
     const scope = await scopePromise;
-    if (this.disposed || document.isClosed || this.projectScopes.get(key)?.scope !== scopePromise) {
+    if (this.disposed || document.isClosed || this.projectScopes.get(key) !== scopePromise) {
       return [];
     }
     const kpsewhichResults = await this.kpsewhich.resolve(scope.main, scope.references);
     // A closed document or a newer project structure must not register stale
     // watches after asynchronous project/path discovery finishes.
-    if (this.disposed || document.isClosed || this.projectScopes.get(key)?.scope !== scopePromise) {
+    if (this.disposed || document.isClosed || this.projectScopes.get(key) !== scopePromise) {
       return [];
     }
     const uris: vscode.Uri[] = [];
@@ -102,7 +89,7 @@ export default class CitationService implements vscode.Disposable {
     }
     this.bibliography.setReferences(key, uris);
     const groups = await Promise.all(uris.map((uri) => this.bibliography.read(uri)));
-    if (this.disposed || document.isClosed || this.projectScopes.get(key)?.scope !== scopePromise) {
+    if (this.disposed || document.isClosed || this.projectScopes.get(key) !== scopePromise) {
       return [];
     }
     // Keep the first occurrence of a duplicate key, matching bibliography order.
@@ -122,22 +109,27 @@ export default class CitationService implements vscode.Disposable {
     }
     this.bibliography.dispose();
     this.projectScopes.clear();
-    this.structuralSignatures.clear();
+    this.bibliographySignatures.clear();
     this.kpsewhich.dispose();
   }
 
   private projectScope(document: vscode.TextDocument): Promise<ProjectScope> {
     const key = Workspace.uriKey(document.uri);
-    const signature = projectStructureSignature(document.getText());
-    this.structuralSignatures.set(key, signature);
+    const signature = JSON.stringify(discoverBibReferences(document.getText()));
+    const previous = this.bibliographySignatures.get(key);
+    if (previous !== undefined && previous !== signature) {
+      this.projectScopes.clear();
+    }
+    this.bibliographySignatures.set(key, signature);
     const cached = this.projectScopes.get(key);
-    if (cached?.signature === signature) {
-      return cached.scope;
+    if (cached) {
+      return cached;
     }
 
     // Cache the in-flight promise as well as completed results so simultaneous
     // IntelliSense requests share one filesystem traversal.
-    const scope = (async (): Promise<ProjectScope> => {
+    let scope!: Promise<ProjectScope>;
+    scope = (async (): Promise<ProjectScope> => {
       let main = document.uri;
       try {
         const project = await LaTeXProject.generate_project(document.uri, true);
@@ -151,8 +143,11 @@ export default class CitationService implements vscode.Disposable {
       const references: string[] = [];
       const seen = new Set<string>();
       for (const { uri, source } of sources) {
-        this.structuralSignatures.set(Workspace.uriKey(uri), projectStructureSignature(source));
-        for (const reference of discoverBibReferences(source)) {
+        const discovered = discoverBibReferences(source);
+        if (!this.disposed && this.projectScopes.get(key) === scope) {
+          this.bibliographySignatures.set(Workspace.uriKey(uri), JSON.stringify(discovered));
+        }
+        for (const reference of discovered) {
           if (!seen.has(reference)) {
             seen.add(reference);
             references.push(reference);
@@ -161,21 +156,11 @@ export default class CitationService implements vscode.Disposable {
       }
       return { main, files: projectFiles, references };
     })();
-    this.projectScopes.set(key, { signature, scope });
+    this.projectScopes.set(key, scope);
     return scope;
   }
 }
 
 function isBibDocument(document: vscode.TextDocument): boolean {
   return document.uri.path.toLocaleLowerCase().endsWith('.bib');
-}
-
-function projectStructureSignature(source: string): string {
-  // Only directives that affect project discovery belong in this cheap signature;
-  // ordinary text edits should not discard the project-scope cache.
-  const directives = source.match(/^%#main\b[^\r\n]*/gm) ?? [];
-  const commands = new LaTeXParser.DocumentParser(source).declarations
-    .filter(declaration => declaration.kind !== 'package')
-    .map(declaration => source.slice(declaration.start, declaration.end));
-  return JSON.stringify([directives, commands]);
 }

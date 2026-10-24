@@ -4,7 +4,6 @@ import LaTeXProject from '../project/LaTeXProject';
 import { isStructureTrivia, parseStructureEvents, StructureEvent, structurePlainText } from './LaTeXStructureParser';
 import { StructureKind, StructureLabelEntry, StructureLocation, StructureNode, StructureSnapshot } from './StructureTypes';
 import * as Workspace from '../workspace';
-import * as LaTeXParser from '../latex-parser';
 
 interface ParsedSource {
   uri: vscode.Uri;
@@ -172,20 +171,12 @@ export async function localDocumentStructure(document: vscode.TextDocument): Pro
   return buildStructure(expanded, theoremSettings(document.uri));
 }
 
-function projectSignature(source: string): string {
-  const commands = new LaTeXParser.DocumentParser(source).declarations
-    .filter(declaration => declaration.kind === 'documentClass' || declaration.kind === 'include')
-    .map(declaration => source.slice(declaration.start, declaration.end));
-  return JSON.stringify([source.match(/^%#main\b[^\r\n]*/gm), commands]);
-}
-
 export default class StructureService implements vscode.Disposable {
   private readonly changed = new vscode.EventEmitter<StructureSnapshot | undefined>();
   readonly onDidChange = this.changed.event;
   private readonly disposables: vscode.Disposable[] = [this.changed];
   private readonly watches = new Map<string, vscode.Disposable>();
   private readonly sources = new Map<string, ParsedSource>();
-  private readonly parents = new Map<string, { signature: string; main: vscode.Uri }>();
   private selected?: vscode.TextDocument;
   private timer?: ReturnType<typeof setTimeout>;
   private generation = 0;
@@ -197,27 +188,22 @@ export default class StructureService implements vscode.Disposable {
   constructor(private readonly watch = true) {
     if (!watch) { return; }
     const schedule = () => this.schedule();
-    const invalidate = () => { this.parents.clear(); this.schedule(); };
-    const watcher = vscode.workspace.createFileSystemWatcher('**/*.tex');
-    this.disposables.push(watcher, watcher.onDidChange(invalidate), watcher.onDidCreate(invalidate), watcher.onDidDelete(invalidate),
+    this.disposables.push(LaTeXProject.onDidChange(schedule),
       vscode.window.onDidChangeActiveTextEditor(editor => {
         if (editor?.document.languageId === 'latex') { this.selected = editor.document; this.schedule(); }
       }),
       vscode.workspace.onDidChangeTextDocument(event => {
         if (event.document.languageId !== 'latex') { return; }
         const key = Workspace.uriKey(event.document.uri);
-        const old = this.sources.get(key);
-        if (!old || projectSignature(old.source) !== projectSignature(event.document.getText())) { this.parents.clear(); }
         if (key === (this.selected && Workspace.uriKey(this.selected.uri)) || this.watches.has(key)) { this.schedule(); }
       }),
       vscode.workspace.onDidCloseTextDocument(document => {
-        if (this.watches.has(Workspace.uriKey(document.uri))) { this.parents.clear(); this.schedule(); }
+        if (this.watches.has(Workspace.uriKey(document.uri))) { this.schedule(); }
       }),
       vscode.workspace.onDidChangeConfiguration(event => {
-        if (event.affectsConfiguration('vscode-fortex.mainFileOrder')
-          || event.affectsConfiguration('vscode-fortex.outline.followIncludes')
+        if (event.affectsConfiguration('vscode-fortex.outline.followIncludes')
           || event.affectsConfiguration('vscode-fortex.outline.theoremEnvironments')) {
-          this.parents.clear(); schedule();
+          schedule();
         }
       }));
     if (vscode.window.activeTextEditor?.document.languageId === 'latex') {
@@ -285,13 +271,9 @@ export default class StructureService implements vscode.Disposable {
     let main = document.uri;
     let message: string | undefined;
     if (followIncludes && document.uri.scheme === 'file') {
-      const key = Workspace.uriKey(document.uri);
-      const signature = projectSignature(document.getText()) + JSON.stringify(config.get('mainFileOrder'));
-      const cached = this.parents.get(key);
       try {
         // Deliberately use the exact entry point used by BuildManager.build.
-        main = cached?.signature === signature ? cached.main : (await LaTeXProject.generate_project(document.uri, true))[1];
-        this.parents.set(key, { signature, main });
+        main = (await LaTeXProject.generate_project(document.uri, true))[1];
       } catch {
         message = 'Main file could not be determined; showing the current file.';
       }
@@ -345,7 +327,7 @@ export default class StructureService implements vscode.Disposable {
       const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(
         vscode.Uri.file(path.dirname(uri.fsPath)), '*'));
       const invalidate = (changed: vscode.Uri) => {
-        if (Workspace.uriKey(changed) === key) { this.parents.clear(); this.schedule(); }
+        if (Workspace.uriKey(changed) === key) { this.schedule(); }
       };
       const subscriptions = [watcher, watcher.onDidChange(invalidate), watcher.onDidCreate(invalidate), watcher.onDidDelete(invalidate)];
       this.watches.set(key, vscode.Disposable.from(...subscriptions));
@@ -358,6 +340,6 @@ export default class StructureService implements vscode.Disposable {
     if (this.timer) { clearTimeout(this.timer); }
     for (const watcher of this.watches.values()) { watcher.dispose(); }
     for (const disposable of this.disposables) { disposable.dispose(); }
-    this.watches.clear(); this.sources.clear(); this.parents.clear();
+    this.watches.clear(); this.sources.clear();
   }
 }
