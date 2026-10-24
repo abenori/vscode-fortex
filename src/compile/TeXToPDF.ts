@@ -99,17 +99,17 @@ export default class TeXToPDF {
   }
 
   private make_bibtex_command(): [string, string[]] {
-    let prog = this.LaTeXProject.percent_sharp("bibtex") ?? "upbibtex";
+    let prog = (this.LaTeXProject.percent_sharp("bibtex") ?? "upbibtex").trim();
     return [prog, []];
   }
 
   private make_makeindex_command(): [string, string[]] {
-    let prog = this.LaTeXProject.percent_sharp("makeindex") ?? "upmendex";
+    let prog = (this.LaTeXProject.percent_sharp("makeindex") ?? "upmendex").trim();
     return [prog, []];
   }
 
   private make_dvipdfm_command(): [string, string[]] {
-    let prog = this.LaTeXProject.percent_sharp("dvipdf") ?? "dvipdfmx";
+    let prog = (this.LaTeXProject.percent_sharp("dvipdf") ?? "dvipdfmx").trim();
     return [prog, []];
   }
 
