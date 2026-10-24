@@ -6,6 +6,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+- Extracted build coordination and progress notifications into `BuildManager`.
 - Moved shared LaTeX project discovery from `src/compile` to `src/project`.
 - Shared unsaved-buffer-first document reading and URI identity through the `Workspace` API across project discovery, outlines, citations, and PDF previews.
 - Added a LaTeX Structure tree with project/local scope, shared build main-file discovery, headings, theorems, equations, figures, tables, attached labels, category filters, and complete label search/name-order display.

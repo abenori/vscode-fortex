@@ -287,7 +287,7 @@ export default class StructureService implements vscode.Disposable {
       const signature = projectSignature(document.getText()) + JSON.stringify(config.get('mainFileOrder'));
       const cached = this.parents.get(key);
       try {
-        // Deliberately use the exact entry point used by BuildManeger.build.
+        // Deliberately use the exact entry point used by BuildManager.build.
         main = cached?.signature === signature ? cached.main : (await LaTeXProject.generate_project(document.uri, true))[1];
         this.parents.set(key, { signature, main });
       } catch {
