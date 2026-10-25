@@ -272,8 +272,8 @@ export default class StructureService implements vscode.Disposable {
     let message: string | undefined;
     if (followIncludes && document.uri.scheme === 'file') {
       try {
-        // Deliberately use the exact entry point used by BuildManager.build.
-        main = (await LaTeXProject.generate_project(document.uri, true))[1];
+        // Use the same main-file discovery as project creation for builds.
+        main = await LaTeXProject.resolveMainFile(document.uri);
       } catch {
         message = 'Main file could not be determined; showing the current file.';
       }
@@ -303,7 +303,8 @@ export default class StructureService implements vscode.Disposable {
       for (const entry of local) {
         if (entry.event.type !== 'include') { expanded.push(entry); continue; }
         if (!followIncludes) { expanded.push({ ...entry, event: { ...entry.event, type: 'text' } }); continue; }
-        const target = LaTeXProject.resolveIncludedFile(uri, entry.event.path);
+        // TeX keeps the compilation directory while reading included sources.
+        const target = LaTeXProject.resolveIncludedFile(main, entry.event.path);
         if (target) { await visit(target, nextAncestors, entry); }
         else { expanded.push({ ...entry, event: { ...entry.event, type: 'issue', title: `Unresolved include: ${entry.event.path}` } }); }
       }

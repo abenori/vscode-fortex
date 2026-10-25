@@ -1,12 +1,28 @@
 import * as vscode from 'vscode';
-import * as fs from 'fs';
 import * as path from 'path';
-import Log from '../log';
 import Config from "../Config";
 import * as Workspace from '../workspace';
 import * as LaTeXParser from '../latex-parser';
 
 type LaTeXFileType = typeof LaTeXProject.LaTeXFileType[keyof typeof LaTeXProject.LaTeXFileType];
+
+interface IncludedFile {
+  readonly uri: vscode.Uri;
+  readonly type: LaTeXFileType;
+}
+
+/** Missing references remain available to builds but are omitted from source searches. */
+interface ProjectFileEntry extends IncludedFile {
+  readonly exists: boolean;
+}
+
+type ProjectDescription = [
+  file: vscode.Uri | null,
+  main: vscode.Uri,
+  classFile: string,
+  classOption: string,
+  directives: { [key: string]: string }
+];
 
 interface MainFileCacheEntry {
   readonly signature: string;
@@ -175,59 +191,61 @@ export default class LaTeXProject {
     return this.percent_sharp_[key];
   }
 
-  // こんな感じで使うつもり．
-  // proj = new LaTeXProject(LaTeXProject.generate_project(...))
-  constructor(a: [vscode.Uri | null, vscode.Uri, string, string, { [key: string]: string }]) {
-    this.file_ = a[0];
-    this.mainfile_ = a[1];
-    this.classfile_ = a[2];
-    this.classoption_ = a[3];
-    this.percent_sharp_ = a[4];
-    this.make_filelist();
+  private constructor([file, main, classFile, classOption, directives]: ProjectDescription, entries: readonly ProjectFileEntry[]) {
+    this.file_ = file;
+    this.mainfile_ = main;
+    this.classfile_ = classFile;
+    this.classoption_ = classOption;
+    this.percent_sharp_ = directives;
+    this.filelist_ = entries.map(entry => [entry.uri, entry.type]);
   }
 
-  static async get_class_option_from_main(main: vscode.Uri): Promise<[string, string]> {
+  /** Return a project only after its complete file list has been collected. */
+  public static async create(file: vscode.Uri | null): Promise<LaTeXProject> {
+    LaTeXProject.ensureWatching();
+    const lifetime = LaTeXProject.lifetime;
+    while (true) {
+      if (lifetime !== LaTeXProject.lifetime) { throw new vscode.CancellationError(); }
+      const revision = LaTeXProject.revision;
+      const description = await LaTeXProject.generate_project(file);
+      const entries = await LaTeXProject.collectProjectEntries(description[1]);
+      if (lifetime !== LaTeXProject.lifetime) { throw new vscode.CancellationError(); }
+      if (revision !== LaTeXProject.revision) { continue; }
+      return new LaTeXProject(description, entries);
+    }
+  }
+
+  private static async get_class_option_from_main(main: vscode.Uri): Promise<[string, string]> {
     const parsed = await LaTeXProject.readSource(main);
     return [...parsed.documentClass];
   }
-  static async exist_file(f: vscode.Uri, dir: vscode.Uri) : Promise<boolean> {
+  private static async fileExists(file: vscode.Uri): Promise<boolean> {
     try {
-      await vscode.workspace.fs.stat(f); // 存在確認のため
+      await vscode.workspace.fs.stat(file);
     } catch (e) {
       return false;
     }
     return true;
   }
-  // [main,class,option,percent_sharps]
-  static async get_main_from_percent_sharp(f: vscode.Uri, percent_sharp: { [key: string]: string }): Promise<[vscode.Uri, string, string, { [key: string]: string }] | undefined> {
-    let main_from_percent_sharp: string | undefined = undefined;
-    main_from_percent_sharp = percent_sharp["main"];
-    if(!main_from_percent_sharp) {return undefined; }
-    main_from_percent_sharp = main_from_percent_sharp.trim();
-    let main = path.isAbsolute(main_from_percent_sharp) ?
-      vscode.Uri.file(main_from_percent_sharp) :
-      vscode.Uri.file(path.join(path.dirname(f.fsPath), main_from_percent_sharp));
+  private static async mainFromMagic(file: vscode.Uri, directives: { [key: string]: string }): Promise<vscode.Uri | undefined> {
+    const name = directives.main?.trim();
+    if (!name) { return undefined; }
+    const main = vscode.Uri.file(path.resolve(path.dirname(file.fsPath), name));
     if (LaTeXProject.watching) { LaTeXProject.trackedFiles.add(Workspace.uriKey(main)); }
     LaTeXProject.watchDirectory(vscode.Uri.joinPath(main, '..'));
-    if(!await LaTeXProject.exist_file(main, vscode.Uri.file(path.dirname(f.fsPath)))) { return undefined; }
-    let [cls, clsopt] = await LaTeXProject.get_class_option_from_main(main);
-    return [main, cls, clsopt, percent_sharp];
-  }
-  static async guess_main_file(f: vscode.Uri, percent_sharp: { [key: string]: string }): Promise<[vscode.Uri, string, string, { [key: string]: string }] | undefined> {
-    let res = await LaTeXProject.guess_mainfile(f);
-    if (res) {
-      return [...res, percent_sharp];
-    }else {
-      return undefined;
-    }
+    return main;
   }
 
-  static async main_from_current_file(f: vscode.Uri, percent_sharp: { [key: string]: string }): Promise<[vscode.Uri, string, string, { [key: string]: string }] | undefined> {
-    let [cls,clsopt] = await LaTeXProject.get_class_option_from_main(f);
-    return [f, cls, clsopt, percent_sharp];
+  private static async mainFromCurrentFile(file: vscode.Uri): Promise<vscode.Uri | undefined> {
+    return file;
   }
 
-  public static async generate_project(f: vscode.Uri | null, guess_parent: boolean): Promise<[vscode.Uri | null,vscode.Uri, string, string, { [key: string]: string }]> {
+  /** Resolve the main URI without an additional file-list collection. */
+  public static async resolveMainFile(file: vscode.Uri | null): Promise<vscode.Uri> {
+    return (await LaTeXProject.generate_project(file))[1];
+  }
+
+  private static async generate_project(f: vscode.Uri | null): Promise<ProjectDescription> {
     LaTeXProject.ensureWatching();
     const file = f ?? vscode.window.activeTextEditor?.document.uri;
     if (!file) { throw new Error("Cannot get the current file"); }
@@ -282,54 +300,19 @@ export default class LaTeXProject {
     }
   }
 
-  private static async discoverMain(file: vscode.Uri, percent_sharp: { [key: string]: string }, main_order: readonly string[]): Promise<vscode.Uri> {
+  private static async discoverMain(file: vscode.Uri, directives: { [key: string]: string }, order: readonly string[]): Promise<vscode.Uri> {
     // Strategies are data-driven so changing `mainFileOrder` does not duplicate
     // the validation and result assembly below.
-    const guess_tactics: Array<(file: vscode.Uri, directives: { [key: string]: string }) => Promise<[vscode.Uri, string, string, { [key: string]: string }] | undefined>> = [];
-    for(let i = 0 ; i < main_order.length ; ++i){
-      switch(main_order[i]){
-        case "magic":
-          guess_tactics.push(LaTeXProject.get_main_from_percent_sharp);
-          break;
-        case "guess":
-          guess_tactics.push(LaTeXProject.guess_main_file);
-          break;
-        case "current":
-          guess_tactics.push(LaTeXProject.main_from_current_file);
-          break;
-      }
-    }
-
-    let dir = vscode.Uri.file(path.dirname(file.fsPath));
-
-    for (const tactic of guess_tactics){
-      let res = await tactic(file,percent_sharp);
-      if(res) {
-        let m = res[0];
-        if(await LaTeXProject.exist_file(m, dir)){ return m; }
-      }
+    const strategies = new Map<string, () => Promise<vscode.Uri | undefined>>([
+      ['magic', () => LaTeXProject.mainFromMagic(file, directives)],
+      ['guess', () => LaTeXProject.guessMainFile(file)],
+      ['current', () => LaTeXProject.mainFromCurrentFile(file)]
+    ]);
+    for (const name of order) {
+      const main = await strategies.get(name)?.();
+      if (main && await LaTeXProject.fileExists(main)) { return main; }
     }
     throw new Error("The main cannot be found.");
-  }
-
-  // file1とfile2が同じファイルかどうかを調べる
-  private static async isthesamefile(file1: vscode.Uri, file2: vscode.Uri): Promise<boolean> {
-    // Windows paths are case-insensitive. URI normalization also lets the upward
-    // directory walk recognize when it has reached the filesystem root.
-    try {
-      let f1 = await vscode.workspace.fs.stat(file1);
-      let f2 = await vscode.workspace.fs.stat(file2);
-      if (
-        (f1.type === vscode.FileType.File || f1.type === vscode.FileType.Directory) &&
-        f1.type === f2.type &&
-        file1.scheme === file2.scheme
-      ) {
-        return Workspace.uriKey(file1) === Workspace.uriKey(file2);
-      } else { return false; }
-    }
-    catch (e) {
-      return false;
-    }
   }
 
   // [class,option]を返す
@@ -343,147 +326,123 @@ export default class LaTeXProject {
     return [name, options ? scanner.textWithoutComments(options.contentStart, options.contentEnd) ?? '' : ''];
   }
 
-  // 絶対パスに変換，.texがなければ.texを付ける
-  private to_resalfilename(file: string, dir: string): string {
-    let f = path.normalize(file);
-    if (!path.isAbsolute(f)) {
-      f = path.normalize(path.join(dir, f));
-    }
-    if (path.extname(file).toLowerCase() !== ".tex") { return f + ".tex"; }
-    else { return f; }
-  }
-
-  // mainfile, classfile, optionを推測する
-  private static async guess_mainfile(file: vscode.Uri): Promise<[vscode.Uri, string, string] | null> {
-    //Log.debug_log("guess main file from " + file);
-    let cls = await LaTeXProject.get_class_option_from_main(file);
-    if (cls[0] !== "") {
-      //Log.debug_log("found main file from editor: " + file.fsPath);
-      return [file, cls[0], cls[1]];
-    }
-    let dir = vscode.Uri.file(path.dirname(file.fsPath));
+  private static async guessMainFile(file: vscode.Uri): Promise<vscode.Uri | undefined> {
+    const [cls] = await LaTeXProject.get_class_option_from_main(file);
+    if (cls) { return file; }
+    let directory = vscode.Uri.file(path.dirname(file.fsPath));
     // Search every ancestor. A candidate is accepted only when it has a
     // document class and recursively includes the active file.
-    // 階層をあがっていってfileがincludeされているファイルを探す
     while (true) {
-      let res = await LaTeXProject.find_included(dir, file);
-      if(res){ return res; }
-      let parent = vscode.Uri.file(path.dirname(dir.fsPath));
-      if (await LaTeXProject.isthesamefile(parent, dir)) { break; }
-      dir = parent;
+      const main = await LaTeXProject.findMainInDirectory(directory, file);
+      if (main) { return main; }
+      const parent = vscode.Uri.file(path.dirname(directory.fsPath));
+      if (Workspace.uriKey(parent) === Workspace.uriKey(directory)) { break; }
+      directory = parent;
     }
-    return null;
+    return undefined;
   }
 
-  // (includeされているファイル一覧，クラスファイル名,option)を返す
-  private static async included_files(file: vscode.Uri): Promise<[[vscode.Uri, LaTeXFileType][], string, string]> {
+  /** Read direct references, resolving every path against the candidate main. */
+  private static async readIncludes(sourceFile: vscode.Uri, mainFile: vscode.Uri): Promise<IncludedFile[]> {
     // This intentionally parses only literal paths. Macro-generated inputs cannot
     // be resolved reliably without executing TeX.
     let txt = "";
     try {
-      txt = (await LaTeXProject.readSource(file)).source;
+      txt = (await LaTeXProject.readSource(sourceFile)).source;
     }
     catch (e) {
-      return [[], "", ""];
+      if (e instanceof vscode.CancellationError) { throw e; }
+      return [];
     }
     const scanner = new LaTeXParser.SourceScanner(txt);
     const document = new LaTeXParser.DocumentParser(scanner);
-    let files: [vscode.Uri, LaTeXFileType][] = [];
+    const files: IncludedFile[] = [];
     for (const declaration of document.declarations) {
       if (declaration.kind !== 'include' || !declaration.complete || !declaration.argument) { continue; }
       const name = scanner.textWithoutComments(declaration.argument.contentStart, declaration.argument.contentEnd)?.trim();
       // These tokens require TeX expansion rather than static path resolution.
       if (!name || /[\\#${}]/.test(name)) { continue; }
-      const uri = LaTeXProject.resolveIncludedFile(file, name);
+      const uri = LaTeXProject.resolveIncludedFile(mainFile, name);
       if (!uri) { continue; }
       if (declaration.command === "input") {
-        files.push([uri, LaTeXProject.LaTeXFileType.input]);
+        files.push({ uri, type: LaTeXProject.LaTeXFileType.input });
       } else {
-        files.push([uri, LaTeXProject.LaTeXFileType.include]);
+        files.push({ uri, type: LaTeXProject.LaTeXFileType.include });
       }
     }
-    if (files.length === 0) {
-      return [[], "", ""];
-    }
-    let cls = LaTeXProject.get_classfile(scanner, document);
-    return [files, cls[0], cls[1]];
-  }
-
-  // ディレクトリdir内からtargetがinclude/inputされているファイルを探す．
-  // 戻り値は[親ファイル名,クラスファイル名,option]（\documentclassがない場合はクラスファイルは空文字列）
-  private static async find_included(dir: vscode.Uri, target: vscode.Uri): Promise<[vscode.Uri, string, string] | null> {
-    // Only top-level documents in this directory are candidates; recursive
-    // inclusion is checked by collectProjectFiles for each candidate.
-    try {
-      LaTeXProject.watchDirectory(dir);
-      const files = await vscode.workspace.fs.readDirectory(dir);
-      // results[file] = fileを\includeしているファイルたち
-      //Log.debug_log("search the file which includes " + target.fsPath + " from the drectory " + dir);
-      for (const file of files) {
-        if (file[1] === vscode.FileType.Directory) { continue; }
-        if (path.extname(file[0]).toLowerCase() !== ".tex") { continue; }
-        let filepath = vscode.Uri.joinPath(dir, file[0]);
-        try {
-          const [cls, opt] = await LaTeXProject.get_class_option_from_main(filepath);
-          if (!cls) { continue; }
-          const projectFiles = await LaTeXProject.collectProjectFiles(filepath);
-          if (projectFiles.some((projectFile) => Workspace.uriKey(projectFile) === Workspace.uriKey(target))) {
-            return [filepath, cls, opt];
-          }
-        } catch {
-          continue;
-        }
-      }
-      return null;
-
-    }
-    catch (e) { return null; }
-  }
-
-  public static async collectProjectFiles(main: vscode.Uri): Promise<vscode.Uri[]> {
-    // The visited set prevents cycles such as A inputting B and B inputting A.
-    const files: vscode.Uri[] = [];
-    const visited = new Set<string>();
-    const visit = async (file: vscode.Uri): Promise<void> => {
-      const key = Workspace.uriKey(file);
-      if (visited.has(key)) { return; }
-      visited.add(key);
-      LaTeXProject.trackedFiles.add(key);
-      LaTeXProject.watchDirectory(vscode.Uri.joinPath(file, '..'));
-      try {
-        await vscode.workspace.fs.stat(file);
-      } catch {
-        return;
-      }
-      files.push(file);
-      const [included] = await LaTeXProject.included_files(file);
-      for (const [child] of included) {
-        await visit(child);
-      }
-    };
-    await visit(main);
     return files;
   }
 
-  /** Shared literal-path resolution for compilation and the structure view. */
-  public static resolveIncludedFile(from: vscode.Uri, name: string): vscode.Uri | undefined {
+  private static async findMainInDirectory(directory: vscode.Uri, target: vscode.Uri): Promise<vscode.Uri | undefined> {
+    // Only top-level documents in this directory are candidates; recursive
+    // inclusion is checked by collectProjectFiles for each candidate.
+    try {
+      LaTeXProject.watchDirectory(directory);
+      const files = await vscode.workspace.fs.readDirectory(directory);
+      for (const file of files) {
+        if (file[1] === vscode.FileType.Directory) { continue; }
+        if (path.extname(file[0]).toLowerCase() !== ".tex") { continue; }
+        const filepath = vscode.Uri.joinPath(directory, file[0]);
+        try {
+          const [cls] = await LaTeXProject.get_class_option_from_main(filepath);
+          if (!cls) { continue; }
+          const projectFiles = await LaTeXProject.collectProjectFiles(filepath);
+          if (projectFiles.some((projectFile) => Workspace.uriKey(projectFile) === Workspace.uriKey(target))) {
+            return filepath;
+          }
+        } catch (error) {
+          if (error instanceof vscode.CancellationError) { throw error; }
+          continue;
+        }
+      }
+      return undefined;
+
+    }
+    catch (error) {
+      if (error instanceof vscode.CancellationError) { throw error; }
+      return undefined;
+    }
+  }
+
+  private static async collectProjectEntries(main: vscode.Uri): Promise<ProjectFileEntry[]> {
+    // The visited set prevents cycles such as A inputting B and B inputting A.
+    // Keep the candidate main as the path base throughout traversal. Reading a
+    // nested source does not change TeX's working directory.
+    const entries: ProjectFileEntry[] = [];
+    const visited = new Set<string>();
+    const visit = async (entry: IncludedFile): Promise<void> => {
+      const key = Workspace.uriKey(entry.uri);
+      if (visited.has(key)) { return; }
+      visited.add(key);
+      LaTeXProject.trackedFiles.add(key);
+      LaTeXProject.watchDirectory(vscode.Uri.joinPath(entry.uri, '..'));
+      const exists = await LaTeXProject.fileExists(entry.uri);
+      entries.push({ ...entry, exists });
+      if (!exists) { return; }
+      const included = await LaTeXProject.readIncludes(entry.uri, main);
+      for (const child of included) {
+        await visit(child);
+      }
+    };
+    await visit({ uri: main, type: LaTeXProject.LaTeXFileType.main });
+    return entries;
+  }
+
+  public static async collectProjectFiles(main: vscode.Uri): Promise<vscode.Uri[]> {
+    const entries = await LaTeXProject.collectProjectEntries(main);
+    return entries.filter(entry => entry.exists).map(entry => entry.uri);
+  }
+
+  /**
+   * Resolve a literal input/include path from the compilation directory.
+   * Fortex runs TeX in the main file's directory, even for nested inputs.
+   * Pass the project main, rather than the source containing the command.
+   */
+  public static resolveIncludedFile(main: vscode.Uri, name: string): vscode.Uri | undefined {
     let file = name.trim();
     if (!file || file.includes('\\')) { return undefined; }
     if (path.extname(file).toLowerCase() !== '.tex') { file += '.tex'; }
-    return vscode.Uri.file(path.resolve(path.dirname(from.fsPath), file));
-  }
-
-  private make_filelist() {
-    this.filelist_ = [[this.mainfile_, LaTeXProject.LaTeXFileType.main]];
-    void this.make_filelist_from_file(this.mainfile_);
-  }
-  private async make_filelist_from_file(file: vscode.Uri) {
-    let [incfiles, a, b] = await LaTeXProject.included_files(file);
-    for (const incfile of incfiles) {
-      if (this.filelist.some(([listed]) => Workspace.uriKey(listed) === Workspace.uriKey(incfile[0]))) { continue; }
-      this.filelist.push(incfile);
-      await this.make_filelist_from_file(incfile[0]);
-    }
+    return vscode.Uri.file(path.resolve(path.dirname(main.fsPath), file));
   }
 
   private static parse_percent_sharp_doc(txt: string): { [key: string]: string } {

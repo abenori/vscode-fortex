@@ -40,9 +40,7 @@ export default class BuildManager{
         this.clearProgress();
         // Project discovery must happen for every build because `%#main` and the
         // include graph may have changed since the previous save.
-        let proj = new LaTeXProject(
-          await LaTeXProject.generate_project(doc.uri, true)
-        );
+        let proj = await LaTeXProject.create(doc.uri);
         let compile = new LaTeXCompile(proj);
         await vscode.window.withProgress({
           location: vscode.ProgressLocation.Notification,

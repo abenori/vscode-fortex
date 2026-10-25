@@ -28,7 +28,7 @@ export default class PDFPreview implements vscode.Disposable {
     const sourceSelection = editor.selection;
     const sourceViewColumn = editor.viewColumn;
     const keepEditorFocus = sync && Config.syncTeXForwardSearchFocus() === "editor";
-    const project = new LaTeXProject(await LaTeXProject.generate_project(sourceDocument.uri, true));
+    const project = await LaTeXProject.create(sourceDocument.uri);
     await this.open(project, viewer,
       sync ? sourceDocument.uri : undefined,
       sync ? sourceSelection.active.line + 1 : undefined,
