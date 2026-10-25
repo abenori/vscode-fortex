@@ -28,8 +28,8 @@ export default class PDFPreview implements vscode.Disposable {
     const sourceSelection = editor.selection;
     const sourceViewColumn = editor.viewColumn;
     const keepEditorFocus = sync && Config.syncTeXForwardSearchFocus() === "editor";
-    const project = await LaTeXProject.create(sourceDocument.uri);
-    await this.open(project, viewer,
+    const main = await LaTeXProject.resolveMainFile(sourceDocument.uri);
+    await this.open(main, viewer,
       sync ? sourceDocument.uri : undefined,
       sync ? sourceSelection.active.line + 1 : undefined,
       sync ? sourceSelection.active.character + 1 : undefined,
@@ -44,21 +44,21 @@ export default class PDFPreview implements vscode.Disposable {
     // Refresh an existing internal panel even when automatic opening is disabled,
     // so an already visible preview never remains on an older build.
     if (Config.openPdfAfterBuild()) {
-      await this.open(project, Config.pdfViewer());
+      await this.open(project.mainfile, Config.pdfViewer());
     } else {
-      await this.internal.refresh(this.pdfUri(project));
+      await this.internal.refresh(this.pdfUri(project.mainfile));
     }
   }
 
   private async open(
-    project: LaTeXProject,
+    main: vscode.Uri,
     viewer: PDFViewer,
     source?: vscode.Uri,
     line?: number,
     column?: number,
     preserveFocus = false
   ): Promise<void> {
-    const pdf = this.pdfUri(project);
+    const pdf = this.pdfUri(main);
     if (viewer === "sumatra") {
       await SumatraPDF.open(pdf.fsPath, source?.fsPath, line);
     } else {
@@ -98,8 +98,8 @@ export default class PDFPreview implements vscode.Disposable {
     await focus();
   }
 
-  private pdfUri(project: LaTeXProject): vscode.Uri {
-    const main = project.mainfile.fsPath;
+  private pdfUri(mainFile: vscode.Uri): vscode.Uri {
+    const main = mainFile.fsPath;
     return vscode.Uri.file(path.join(path.dirname(main), path.basename(main, path.extname(main)) + ".pdf"));
   }
 
