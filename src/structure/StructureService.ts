@@ -265,6 +265,14 @@ export default class StructureService implements vscode.Disposable {
     return parsed;
   }
 
+  private resolveIncludedFile(main: vscode.Uri, argument: string): vscode.Uri | undefined {
+    let file = argument.trim();
+    if (!file || /[\\#${}]/.test(file)) { return undefined; }
+    if (path.extname(file).toLowerCase() !== '.tex') { file += '.tex'; }
+    // Reading an included source does not change TeX's compilation directory.
+    return vscode.Uri.file(path.resolve(path.dirname(main.fsPath), file));
+  }
+
   private async load(document: vscode.TextDocument): Promise<StructureSnapshot> {
     const config = vscode.workspace.getConfiguration('vscode-fortex', document.uri);
     const followIncludes = config.get('outline.followIncludes', true) && document.uri.scheme === 'file';
@@ -272,7 +280,7 @@ export default class StructureService implements vscode.Disposable {
     let message: string | undefined;
     if (followIncludes && document.uri.scheme === 'file') {
       try {
-        // Use the same main-file discovery as project creation for builds.
+        // Share main-file discovery; expand inputs from the structure parser's events.
         main = await LaTeXProject.resolveMainFile(document.uri);
       } catch {
         message = 'Main file could not be determined; showing the current file.';
@@ -303,8 +311,7 @@ export default class StructureService implements vscode.Disposable {
       for (const entry of local) {
         if (entry.event.type !== 'include') { expanded.push(entry); continue; }
         if (!followIncludes) { expanded.push({ ...entry, event: { ...entry.event, type: 'text' } }); continue; }
-        // TeX keeps the compilation directory while reading included sources.
-        const target = LaTeXProject.resolveIncludedFile(main, entry.event.path);
+        const target = this.resolveIncludedFile(main, entry.event.path);
         if (target) { await visit(target, nextAncestors, entry); }
         else { expanded.push({ ...entry, event: { ...entry.event, type: 'issue', title: `Unresolved include: ${entry.event.path}` } }); }
       }

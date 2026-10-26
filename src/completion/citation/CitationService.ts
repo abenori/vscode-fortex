@@ -131,14 +131,19 @@ export default class CitationService implements vscode.Disposable {
     let scope!: Promise<ProjectScope>;
     scope = (async (): Promise<ProjectScope> => {
       let main = document.uri;
+      let projectFiles = [document.uri];
       try {
-        main = await LaTeXProject.resolveMainFile(document.uri);
+        const project = await LaTeXProject.create(document.uri);
+        main = project.mainfile;
+        const files = project.filelist.filter(entry => entry.exists).map(entry => entry.uri);
+        if (files.length > 0) { projectFiles = files; }
       } catch {
         // A standalone or unsaved document remains its own project root.
       }
-      const files = await LaTeXProject.collectProjectFiles(main);
-      const projectFiles = files.length > 0 ? files : [document.uri];
-      const sources = await Promise.all(projectFiles.map(async (uri) => ({ uri, source: await Workspace.readDocumentText(uri).catch(() => '') })));
+      const sources = await Promise.all(projectFiles.map(async (uri) => ({
+        uri,
+        source: Workspace.uriKey(uri) === key ? document.getText() : await Workspace.readDocumentText(uri).catch(() => '')
+      })));
       const references: string[] = [];
       const seen = new Set<string>();
       for (const { uri, source } of sources) {

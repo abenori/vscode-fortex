@@ -40,8 +40,8 @@ export default class TeXToPDF {
     }
     this.file_list.push(this.LaTeXProject.mainfile.fsPath);
     for (const file of this.LaTeXProject.filelist) {
-      if (file[1] === LaTeXProject.LaTeXFileType.include) {
-        this.file_list.push(file[0].fsPath);
+      if (file.type === LaTeXProject.LaTeXFileType.include) {
+        this.file_list.push(file.uri.fsPath);
       }
     }
   }

@@ -184,8 +184,9 @@ export default class LaTeXProject {
   get classfile(): string { return this.classfile_; }
   private classoption_: string = "";
   get classoption(): string { return this.classoption_; }
-  private filelist_: [vscode.Uri, LaTeXFileType][] = [];
-  get filelist(): [vscode.Uri, LaTeXFileType][] { return this.filelist_; }
+  private readonly filelist_: readonly ProjectFileEntry[];
+  /** Unique references in traversal order, with existence recorded at creation. */
+  get filelist(): readonly ProjectFileEntry[] { return this.filelist_; }
   private percent_sharp_: { [key: string]: string } = {};
   public percent_sharp(key: string): string | undefined {
     return this.percent_sharp_[key];
@@ -197,7 +198,7 @@ export default class LaTeXProject {
     this.classfile_ = classFile;
     this.classoption_ = classOption;
     this.percent_sharp_ = directives;
-    this.filelist_ = entries.map(entry => [entry.uri, entry.type]);
+    this.filelist_ = entries;
   }
 
   /** Return a project only after its complete file list has been collected. */
@@ -428,7 +429,7 @@ export default class LaTeXProject {
     return entries;
   }
 
-  public static async collectProjectFiles(main: vscode.Uri): Promise<vscode.Uri[]> {
+  private static async collectProjectFiles(main: vscode.Uri): Promise<vscode.Uri[]> {
     const entries = await LaTeXProject.collectProjectEntries(main);
     return entries.filter(entry => entry.exists).map(entry => entry.uri);
   }
@@ -438,7 +439,7 @@ export default class LaTeXProject {
    * Fortex runs TeX in the main file's directory, even for nested inputs.
    * Pass the project main, rather than the source containing the command.
    */
-  public static resolveIncludedFile(main: vscode.Uri, name: string): vscode.Uri | undefined {
+  private static resolveIncludedFile(main: vscode.Uri, name: string): vscode.Uri | undefined {
     let file = name.trim();
     if (!file || file.includes('\\')) { return undefined; }
     if (path.extname(file).toLowerCase() !== '.tex') { file += '.tex'; }
