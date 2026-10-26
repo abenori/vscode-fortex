@@ -5,12 +5,13 @@ export function findDocumentationQuery(source: string, offset: number): string |
   if (!Number.isInteger(offset) || offset < 0 || offset > source.length) {
     return undefined;
   }
-  const scanner = new LaTeXParser.SourceScanner(source);
+  const syntax = new LaTeXParser.LaTeXSource(source);
+  const scanner = syntax.sourceScanner;
   if (scanner.ignoredRanges.some(range => range.start <= offset
     && (offset < range.end || (range.kind === 'comment' && offset === range.end)))) {
     return undefined;
   }
-  const document = new LaTeXParser.DocumentParser(scanner);
+  const document = syntax.documentParser;
   for (const declaration of document.declarations) {
     const argument = declaration.argument;
     if ((declaration.kind !== 'package' && declaration.kind !== 'documentClass')

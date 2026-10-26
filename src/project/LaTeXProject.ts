@@ -3,6 +3,9 @@ import * as path from 'path';
 import Config from "../Config";
 import * as Workspace from '../workspace';
 import * as LaTeXParser from '../latex-parser';
+import { resolveInputFile } from './InputFileResolver';
+import type { InputToken } from './InputFileResolver';
+import { MacroState } from './InputMacros';
 
 type LaTeXFileType = typeof LaTeXProject.LaTeXFileType[keyof typeof LaTeXProject.LaTeXFileType];
 
@@ -31,6 +34,7 @@ interface MainFileCacheEntry {
 
 interface ProjectSource {
   readonly source: string;
+  readonly syntax: LaTeXParser.LaTeXSource;
   readonly signature: string;
   readonly documentClass: [string, string];
 }
@@ -74,11 +78,12 @@ export default class LaTeXProject {
   private static invalidate(): void {
     LaTeXProject.revision++;
     LaTeXProject.mainFiles.clear();
+    const retained = new Set(LaTeXProject.trackedFiles);
     LaTeXProject.trackedFiles.clear();
     const open = new Set(vscode.workspace.textDocuments.filter(document => !document.isClosed)
       .map(document => Workspace.uriKey(document.uri)));
     for (const key of LaTeXProject.sources.keys()) {
-      if (!open.has(key)) { LaTeXProject.sources.delete(key); }
+      if (!open.has(key) && !retained.has(key)) { LaTeXProject.sources.delete(key); }
     }
     LaTeXProject.changed.fire();
   }
@@ -159,16 +164,51 @@ export default class LaTeXProject {
     const key = Workspace.uriKey(file);
     const cached = LaTeXProject.sources.get(key);
     if (cached?.source === source) { return cached; }
-    const scanner = new LaTeXParser.SourceScanner(source);
-    const parsed = new LaTeXParser.DocumentParser(scanner);
-    const main = LaTeXProject.parse_percent_sharp_doc(source).main;
-    const declarations = parsed.declarations
-      .filter(declaration => declaration.kind === 'documentClass' || declaration.kind === 'include')
-      .map(declaration => source.slice(declaration.start, declaration.end));
-    const snapshot = { source, signature: JSON.stringify([main, declarations]),
-      documentClass: LaTeXProject.get_classfile(scanner, parsed) };
+    const syntax = new LaTeXParser.LaTeXSource(source);
+    const snapshot: ProjectSource = {
+      source, syntax, signature: LaTeXProject.discoverySignature(syntax),
+      get documentClass() { return LaTeXProject.get_classfile(syntax); }
+    };
     if (LaTeXProject.watching) { LaTeXProject.sources.set(key, snapshot); }
     return snapshot;
+  }
+
+  /** Keep prose/build-directive edits cheap, but include definition order and scopes. */
+  private static discoverySignature(syntax: LaTeXParser.LaTeXSource): string {
+    const scanner = syntax.sourceScanner;
+    const definitions = new Map(syntax.definitionParser.definitions.map(definition => [definition.start, definition]));
+    const document = new Map(syntax.documentParser.declarations.map(declaration => [declaration.start, declaration]));
+    const parts: string[] = [LaTeXProject.parse_percent_sharp_doc(syntax).main ?? ''];
+    let cursor = 0;
+    for (const command of scanner.commands) {
+      if (command.start < cursor) { continue; }
+      parts.push(scanner.maskedSource.slice(cursor, command.start).replace(/[^{}]/g, ''));
+      const definition = definitions.get(command.start);
+      if (definition) {
+        parts.push(syntax.source.slice(command.start, definition.end));
+        cursor = definition.end;
+        continue;
+      }
+      const declaration = document.get(command.start);
+      if (declaration?.kind === 'documentClass') {
+        parts.push(syntax.source.slice(command.start, declaration.end));
+        cursor = declaration.end;
+      } else if (command.name === 'input' || command.name === 'include') {
+        const argument = syntax.argumentScanner.readArgument(command.end);
+        parts.push(command.name);
+        if (argument) {
+          parts.push(syntax.source.slice(argument.start, argument.end));
+          cursor = argument.end;
+        } else {
+          cursor = command.end;
+        }
+      } else {
+        parts.push(command.name);
+        cursor = command.end;
+      }
+    }
+    parts.push(scanner.maskedSource.slice(cursor).replace(/[^{}]/g, ''));
+    return JSON.stringify(parts);
   }
 
   static readonly LaTeXFileType = {
@@ -222,11 +262,11 @@ export default class LaTeXProject {
   }
   private static async fileExists(file: vscode.Uri): Promise<boolean> {
     try {
-      await vscode.workspace.fs.stat(file);
-    } catch (e) {
+      const stat = await vscode.workspace.fs.stat(file);
+      return (stat.type & vscode.FileType.File) !== 0;
+    } catch {
       return false;
     }
-    return true;
   }
   private static async mainFromMagic(file: vscode.Uri, directives: { [key: string]: string }): Promise<vscode.Uri | undefined> {
     const name = directives.main?.trim();
@@ -258,7 +298,7 @@ export default class LaTeXProject {
       const parsed = await LaTeXProject.readSource(file);
       // Directives always come from the original document, including fresh build
       // options when the parent itself is unchanged.
-      const directives = LaTeXProject.parse_percent_sharp_doc(parsed.source);
+      const directives = LaTeXProject.parse_percent_sharp_doc(parsed.syntax);
       const order = Config.mainFileOrder();
       const signature = JSON.stringify([parsed.signature, order]);
       if (revision !== LaTeXProject.revision) { continue; }
@@ -317,9 +357,10 @@ export default class LaTeXProject {
   }
 
   // [class,option]を返す
-  private static get_classfile(source: string | LaTeXParser.SourceScanner, document?: LaTeXParser.DocumentParser): [string, string] {
-    const scanner = typeof source === 'string' ? new LaTeXParser.SourceScanner(source) : source;
-    const parsed = document ?? new LaTeXParser.DocumentParser(scanner);
+  private static get_classfile(source: string | LaTeXParser.SourceScanner | LaTeXParser.LaTeXSource): [string, string] {
+    const syntax = source instanceof LaTeXParser.LaTeXSource ? source : new LaTeXParser.LaTeXSource(source);
+    const scanner = syntax.sourceScanner;
+    const parsed = syntax.documentParser;
     const declaration = parsed.declarations.find(item => item.kind === 'documentClass' && item.complete);
     if (!declaration?.argument) { return ["", ""]; }
     const name = scanner.textWithoutComments(declaration.argument.contentStart, declaration.argument.contentEnd)?.trim() ?? '';
@@ -341,37 +382,6 @@ export default class LaTeXProject {
       directory = parent;
     }
     return undefined;
-  }
-
-  /** Read direct references, resolving every path against the candidate main. */
-  private static async readIncludes(sourceFile: vscode.Uri, mainFile: vscode.Uri): Promise<IncludedFile[]> {
-    // This intentionally parses only literal paths. Macro-generated inputs cannot
-    // be resolved reliably without executing TeX.
-    let txt = "";
-    try {
-      txt = (await LaTeXProject.readSource(sourceFile)).source;
-    }
-    catch (e) {
-      if (e instanceof vscode.CancellationError) { throw e; }
-      return [];
-    }
-    const scanner = new LaTeXParser.SourceScanner(txt);
-    const document = new LaTeXParser.DocumentParser(scanner);
-    const files: IncludedFile[] = [];
-    for (const declaration of document.declarations) {
-      if (declaration.kind !== 'include' || !declaration.complete || !declaration.argument) { continue; }
-      const name = scanner.textWithoutComments(declaration.argument.contentStart, declaration.argument.contentEnd)?.trim();
-      // These tokens require TeX expansion rather than static path resolution.
-      if (!name || /[\\#${}]/.test(name)) { continue; }
-      const uri = LaTeXProject.resolveIncludedFile(mainFile, name);
-      if (!uri) { continue; }
-      if (declaration.command === "input") {
-        files.push({ uri, type: LaTeXProject.LaTeXFileType.input });
-      } else {
-        files.push({ uri, type: LaTeXProject.LaTeXFileType.include });
-      }
-    }
-    return files;
   }
 
   private static async findMainInDirectory(directory: vscode.Uri, target: vscode.Uri): Promise<vscode.Uri | undefined> {
@@ -406,23 +416,108 @@ export default class LaTeXProject {
   }
 
   private static async collectProjectEntries(main: vscode.Uri): Promise<ProjectFileEntry[]> {
-    // The visited set prevents cycles such as A inputting B and B inputting A.
-    // Keep the candidate main as the path base throughout traversal. Reading a
-    // nested source does not change TeX's working directory.
     const entries: ProjectFileEntry[] = [];
-    const visited = new Set<string>();
-    const visit = async (entry: IncludedFile): Promise<void> => {
-      const key = Workspace.uriKey(entry.uri);
-      if (visited.has(key)) { return; }
-      visited.add(key);
+    const listed = new Set<string>();
+    const ancestors = new Set<string>();
+    const sources = new Map<string, Promise<ProjectSource>>();
+    const macros = new MacroState();
+    const directory = vscode.Uri.file(path.dirname(main.fsPath));
+    const lifetime = LaTeXProject.lifetime;
+    let visits = 0;
+    const track = (uri: vscode.Uri): boolean => {
+      const key = Workspace.uriKey(uri);
+      const fresh = !LaTeXProject.trackedFiles.has(key);
       LaTeXProject.trackedFiles.add(key);
-      LaTeXProject.watchDirectory(vscode.Uri.joinPath(entry.uri, '..'));
-      const exists = await LaTeXProject.fileExists(entry.uri);
-      entries.push({ ...entry, exists });
-      if (!exists) { return; }
-      const included = await LaTeXProject.readIncludes(entry.uri, main);
-      for (const child of included) {
-        await visit(child);
+      LaTeXProject.watchDirectory(vscode.Uri.joinPath(uri, '..'));
+      return fresh;
+    };
+    const visit = async (entry: IncludedFile, knownExists?: boolean): Promise<void> => {
+      if (lifetime !== LaTeXProject.lifetime) { throw new vscode.CancellationError(); }
+      const key = Workspace.uriKey(entry.uri);
+      track(entry.uri);
+      const exists = knownExists ?? await LaTeXProject.fileExists(entry.uri);
+      if (!listed.has(key)) {
+        listed.add(key);
+        entries.push({ ...entry, exists });
+      }
+      if (!exists || ancestors.has(key)) { return; }
+      if (++visits > 10000 || ancestors.size >= 256) { throw new Error('Too many nested LaTeX inputs'); }
+      let parsed: ProjectSource;
+      try {
+        let pending = sources.get(key);
+        if (!pending) {
+          pending = LaTeXProject.readSource(entry.uri);
+          sources.set(key, pending);
+        }
+        parsed = await pending;
+      } catch (error) {
+        if (error instanceof vscode.CancellationError) { throw error; }
+        return;
+      }
+      ancestors.add(key);
+      try {
+        const syntax = parsed.syntax;
+        const scanner = syntax.sourceScanner;
+        const definitions = new Map(syntax.definitionParser.definitions.map(definition => [definition.start, definition]));
+        const hidden = syntax.definitionParser.consumedRanges;
+        let hiddenIndex = 0;
+        let cursor = 0;
+        for (const command of scanner.commands) {
+          if (command.start < cursor) { continue; }
+          // Ordinary groups carry local definitions across input boundaries.
+          for (let offset = cursor; offset < command.start; offset++) {
+            if (scanner.maskedSource[offset] === '{') { macros.pushScope(); }
+            else if (scanner.maskedSource[offset] === '}') { macros.popScope(); }
+          }
+          cursor = command.end;
+          while (hiddenIndex < hidden.length && hidden[hiddenIndex].end <= command.start) { hiddenIndex++; }
+          const definition = definitions.get(command.start);
+          if (definition) {
+            macros.apply(syntax, definition);
+            cursor = Math.max(cursor, definition.consumedEnd);
+            continue;
+          }
+          if (hidden[hiddenIndex]?.start <= command.start && command.start < hidden[hiddenIndex].end) {
+            cursor = Math.max(cursor, hidden[hiddenIndex].end);
+            continue;
+          }
+          if (command.name === 'begingroup' || command.name === 'bgroup') { macros.pushScope(); }
+          else if (command.name === 'endgroup' || command.name === 'egroup') { macros.popScope(); }
+          else if (command.name === 'begin' || command.name === 'end') {
+            const argument = syntax.argumentScanner.readArgument(command.end);
+            if (argument?.complete) {
+              cursor = argument.end;
+              if (command.name === 'begin') { macros.pushScope(); }
+              else { macros.popScope(); }
+            }
+          } else if (command.name === 'input' || command.name === 'include') {
+            let resolved;
+            while (true) {
+              resolved = await resolveInputFile(syntax, command as InputToken, directory, name => macros.lookup(name));
+              const fresh = resolved.checkedCandidates.filter(candidate => track(candidate.uri));
+              // A previously unknown candidate may change while stat is pending,
+              // before its directory/dependency has been registered. Check it
+              // once more under tracking before publishing the resolution.
+              const changed = await Promise.all(fresh.map(async candidate =>
+                (await LaTeXProject.fileExists(candidate.uri)) !== candidate.exists));
+              if (!changed.some(Boolean)) { break; }
+            }
+            if (lifetime !== LaTeXProject.lifetime) { throw new vscode.CancellationError(); }
+            cursor = Math.max(cursor, resolved.consumedEnd);
+            const target = resolved.status === 'resolved' ? resolved.uri
+              : resolved.status === 'missing' ? resolved.checkedCandidates[0]?.uri : undefined;
+            if (target) {
+              await visit({ uri: target, type: command.name === 'input'
+                ? LaTeXProject.LaTeXFileType.input : LaTeXProject.LaTeXFileType.include }, resolved.status === 'resolved');
+            }
+          }
+        }
+        for (let offset = cursor; offset < syntax.source.length; offset++) {
+          if (scanner.maskedSource[offset] === '{') { macros.pushScope(); }
+          else if (scanner.maskedSource[offset] === '}') { macros.popScope(); }
+        }
+      } finally {
+        ancestors.delete(key);
       }
     };
     await visit({ uri: main, type: LaTeXProject.LaTeXFileType.main });
@@ -434,24 +529,13 @@ export default class LaTeXProject {
     return entries.filter(entry => entry.exists).map(entry => entry.uri);
   }
 
-  /**
-   * Resolve a literal input/include path from the compilation directory.
-   * Fortex runs TeX in the main file's directory, even for nested inputs.
-   * Pass the project main, rather than the source containing the command.
-   */
-  private static resolveIncludedFile(main: vscode.Uri, name: string): vscode.Uri | undefined {
-    let file = name.trim();
-    if (!file || file.includes('\\')) { return undefined; }
-    if (path.extname(file).toLowerCase() !== '.tex') { file += '.tex'; }
-    return vscode.Uri.file(path.resolve(path.dirname(main.fsPath), file));
-  }
-
-  private static parse_percent_sharp_doc(txt: string): { [key: string]: string } {
+  private static parse_percent_sharp_doc(source: string | LaTeXParser.LaTeXSource): { [key: string]: string } {
     // Read full-line comments from the original document, excluding literal text.
     // Keep values opaque here: quotes, internal whitespace and `%` are meaningful
     // to their consumers. Only surrounding spaces and tabs are removed.
+    const txt = typeof source === 'string' ? source : source.source;
     if (!txt.includes('%#')) { return {}; }
-    const scanner = new LaTeXParser.SourceScanner(txt);
+    const scanner = (typeof source === 'string' ? new LaTeXParser.LaTeXSource(source) : source).sourceScanner;
     const directives = new Map<string, string>();
     const directive = /^%#(!|[^ \t\r\n]+)([^\r\n]*)$/;
     for (const range of scanner.ignoredRanges) {

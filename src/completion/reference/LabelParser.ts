@@ -15,8 +15,9 @@ export interface ReferenceContext {
 }
 
 /** Extracts unique labels and completion-specific descriptions. */
-export function findLabels(input: string | LaTeXParser.ReferenceParser): LabelEntry[] {
-  const parser = typeof input === 'string' ? new LaTeXParser.ReferenceParser(input) : input;
+export function findLabels(input: string | LaTeXParser.LaTeXSource | LaTeXParser.ReferenceParser): LabelEntry[] {
+  const parser = typeof input === 'string' ? new LaTeXParser.LaTeXSource(input).referenceParser
+    : input instanceof LaTeXParser.LaTeXSource ? input.referenceParser : input;
   const source = parser.source;
   const tokens = parser.tokens.filter(token => token.kind === 'label');
   const sourceLines = source.split(/\r\n|\r|\n/);
@@ -50,7 +51,9 @@ export function findLabels(input: string | LaTeXParser.ReferenceParser): LabelEn
   return labels;
 }
 
-export function findReferenceContext(source: string, offset = source.length): ReferenceContext | undefined {
+export function findReferenceContext(input: string | LaTeXParser.LaTeXSource, offset?: number): ReferenceContext | undefined {
+  const source = typeof input === 'string' ? input : input.source;
+  offset ??= source.length;
   if (!Number.isInteger(offset) || offset < 0 || offset > source.length) {
     return undefined;
   }
@@ -59,12 +62,14 @@ export function findReferenceContext(source: string, offset = source.length): Re
   // large document on every keystroke.
   const start = Math.max(0, offset - 20000);
   const prefix = source.slice(start, offset);
-  const scanner = new LaTeXParser.SourceScanner(prefix);
+  const syntax = input instanceof LaTeXParser.LaTeXSource && start === 0 && offset === source.length
+    ? input : new LaTeXParser.LaTeXSource(prefix);
+  const scanner = syntax.sourceScanner;
   if (scanner.ignoredRanges.some(range => range.end === prefix.length
     && (range.kind === 'comment' || !range.closed))) {
     return undefined;
   }
-  const argumentsScanner = new LaTeXParser.ArgumentScanner(scanner);
+  const argumentsScanner = syntax.argumentScanner;
   for (let index = scanner.commands.length - 1; index >= 0; index--) {
     const command = scanner.commands[index];
     if (!LaTeXParser.ReferenceParser.isReferenceCommand(command.name)) {

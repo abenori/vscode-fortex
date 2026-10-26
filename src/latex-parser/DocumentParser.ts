@@ -10,7 +10,7 @@ export type DocumentDeclarationKind = 'documentClass' | 'package' | 'include' | 
 
 /** Raw content excludes the delimiters and preserves comments and line endings. */
 export interface DocumentArgument extends SourceRange {
-  readonly form: 'braced' | 'bracketed' | 'bare';
+  readonly form: 'braced' | 'bracketed';
   readonly contentStart: number;
   readonly contentEnd: number;
   readonly raw: string;
@@ -33,7 +33,6 @@ interface DeclarationSyntax {
   readonly kind: DocumentDeclarationKind;
   readonly options?: boolean;
   readonly version?: boolean;
-  readonly bare?: boolean;
   readonly star?: boolean;
 }
 
@@ -41,7 +40,7 @@ const declarationSyntax = new Map<DocumentCommand, DeclarationSyntax>([
   ['documentclass', { kind: 'documentClass', options: true, version: true }],
   ['usepackage', { kind: 'package', options: true, version: true }],
   ['RequirePackage', { kind: 'package', options: true, version: true }],
-  ['input', { kind: 'include', bare: true }],
+  ['input', { kind: 'include' }],
   ['include', { kind: 'include' }],
   ['bibliography', { kind: 'bibliography' }],
   ['addbibresource', { kind: 'bibliography', options: true, star: true }]
@@ -51,6 +50,7 @@ const declarationSyntax = new Map<DocumentCommand, DeclarationSyntax>([
  * Extracts document declarations without expanding macros or resolving paths.
  * Results retain source order and duplicates. Comma-separated names remain one
  * raw argument; callers decide how to interpret names, options and filenames.
+ * Input filenames require braces; unbraced input remains an incomplete declaration.
  * As with SourceScanner, macro definition bodies are ordinary source. Completed
  * declaration arguments are not scanned as independent declarations. Incomplete
  * arguments do not prevent later commands from being recovered.
@@ -59,9 +59,9 @@ export default class DocumentParser {
   public readonly source: string;
   public readonly declarations: readonly DocumentDeclaration[];
 
-  public constructor(source: string | SourceScanner) {
+  public constructor(source: string | SourceScanner, sharedArgumentsScanner?: ArgumentScanner) {
     const scanner = typeof source === 'string' ? new SourceScanner(source) : source;
-    const argumentsScanner = new ArgumentScanner(scanner);
+    const argumentsScanner = sharedArgumentsScanner ?? new ArgumentScanner(scanner);
     this.source = scanner.source;
     const declarations: DocumentDeclaration[] = [];
     let consumedEnd = 0;
@@ -98,9 +98,7 @@ export default class DocumentParser {
         }
       }
       if (!options || options.complete) {
-        argument = syntax.bare
-          ? this.readInputArgument(scanner, argumentsScanner, cursor)
-          : this.argument(argumentsScanner.readArgument(cursor));
+        argument = this.argument(argumentsScanner.readArgument(cursor));
         if (argument) {
           cursor = end = argument.end;
           if (argument.complete) {
@@ -134,31 +132,6 @@ export default class DocumentParser {
       contentStart: group.contentStart, contentEnd: group.contentEnd,
       raw: this.source.slice(group.contentStart, group.contentEnd),
       complete: group.complete
-    };
-  }
-
-  /**
-   * Reads a braced input argument first, retaining an incomplete group. Only a
-   * missing group falls back to a bare filename token ending at whitespace, a
-   * comment or a control/group boundary. Quotes and TeX filename expansion are
-   * not decoded; comment continuation in a bare filename is not interpreted.
-   */
-  private readInputArgument(scanner: SourceScanner, argumentsScanner: ArgumentScanner, offset: number): DocumentArgument | undefined {
-    const group = argumentsScanner.readArgument(offset);
-    if (group) {
-      return this.argument(group);
-    }
-    const start = scanner.skipTrivia(offset);
-    if (start === undefined || scanner.maskedSource[start] !== this.source[start]) {
-      return undefined;
-    }
-    let end = start;
-    while (end < this.source.length && !/[\s%\\{}]/.test(this.source[end])) {
-      end++;
-    }
-    return end === start ? undefined : {
-      form: 'bare', start, end, contentStart: start, contentEnd: end,
-      raw: this.source.slice(start, end), complete: true
     };
   }
 }

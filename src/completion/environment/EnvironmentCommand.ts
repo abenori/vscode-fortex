@@ -17,12 +17,13 @@ export async function insertOrRenameEnvironment(): Promise<void> {
   }
 
   const source = editor.document.getText();
+  const syntax = new LaTeXParser.LaTeXSource(source);
   const selection = editor.selection;
   const version = editor.document.version;
   const offset = editor.document.offsetAt(selection.active);
   // A non-empty selection always means "wrap". Rename applies only to an empty
   // cursor positioned on an existing environment command.
-  const parser = new LaTeXParser.EnvironmentParser(source, [], ['named', 'display']);
+  const parser = syntax.createEnvironmentParser([], ['named', 'display']);
   const currentToken = selection.isEmpty ? parser.tokenAt(offset) : undefined;
   const token = currentToken?.style === 'named' || currentToken?.style === 'display' ? currentToken : undefined;
   if (token && !parser.pairAt(offset)) {
@@ -36,7 +37,7 @@ export async function insertOrRenameEnvironment(): Promise<void> {
       description: 'Display math',
       name: LaTeXParser.DISPLAY_MATH_ENVIRONMENT
     },
-    ...collectEnvironmentNames(source).map((name) => ({ label: name, name }))
+    ...collectEnvironmentNames(syntax).map((name) => ({ label: name, name }))
   ];
   const picked = token
     ? await pickReplacementEnvironment(items, token.name)

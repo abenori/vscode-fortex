@@ -34,7 +34,7 @@ export default class BuildManager{
       return;
     }
     if(LaTeXCompile.working){
-      const statusBarItem = vscode.window.setStatusBarMessage("$(sync~spin) Compilation is in progress. Please wait until it finishes.", 5000);
+      vscode.window.setStatusBarMessage("$(sync~spin) Compilation is in progress. Please wait until it finishes.", 5000);
     } else {
       try{
         this.clearProgress();
@@ -68,7 +68,7 @@ export default class BuildManager{
             new Promise<void>((resolve) => {resolve();});
           }
         });
-      }catch(e){
+      }catch{
         this.clearProgress();
       }
     }

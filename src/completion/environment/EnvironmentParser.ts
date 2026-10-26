@@ -52,12 +52,14 @@ export const STANDARD_ENVIRONMENTS = [
 ] as const;
 
 /** Recognizes a partially typed argument; it is deliberately completion-specific. */
-export function findEnvironmentCompletionContext(source: string, offset: number): EnvironmentCompletionContext | undefined {
+export function findEnvironmentCompletionContext(input: string | LaTeXParser.LaTeXSource, offset: number): EnvironmentCompletionContext | undefined {
+  const source = typeof input === 'string' ? input : input.source;
   if (!Number.isInteger(offset) || offset < 0 || offset > source.length) {
     return undefined;
   }
-  const scanner = new LaTeXParser.SourceScanner(source);
-  const argumentsScanner = new LaTeXParser.ArgumentScanner(scanner);
+  const syntax = typeof input === 'string' ? new LaTeXParser.LaTeXSource(source) : input;
+  const scanner = syntax.sourceScanner;
+  const argumentsScanner = syntax.argumentScanner;
   for (const command of [...scanner.commands].reverse()) {
     if (command.name !== 'begin' || command.end > offset) {
       continue;
@@ -88,15 +90,15 @@ export function findEnvironmentCompletionContext(source: string, offset: number)
   return undefined;
 }
 
-export function collectEnvironmentNames(source: string): string[] {
+export function collectEnvironmentNames(source: string | LaTeXParser.LaTeXSource): string[] {
   const names = new Set<string>(STANDARD_ENVIRONMENTS);
-  const scanner = new LaTeXParser.SourceScanner(source);
-  for (const token of new LaTeXParser.EnvironmentParser(scanner).tokens) {
+  const syntax = typeof source === 'string' ? new LaTeXParser.LaTeXSource(source) : source;
+  for (const token of syntax.createEnvironmentParser().tokens) {
     if (token.style === 'named') {
       names.add(token.name);
     }
   }
-  for (const definition of new LaTeXParser.DefinitionParser(scanner).definitions) {
+  for (const definition of syntax.definitionParser.definitions) {
     if (definition.kind === 'environment' || definition.kind === 'theorem') {
       names.add(definition.name);
     }

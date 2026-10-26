@@ -86,9 +86,10 @@ export default class LabelCompletionProvider implements vscode.Disposable {
 
   private index(document: vscode.TextDocument): LabelCacheEntry {
     const source = document.getText();
-    const scanner = new LaTeXParser.SourceScanner(source);
-    const argumentsScanner = new LaTeXParser.ArgumentScanner(scanner);
-    const labels = findLabels(new LaTeXParser.ReferenceParser(scanner))
+    const syntax = new LaTeXParser.LaTeXSource(source);
+    const scanner = syntax.sourceScanner;
+    const argumentsScanner = syntax.argumentScanner;
+    const labels = findLabels(syntax)
       .sort((left, right) => left.key.localeCompare(right.key));
     // Keep empty and unfinished label arguments too: typing into their middle
     // can create a label far from the line containing the command itself.

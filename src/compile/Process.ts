@@ -12,7 +12,7 @@ export default class Process{
     for(let child of Process.child_processes){
       try{
         child.kill();
-      }catch(e){}
+      }catch{}
     }
     Process.child_processes.clear();
   }
@@ -25,7 +25,7 @@ export default class Process{
     // previous command before the replacement is spawned.
     if(this.process !== undefined){
       try{ this.process.kill(); }
-      catch(e){}
+      catch{}
     }
     Log.debug_log("Executing process: " + cmd + " " + options.join(" ") + (dir ? (" in directory " + dir) : ""));
     return new Promise<number | null>((resolve, rejects) => {

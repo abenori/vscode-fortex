@@ -9,7 +9,7 @@ export default class EnvironmentRenameProvider implements vscode.RenameProvider 
   ): vscode.Range | { range: vscode.Range; placeholder: string } | null {
     const source = document.getText();
     const offset = document.offsetAt(position);
-    const parser = new LaTeXParser.EnvironmentParser(source, [], ['named', 'display']);
+    const parser = new LaTeXParser.LaTeXSource(source).createEnvironmentParser([], ['named', 'display']);
     const token = parser.tokenAt(offset);
     if (!token || (token.style !== 'named' && token.style !== 'display')) {
       return null;
@@ -29,7 +29,7 @@ export default class EnvironmentRenameProvider implements vscode.RenameProvider 
     newName: string
   ): vscode.WorkspaceEdit {
     const source = document.getText();
-    const pair = new LaTeXParser.EnvironmentParser(source, [], ['named', 'display']).pairAt(document.offsetAt(position));
+    const pair = new LaTeXParser.LaTeXSource(source).createEnvironmentParser([], ['named', 'display']).pairAt(document.offsetAt(position));
     if (!pair || (pair.begin.style !== 'named' && pair.begin.style !== 'display')) {
       throw new Error('A matching LaTeX environment pair was not found.');
     }

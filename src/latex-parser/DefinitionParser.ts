@@ -56,9 +56,9 @@ export default class DefinitionParser {
   /** Fully consumed prefixes of recognized syntax, including invalid names. */
   public readonly consumedRanges: readonly SourceRange[];
 
-  public constructor(source: string | SourceScanner) {
+  public constructor(source: string | SourceScanner, sharedArgumentsScanner?: ArgumentScanner) {
     const scanner = typeof source === 'string' ? new SourceScanner(source) : source;
-    const argumentsScanner = new ArgumentScanner(scanner);
+    const argumentsScanner = sharedArgumentsScanner ?? new ArgumentScanner(scanner);
     this.source = scanner.source;
     const definitions: DefinitionDeclaration[] = [];
     const consumedRanges: SourceRange[] = [];

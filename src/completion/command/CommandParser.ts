@@ -13,9 +13,11 @@ export interface CustomCommandDefinition {
 }
 
 /** Finds the control-word fragment immediately before the cursor. */
-export function findCommandContext(linePrefix: string, lineOffset = 0): CommandContext | undefined {
+export function findCommandContext(input: string | LaTeXParser.LaTeXSource, lineOffset = 0): CommandContext | undefined {
   // Only scan the current line; querying a fragment must not parse the document.
-  const scanner = new LaTeXParser.SourceScanner(linePrefix);
+  const syntax = typeof input === 'string' ? new LaTeXParser.LaTeXSource(input) : input;
+  const linePrefix = syntax.source;
+  const scanner = syntax.sourceScanner;
   const command = scanner.commands.at(-1);
   if (!command || scanner.maskedSource[command.start] !== '\\') {
     return undefined;
@@ -27,8 +29,9 @@ export function findCommandContext(linePrefix: string, lineOffset = 0): CommandC
 }
 
 /** Adapts shared lexical definitions to document-local command completions. */
-export function findCustomCommands(source: string | LaTeXParser.DefinitionParser): CustomCommandDefinition[] {
-  const parser = typeof source === 'string' ? new LaTeXParser.DefinitionParser(source) : source;
+export function findCustomCommands(source: string | LaTeXParser.LaTeXSource | LaTeXParser.DefinitionParser): CustomCommandDefinition[] {
+  const parser = typeof source === 'string' ? new LaTeXParser.LaTeXSource(source).definitionParser
+    : source instanceof LaTeXParser.LaTeXSource ? source.definitionParser : source;
   const lineOffsets = makeLineOffsets(parser.source);
   const commands = new Map<string, CustomCommandDefinition>();
   for (const definition of parser.definitions) {

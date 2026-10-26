@@ -29,9 +29,9 @@ export default class ReferenceParser {
   public readonly source: string;
   public readonly tokens: readonly ReferenceToken[];
 
-  public constructor(source: string | SourceScanner) {
+  public constructor(source: string | SourceScanner, sharedArgumentsScanner?: ArgumentScanner) {
     const scanner = typeof source === 'string' ? new SourceScanner(source) : source;
-    const argumentsScanner = new ArgumentScanner(scanner);
+    const argumentsScanner = sharedArgumentsScanner ?? new ArgumentScanner(scanner);
     this.source = scanner.source;
     const tokens: ReferenceToken[] = [];
     let consumedEnd = 0;

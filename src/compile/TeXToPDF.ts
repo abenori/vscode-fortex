@@ -26,7 +26,6 @@ export default class TeXToPDF {
   file_list: string[] = [];
   readonly extensions = [".aux", ".toc", ".lot", ".lof"];
   options: { [key: string]: string } = {};
-  mainfile: string = "";
 
   constructor(proj: LaTeXProject, option: string | undefined) {
     this.LaTeXProject = proj;
@@ -228,7 +227,7 @@ export default class TeXToPDF {
           this.status[file][ext] = fs.readFileSync(f, "utf8");
           //Log.debug_log(`Read status for ${f} \r\n` + this.status[file][ext]);
         }
-        catch (e) {
+        catch {
           this.status[file][ext] = null;
           //Log.debug_log(`Status for ${f} does not exist`);
         }
@@ -257,7 +256,7 @@ export default class TeXToPDF {
           //Log.debug_log(`Checking file ${f}, old content: \n${this.status[file][ext]}\ncurrent content: \n${txt}`);
           this.status[file][ext] = txt;
         }
-        catch (e) {
+        catch {
           //Log.debug_log(`Checking file ${f}, old content: \n${this.status[file][ext]}\ncurrent content: \n null (file does not exist)`);
           if (this.status[file][ext] !== null) { rv = true; }
           this.status[file][ext] = null;
@@ -463,7 +462,6 @@ export default class TeXToPDF {
           error_file = path.join(dir, error_file);
         }
         let errmsg = m[3];
-        let n = lines[i].length;
         if(lines[i].length >= 79){
           errmsg = errmsg + lines[i + 1];
         }

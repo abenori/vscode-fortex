@@ -24,8 +24,6 @@ import StructureView from './structure/StructureView';
 import LaTeXDocumentSymbolProvider from './structure/LaTeXDocumentSymbolProvider';
 import LaTeXProject from './project/LaTeXProject';
 
-const taskType = "fortex";
-
 let buildManager: BuildManager | undefined;
 let preview: PDFPreview | undefined;
 

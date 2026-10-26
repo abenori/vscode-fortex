@@ -12,7 +12,7 @@ export async function closeEnvironment(): Promise<void> {
   const document = editor.document;
   const cursor = editor.selection.active;
   const offset = document.offsetAt(cursor);
-  const environment = new LaTeXParser.EnvironmentParser(document.getText(), [], ['named', 'display']).unclosed
+  const environment = new LaTeXParser.LaTeXSource(document.getText()).createEnvironmentParser([], ['named', 'display']).unclosed
     .filter(token => (token.style === 'named' || token.style === 'display') && token.end <= offset).at(-1);
   if (!environment) {
     vscode.window.setStatusBarMessage('Fortex: No unclosed environment was found before the cursor.', 3000);

@@ -4,8 +4,9 @@ import * as LaTeXParser from '../../latex-parser';
 
 /** Finds literal bibliography paths declared by classic BibTeX or biblatex. */
 export function discoverBibReferences(texSource: string): string[] {
-  const scanner = new LaTeXParser.SourceScanner(texSource);
-  const document = new LaTeXParser.DocumentParser(scanner);
+  const syntax = new LaTeXParser.LaTeXSource(texSource);
+  const scanner = syntax.sourceScanner;
+  const document = syntax.documentParser;
   const references: string[] = [];
   const seen = new Set<string>();
 

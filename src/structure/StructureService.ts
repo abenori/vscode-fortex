@@ -4,11 +4,20 @@ import LaTeXProject from '../project/LaTeXProject';
 import { isStructureTrivia, parseStructureEvents, StructureEvent, structurePlainText } from './LaTeXStructureParser';
 import { StructureKind, StructureLabelEntry, StructureLocation, StructureNode, StructureSnapshot } from './StructureTypes';
 import * as Workspace from '../workspace';
+import * as LaTeXParser from '../latex-parser';
+import { resolveInputFile } from '../project/InputFileResolver';
 
 interface ParsedSource {
   uri: vscode.Uri;
   source: string;
+  syntax: LaTeXParser.LaTeXSource;
   events: StructureEvent[];
+}
+
+interface LoadedSnapshot extends StructureSnapshot {
+  /** Includes absent candidates whose creation could change input resolution. */
+  dependencies: vscode.Uri[];
+  checkedCandidates: readonly { readonly uri: vscode.Uri; readonly exists: boolean }[];
 }
 
 interface ExpandedEvent {
@@ -165,7 +174,8 @@ function appendEvents(parsed: ParsedSource, occurrence: string, append: (entry: 
 /** Local Outline always reads the active buffer and never discovers a parent. */
 export async function localDocumentStructure(document: vscode.TextDocument): Promise<StructureNode[]> {
   const source = document.getText();
-  const parsed = { uri: document.uri, source, events: parseStructureEvents(source) };
+  const syntax = new LaTeXParser.LaTeXSource(source);
+  const parsed = { uri: document.uri, source, syntax, events: parseStructureEvents(syntax) };
   const expanded: ExpandedEvent[] = [];
   appendEvents(parsed, 'local', entry => expanded.push(entry));
   return buildStructure(expanded, theoremSettings(document.uri));
@@ -228,10 +238,28 @@ export default class StructureService implements vscode.Disposable {
     if (!active || active.languageId !== 'latex') { return; }
     this.selected = active;
     const generation = ++this.generation;
-    const request = this.load(active).then(snapshot => {
+    const request = this.load(active).then(async snapshot => {
       if (this.disposed || generation !== this.generation) { return; }
+      if (this.watch) {
+        const fresh = this.updateWatches(snapshot.files, snapshot.dependencies);
+        // The first existence check preceded watcher registration. Close that
+        // gap before publishing, including for absent non-.tex candidates.
+        const changed = await Promise.all(snapshot.checkedCandidates
+          .filter(candidate => fresh.has(Workspace.uriKey(candidate.uri)))
+          .map(async candidate => {
+            let exists = false;
+            try {
+              const stat = await vscode.workspace.fs.stat(candidate.uri);
+              exists = (stat.type & vscode.FileType.File) !== 0;
+            } catch (error) {
+              if ((error as { code?: string }).code !== 'FileNotFound') { throw error; }
+            }
+            return exists !== candidate.exists;
+          }));
+        if (this.disposed || generation !== this.generation) { return; }
+        if (changed.some(Boolean)) { this.schedule(); return; }
+      }
       this.state = snapshot;
-      if (this.watch) { this.updateWatches(snapshot.files); }
       this.changed.fire(snapshot);
     }).catch(error => {
       if (this.disposed || generation !== this.generation) { return; }
@@ -256,24 +284,19 @@ export default class StructureService implements vscode.Disposable {
   }
 
   private async read(uri: vscode.Uri): Promise<ParsedSource> {
-    const source = await Workspace.readDocumentText(uri);
+    const diskOrBuffer = await Workspace.readDocumentText(uri);
+    // A buffer may open or change while the provider read is pending.
+    const source = Workspace.findOpenDocument(uri)?.getText() ?? diskOrBuffer;
     const key = Workspace.uriKey(uri);
     const cached = this.sources.get(key);
     if (cached?.source === source) { return cached; }
-    const parsed = { uri, source, events: parseStructureEvents(source) };
+    const syntax = new LaTeXParser.LaTeXSource(source);
+    const parsed = { uri, source, syntax, events: parseStructureEvents(syntax) };
     this.sources.set(key, parsed);
     return parsed;
   }
 
-  private resolveIncludedFile(main: vscode.Uri, argument: string): vscode.Uri | undefined {
-    let file = argument.trim();
-    if (!file || /[\\#${}]/.test(file)) { return undefined; }
-    if (path.extname(file).toLowerCase() !== '.tex') { file += '.tex'; }
-    // Reading an included source does not change TeX's compilation directory.
-    return vscode.Uri.file(path.resolve(path.dirname(main.fsPath), file));
-  }
-
-  private async load(document: vscode.TextDocument): Promise<StructureSnapshot> {
+  private async load(document: vscode.TextDocument): Promise<LoadedSnapshot> {
     const config = vscode.workspace.getConfiguration('vscode-fortex', document.uri);
     const followIncludes = config.get('outline.followIncludes', true) && document.uri.scheme === 'file';
     let main = document.uri;
@@ -287,11 +310,15 @@ export default class StructureService implements vscode.Disposable {
       }
     }
     const files = new Map<string, vscode.Uri>();
+    const dependencies = new Map<string, vscode.Uri>();
+    const checkedCandidates: { readonly uri: vscode.Uri; readonly exists: boolean }[] = [];
+    const compilationDirectory = vscode.Uri.file(path.dirname(main.fsPath));
     const expanded: ExpandedEvent[] = [];
     let sequence = 0;
     const visit = async (uri: vscode.Uri, ancestors: Set<string>, site?: ExpandedEvent): Promise<void> => {
       const key = Workspace.uriKey(uri);
       files.set(key, uri);
+      dependencies.set(key, uri);
       if (ancestors.has(key)) {
         if (site) { expanded.push({ ...site, event: { ...site.event, type: 'issue', title: `Circular include: ${path.basename(uri.fsPath)}` } }); }
         return;
@@ -311,23 +338,42 @@ export default class StructureService implements vscode.Disposable {
       for (const entry of local) {
         if (entry.event.type !== 'include') { expanded.push(entry); continue; }
         if (!followIncludes) { expanded.push({ ...entry, event: { ...entry.event, type: 'text' } }); continue; }
-        const target = this.resolveIncludedFile(main, entry.event.path);
-        if (target) { await visit(target, nextAncestors, entry); }
-        else { expanded.push({ ...entry, event: { ...entry.event, type: 'issue', title: `Unresolved include: ${entry.event.path}` } }); }
+        const token = LaTeXParser.readCommand(parsed.source, entry.event.start);
+        if (!token || (token.name !== 'input' && token.name !== 'include')) { continue; }
+        // Outline input expansion deliberately has no macro lookup. It shares
+        // filename syntax and existence checks with LaTeXProject, not its graph.
+        const result = await resolveInputFile(parsed.syntax, { ...token, name: token.name }, compilationDirectory);
+        checkedCandidates.push(...result.checkedCandidates);
+        for (const candidate of result.checkedCandidates) {
+          dependencies.set(Workspace.uriKey(candidate.uri), candidate.uri);
+        }
+        if (result.status === 'resolved') {
+          await visit(result.uri, nextAncestors, entry);
+        } else if (result.status === 'missing') {
+          const target = result.checkedCandidates[0]?.uri;
+          if (target) { files.set(Workspace.uriKey(target), target); }
+          expanded.push({ ...entry, event: { ...entry.event, type: 'issue',
+            title: `Missing include: ${path.basename(target?.fsPath ?? result.filename)}` } });
+        } else {
+          expanded.push({ ...entry, event: { ...entry.event, type: 'issue', title: `Unresolved include: ${entry.event.path}` } });
+        }
       }
     };
     await visit(main, new Set());
     const roots = buildStructure(expanded, theoremSettings(document.uri));
-    return { main, followIncludes, roots, labels: labelEntries(roots), files: [...files.values()], message };
+    return { main, followIncludes, roots, labels: labelEntries(roots), files: [...files.values()],
+      dependencies: [...dependencies.values()], checkedCandidates, message };
   }
 
-  private updateWatches(files: vscode.Uri[]): void {
-    const needed = new Set(files.map(Workspace.uriKey));
-    for (const key of this.sources.keys()) { if (!needed.has(key)) { this.sources.delete(key); } }
+  private updateWatches(files: vscode.Uri[], dependencies: vscode.Uri[]): Set<string> {
+    const sources = new Set(files.map(Workspace.uriKey));
+    const needed = new Set(dependencies.map(Workspace.uriKey));
+    const fresh = new Set<string>();
+    for (const key of this.sources.keys()) { if (!sources.has(key)) { this.sources.delete(key); } }
     for (const [key, watcher] of this.watches) {
       if (!needed.has(key)) { watcher.dispose(); this.watches.delete(key); this.sources.delete(key); }
     }
-    for (const uri of files) {
+    for (const uri of dependencies) {
       const key = Workspace.uriKey(uri);
       if (this.watches.has(key) || uri.scheme !== 'file') { continue; }
       // Watch a literal directory, then compare URIs so glob characters in a
@@ -339,7 +385,9 @@ export default class StructureService implements vscode.Disposable {
       };
       const subscriptions = [watcher, watcher.onDidChange(invalidate), watcher.onDidCreate(invalidate), watcher.onDidDelete(invalidate)];
       this.watches.set(key, vscode.Disposable.from(...subscriptions));
+      fresh.add(key);
     }
+    return fresh;
   }
 
   dispose(): void {

@@ -77,7 +77,7 @@ export default class CommandCompletionProvider implements vscode.Disposable {
 
   private index(document: vscode.TextDocument): CommandCacheEntry {
     const source = document.getText();
-    const parser = new LaTeXParser.DefinitionParser(source);
+    const parser = new LaTeXParser.LaTeXSource(source).definitionParser;
     const declarationLines = parser.definitions.map(definition => ({
       start: document.positionAt(definition.start).line,
       end: document.positionAt(definition.end).line

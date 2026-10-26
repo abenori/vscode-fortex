@@ -16,15 +16,15 @@ export async function goToCorresponding(): Promise<void> {
   const document = editor.document;
   const source = document.getText();
   const offset = document.offsetAt(editor.selection.active);
-  const scanner = new LaTeXParser.SourceScanner(source);
-  const environmentPair = new LaTeXParser.EnvironmentParser(scanner, [], ['named', 'display']).pairAt(offset);
+  const syntax = new LaTeXParser.LaTeXSource(source);
+  const environmentPair = syntax.createEnvironmentParser([], ['named', 'display']).pairAt(offset);
   if (environmentPair) {
     const target = isWithin(environmentPair.begin, offset) ? environmentPair.end : environmentPair.begin;
     moveCursor(editor, target.style === 'named' ? target.nameStart : target.start);
     return;
   }
 
-  const references = new LaTeXParser.ReferenceParser(scanner);
+  const references = syntax.referenceParser;
   const current = references.tokenAt(offset);
   if (!current) {
     vscode.window.setStatusBarMessage(

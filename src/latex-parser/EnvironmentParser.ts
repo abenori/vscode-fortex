@@ -38,7 +38,8 @@ export default class EnvironmentParser {
   public constructor(
     source: string | SourceScanner,
     excludedRanges: readonly SourceRange[] = [],
-    styles?: readonly EnvironmentTokenStyle[]
+    styles?: readonly EnvironmentTokenStyle[],
+    sharedArgumentsScanner?: ArgumentScanner
   ) {
     const scanner = typeof source === 'string' ? new SourceScanner(source) : source;
     this.source = scanner.source;
@@ -52,7 +53,7 @@ export default class EnvironmentParser {
       }
       return false;
     };
-    const argumentsScanner = new ArgumentScanner(scanner);
+    const argumentsScanner = sharedArgumentsScanner ?? new ArgumentScanner(scanner);
     const tokens: EnvironmentToken[] = [];
     const stack: EnvironmentToken[] = [];
     const pairs: EnvironmentPair[] = [];

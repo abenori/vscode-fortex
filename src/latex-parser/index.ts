@@ -1,4 +1,5 @@
 export { default as SourceScanner, isEscaped, readCommand } from './SourceScanner';
+export { default as LaTeXSource } from './LaTeXSource';
 export type { CommandToken, IgnoredRange, SourceRange } from './SourceScanner';
 export { splitclist } from './CommaList';
 export { default as ArgumentScanner } from './ArgumentScanner';

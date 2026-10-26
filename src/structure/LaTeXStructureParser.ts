@@ -1,4 +1,5 @@
 import * as LaTeXParser from '../latex-parser';
+import { readInputFilename } from '../latex-parser/InputFilename';
 
 /** Source offsets are UTF-16 offsets, matching VS Code's document offsets. */
 export type StructureEvent =
@@ -19,25 +20,35 @@ const displayEquationEnvironments = new Set([
 ]);
 
 /** Builds outline events from shared syntax, without expanding user macros. */
-export function parseStructureEvents(source: string): StructureEvent[] {
-  const scanner = new LaTeXParser.SourceScanner(source);
-  const argumentsScanner = new LaTeXParser.ArgumentScanner(scanner);
-  const definitionParser = new LaTeXParser.DefinitionParser(scanner);
+export function parseStructureEvents(input: string | LaTeXParser.LaTeXSource): StructureEvent[] {
+  const syntax = typeof input === 'string' ? new LaTeXParser.LaTeXSource(input) : input;
+  const source = syntax.source;
+  const scanner = syntax.sourceScanner;
+  const argumentsScanner = syntax.argumentScanner;
+  const definitionParser = syntax.definitionParser;
   const definitions = definitionParser.definitions;
   // Completed definitions are hidden; partial bodies permit later recovery.
   const hidden = mergeRanges(definitionParser.consumedRanges);
   const commands = new Map(scanner.commands.map(command => [command.start, command]));
-  const labels = new Map(new LaTeXParser.ReferenceParser(scanner).tokens
+  const labels = new Map(syntax.referenceParser.tokens
     .filter(token => token.kind === 'label').map(token => [token.commandStart, token]));
-  const includes = new Map(new LaTeXParser.DocumentParser(scanner).declarations
-    .filter(declaration => declaration.kind === 'include' && declaration.complete)
-    .map(declaration => [declaration.start, declaration]));
+  const includes = new Map<number, ReturnType<typeof readInputFilename>>();
   const titles = new Map<number, LaTeXParser.ScannedArgument>();
   const environmentTitles = new Map<number, LaTeXParser.ScannedArgument>();
   const mathExcluded = [...hidden];
   for (const command of scanner.commands) {
     if (rangeEndAt(hidden, command.start) !== undefined) { continue; }
-    if (headingLevels.has(command.name) || command.name === 'caption') {
+    if (command.name === 'input' || command.name === 'include') {
+      // Read literal names through the same filename rules as project discovery.
+      // Macro filenames stay unresolved in the outline, including definitions
+      // whose bodies would execute an input when their wrapper is invoked.
+      const group = argumentsScanner.readArgument(command.end);
+      if (group?.complete) {
+        const result = readInputFilename(syntax, { ...command, name: command.name });
+        includes.set(command.start, result);
+        mathExcluded.push({ start: command.end, end: result.consumedEnd });
+      }
+    } else if (headingLevels.has(command.name) || command.name === 'caption') {
       const title = readTitle(argumentsScanner, command.end);
       if (title) {
         titles.set(command.start, title);
@@ -57,7 +68,7 @@ export function parseStructureEvents(source: string): StructureEvent[] {
     }
   }
   // Skipped argument contents must not affect later dollar-delimiter state.
-  const environments = new Map(new LaTeXParser.EnvironmentParser(scanner, mathExcluded).tokens
+  const environments = new Map(syntax.createEnvironmentParser(mathExcluded).tokens
     .map(token => [token.start, token]));
   const events: StructureEvent[] = definitions
     .filter(definition => definition.kind === 'theorem' && definition.complete)
@@ -146,14 +157,13 @@ export function parseStructureEvents(source: string): StructureEvent[] {
         cursor = group.end;
       }
     } else {
-      const declaration = includes.get(start);
-      const argument = declaration?.argument;
-      if (argument) {
-        const path = scanner.textWithoutComments(argument.contentStart, argument.contentEnd)?.trim();
-        if (path && !/[\\#${}]/.test(path)) {
-          events.push({ type: 'include', command: declaration.command as 'input' | 'include', path, start, end: declaration.end });
+      const include = includes.get(start);
+      if (include) {
+        if (include.status === 'resolved' && (command.name === 'input' || command.name === 'include')) {
+          events.push({ type: 'include', command: command.name, path: include.filename,
+            start, end: include.consumedEnd });
         }
-        cursor = declaration.end;
+        cursor = Math.max(cursor, include.consumedEnd);
       }
     }
   }
@@ -167,11 +177,12 @@ export interface StructurePlainTextOptions {
 
 /** Normalizes display text without erasing unknown commands such as math macros. */
 export function structurePlainText(source: string, options: StructurePlainTextOptions = {}): string {
-  const scanner = new LaTeXParser.SourceScanner(source);
-  const argumentsScanner = new LaTeXParser.ArgumentScanner(scanner);
+  const syntax = new LaTeXParser.LaTeXSource(source);
+  const scanner = syntax.sourceScanner;
+  const argumentsScanner = syntax.argumentScanner;
   const commands = new Map(scanner.commands.map(command => [command.start, command]));
   const environmentCommands = options.omitEnvironmentCommands
-    ? new Map(new LaTeXParser.EnvironmentParser(scanner, [], ['named']).tokens.map(token => [token.start, token]))
+    ? new Map(syntax.createEnvironmentParser([], ['named']).tokens.map(token => [token.start, token]))
     : undefined;
   const ignored = new Map(scanner.ignoredRanges.filter(range => range.start < range.end)
     .map(range => [range.start, range]));
@@ -284,7 +295,7 @@ export function structurePlainText(source: string, options: StructurePlainTextOp
 }
 
 export function isStructureTrivia(source: string): boolean {
-  return new LaTeXParser.SourceScanner(source).skipTrivia(0) === source.length;
+  return new LaTeXParser.LaTeXSource(source).sourceScanner.skipTrivia(0) === source.length;
 }
 
 function readTitle(scanner: LaTeXParser.ArgumentScanner, offset: number): LaTeXParser.ScannedArgument | undefined {

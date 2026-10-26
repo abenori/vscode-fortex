@@ -79,7 +79,9 @@ export function latexToPlainText(value: string): string {
 }
 
 /** Finds the currently edited key fragment in a cite-like command. */
-export function findCitationContext(text: string, offset = text.length): CitationContext | undefined {
+export function findCitationContext(input: string | LaTeXParser.LaTeXSource, offset?: number): CitationContext | undefined {
+  const text = typeof input === 'string' ? input : input.source;
+  offset ??= text.length;
   if (!Number.isInteger(offset) || offset < 0 || offset > text.length) {
     return undefined;
   }
@@ -87,12 +89,14 @@ export function findCitationContext(text: string, offset = text.length): Citatio
   // for callers that supply a longer source snapshot.
   const baseOffset = Math.max(0, offset - 20000);
   const prefix = text.slice(baseOffset, offset);
-  const scanner = new LaTeXParser.SourceScanner(prefix);
+  const syntax = input instanceof LaTeXParser.LaTeXSource && baseOffset === 0 && offset === text.length
+    ? input : new LaTeXParser.LaTeXSource(prefix);
+  const scanner = syntax.sourceScanner;
   if (scanner.ignoredRanges.some(range => range.end === prefix.length
     && (range.kind === 'comment' || !range.closed))) {
     return undefined;
   }
-  const argumentsScanner = new LaTeXParser.ArgumentScanner(scanner);
+  const argumentsScanner = syntax.argumentScanner;
   const citeCommand = /^(?:cite|citep|citet|citealp|citealt|citeauthor|citeyear|citeyearpar|autocite|parencite|textcite|footcite|footcitetext|smartcite|supercite|fullcite|volcite|pvolcite|fvolcite|notecite|nocite)$/i;
   for (let index = scanner.commands.length - 1; index >= 0; index--) {
     const command = scanner.commands[index];
