@@ -27,17 +27,28 @@ type ProjectDescription = [
   directives: { [key: string]: string }
 ];
 
-interface MainFileCacheEntry {
-  readonly signature: string;
-  readonly main: Promise<vscode.Uri>;
+interface ProjectSource {
+  readonly syntax: LaTeXParser.LaTeXSource;
 }
 
-interface ProjectSource {
-  readonly source: string;
-  readonly syntax: LaTeXParser.LaTeXSource;
-  readonly signature: string;
-  readonly documentClass: [string, string];
+/** Optional source snapshots and discovery traces owned by the caller. */
+export interface ProjectReadOptions {
+  readonly readSource?: (uri: vscode.Uri) => Promise<string>;
+  readonly onDependency?: (uri: vscode.Uri) => void;
+  readonly onDirectory?: (uri: vscode.Uri) => void;
 }
+
+interface ProjectRequest {
+  readonly lifetime: number;
+  readonly options: ProjectReadOptions;
+  readonly order: readonly string[];
+  readonly sources: Map<string, Promise<ProjectSource>>;
+  readonly dependencies: Set<string>;
+  readonly directories: Set<string>;
+  changed: boolean;
+}
+
+class ChangedRequest extends Error {}
 
 /**
  * Describes the active LaTeX project and locates its main document.
@@ -46,169 +57,81 @@ interface ProjectSource {
  * recursive parent discovery, and finally treating the current file as main.
  */
 export default class LaTeXProject {
-  private static readonly changed = new vscode.EventEmitter<void>();
-  private static readonly mainFiles = new Map<string, MainFileCacheEntry>();
-  private static readonly sources = new Map<string, ProjectSource>();
-  private static readonly trackedFiles = new Set<string>();
-  private static readonly directoryWatches = new Map<string, vscode.Disposable>();
-  private static readonly subscriptions: vscode.Disposable[] = [];
-  private static watching = false;
-  private static revision = 0;
   private static lifetime = 0;
 
-  /** Discovery inputs changed; consumers should refresh their own project results. */
-  public static get onDidChange(): vscode.Event<void> {
-    LaTeXProject.ensureWatching();
-    return LaTeXProject.changed.event;
-  }
-
+  /** Cancel pending requests without retaining project state between requests. */
   public static dispose(): void {
-    for (const subscription of LaTeXProject.subscriptions) { subscription.dispose(); }
-    for (const watcher of LaTeXProject.directoryWatches.values()) { watcher.dispose(); }
-    LaTeXProject.subscriptions.length = 0;
-    LaTeXProject.directoryWatches.clear();
-    LaTeXProject.sources.clear();
-    LaTeXProject.trackedFiles.clear();
-    LaTeXProject.mainFiles.clear();
-    LaTeXProject.watching = false;
-    LaTeXProject.revision++;
     LaTeXProject.lifetime++;
   }
 
-  private static invalidate(): void {
-    LaTeXProject.revision++;
-    LaTeXProject.mainFiles.clear();
-    const retained = new Set(LaTeXProject.trackedFiles);
-    LaTeXProject.trackedFiles.clear();
-    const open = new Set(vscode.workspace.textDocuments.filter(document => !document.isClosed)
-      .map(document => Workspace.uriKey(document.uri)));
-    for (const key of LaTeXProject.sources.keys()) {
-      if (!open.has(key) && !retained.has(key)) { LaTeXProject.sources.delete(key); }
-    }
-    LaTeXProject.changed.fire();
-  }
-
-  private static isTeXFile(uri: vscode.Uri): boolean {
-    return path.extname(uri.path).toLowerCase() === '.tex';
-  }
-
-  private static ensureWatching(): void {
-    if (LaTeXProject.watching) { return; }
-    LaTeXProject.watching = true;
-    for (const document of vscode.workspace.textDocuments) {
-      if (!document.isClosed && (document.languageId === 'latex' || LaTeXProject.isTeXFile(document.uri))) {
-        LaTeXProject.rememberSource(document.uri, document.getText());
-      }
-    }
-    const watcher = vscode.workspace.createFileSystemWatcher('**/*.tex');
-    const invalidate = () => LaTeXProject.invalidate();
-    LaTeXProject.subscriptions.push(
-      watcher, watcher.onDidChange(invalidate), watcher.onDidCreate(invalidate), watcher.onDidDelete(invalidate),
-      vscode.workspace.onDidChangeTextDocument(event => {
-        const document = event.document;
-        if (document.languageId !== 'latex' && !LaTeXProject.isTeXFile(document.uri)
-          && !LaTeXProject.trackedFiles.has(Workspace.uriKey(document.uri))) { return; }
-        const key = Workspace.uriKey(document.uri);
-        const previous = LaTeXProject.sources.get(key)?.signature;
-        const signature = LaTeXProject.rememberSource(document.uri, document.getText()).signature;
-        if (previous !== signature) { LaTeXProject.invalidate(); }
-      }),
-      vscode.workspace.onDidCloseTextDocument(document => {
-        if (document.languageId !== 'latex' && !LaTeXProject.isTeXFile(document.uri)
-          && !LaTeXProject.trackedFiles.has(Workspace.uriKey(document.uri))) { return; }
-        LaTeXProject.sources.delete(Workspace.uriKey(document.uri));
-        // Release old project directories on close. Keep watches alive across
-        // ordinary invalidations so rapid create/delete events are not lost.
-        for (const watcher of LaTeXProject.directoryWatches.values()) { watcher.dispose(); }
-        LaTeXProject.directoryWatches.clear();
-        LaTeXProject.invalidate();
-      }),
-      vscode.workspace.onDidChangeConfiguration(event => {
-        if (event.affectsConfiguration('vscode-fortex.mainFileOrder')) { LaTeXProject.invalidate(); }
-      })
-    );
-  }
-
-  /** Ancestor candidates and included files may be outside the open workspace. */
-  private static watchDirectory(directory: vscode.Uri): void {
-    if (!LaTeXProject.watching || directory.scheme !== 'file') { return; }
-    const key = Workspace.uriKey(directory);
-    if (LaTeXProject.directoryWatches.has(key)) { return; }
-    const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(directory, '*'));
-    const invalidate = (uri: vscode.Uri) => {
-      if (LaTeXProject.isTeXFile(uri) || LaTeXProject.trackedFiles.has(Workspace.uriKey(uri))) {
-        LaTeXProject.invalidate();
-      }
-    };
-    LaTeXProject.directoryWatches.set(key, vscode.Disposable.from(
-      watcher, watcher.onDidChange(invalidate), watcher.onDidCreate(invalidate), watcher.onDidDelete(invalidate)
-    ));
-  }
-
-  private static async readSource(file: vscode.Uri): Promise<ProjectSource> {
+  private static async request<T>(options: ProjectReadOptions, run: (request: ProjectRequest) => Promise<T>): Promise<T> {
     const lifetime = LaTeXProject.lifetime;
     while (true) {
-      const revision = LaTeXProject.revision;
-      if (LaTeXProject.watching) { LaTeXProject.trackedFiles.add(Workspace.uriKey(file)); }
-      LaTeXProject.watchDirectory(vscode.Uri.joinPath(file, '..'));
-      const source = await Workspace.readDocumentText(file);
-      if (lifetime !== LaTeXProject.lifetime) { throw new vscode.CancellationError(); }
-      if (revision !== LaTeXProject.revision) { continue; }
-      // A buffer may have opened or changed while the disk read was pending.
-      // Never overwrite its newer discovery signature with the old disk text.
-      return LaTeXProject.rememberSource(file, Workspace.findOpenDocument(file)?.getText() ?? source);
+      const request: ProjectRequest = {
+        lifetime, options, order: Config.mainFileOrder(), sources: new Map(),
+        dependencies: new Set(), directories: new Set(), changed: false
+      };
+      // These listeners live only while a request is running. They never read or
+      // parse edited text; an affected request simply retries with fresh inputs.
+      const changedDocument = (document: vscode.TextDocument) => {
+        if (request.dependencies.has(Workspace.uriKey(document.uri))) { request.changed = true; }
+      };
+      const subscriptions = [vscode.workspace.onDidChangeConfiguration(event => {
+        if (event.affectsConfiguration('vscode-fortex.mainFileOrder')) { request.changed = true; }
+      })];
+      if (!options.readSource) {
+        subscriptions.push(
+          vscode.workspace.onDidChangeTextDocument(event => {
+            if (event.contentChanges.length) { changedDocument(event.document); }
+          }),
+          vscode.workspace.onDidOpenTextDocument(changedDocument),
+          vscode.workspace.onDidCloseTextDocument(changedDocument)
+        );
+      }
+      try {
+        LaTeXProject.checkRequest(request);
+        const result = await run(request);
+        LaTeXProject.checkRequest(request);
+        return result;
+      } catch (error) {
+        if (lifetime !== LaTeXProject.lifetime) { throw new vscode.CancellationError(); }
+        if (!request.changed && !(error instanceof ChangedRequest)) { throw error; }
+      } finally {
+        for (const subscription of subscriptions) { subscription.dispose(); }
+      }
     }
   }
 
-  private static rememberSource(file: vscode.Uri, source: string): ProjectSource {
+  private static checkRequest(request: ProjectRequest): void {
+    if (request.lifetime !== LaTeXProject.lifetime) { throw new vscode.CancellationError(); }
+    if (request.changed) { throw new ChangedRequest(); }
+  }
+
+  private static dependency(request: ProjectRequest, uri: vscode.Uri): boolean {
+    LaTeXProject.checkRequest(request);
+    const key = Workspace.uriKey(uri);
+    if (request.dependencies.has(key)) { return false; }
+    request.dependencies.add(key);
+    request.options.onDependency?.(uri);
+    return true;
+  }
+
+  private static async readSource(request: ProjectRequest, file: vscode.Uri): Promise<ProjectSource> {
+    LaTeXProject.dependency(request, file);
     const key = Workspace.uriKey(file);
-    const cached = LaTeXProject.sources.get(key);
-    if (cached?.source === source) { return cached; }
-    const syntax = new LaTeXParser.LaTeXSource(source);
-    const snapshot: ProjectSource = {
-      source, syntax, signature: LaTeXProject.discoverySignature(syntax),
-      get documentClass() { return LaTeXProject.get_classfile(syntax); }
-    };
-    if (LaTeXProject.watching) { LaTeXProject.sources.set(key, snapshot); }
-    return snapshot;
-  }
-
-  /** Keep prose/build-directive edits cheap, but include definition order and scopes. */
-  private static discoverySignature(syntax: LaTeXParser.LaTeXSource): string {
-    const scanner = syntax.sourceScanner;
-    const definitions = new Map(syntax.definitionParser.definitions.map(definition => [definition.start, definition]));
-    const document = new Map(syntax.documentParser.declarations.map(declaration => [declaration.start, declaration]));
-    const parts: string[] = [LaTeXProject.parse_percent_sharp_doc(syntax).main ?? ''];
-    let cursor = 0;
-    for (const command of scanner.commands) {
-      if (command.start < cursor) { continue; }
-      parts.push(scanner.maskedSource.slice(cursor, command.start).replace(/[^{}]/g, ''));
-      const definition = definitions.get(command.start);
-      if (definition) {
-        parts.push(syntax.source.slice(command.start, definition.end));
-        cursor = definition.end;
-        continue;
-      }
-      const declaration = document.get(command.start);
-      if (declaration?.kind === 'documentClass') {
-        parts.push(syntax.source.slice(command.start, declaration.end));
-        cursor = declaration.end;
-      } else if (command.name === 'input' || command.name === 'include') {
-        const argument = syntax.argumentScanner.readArgument(command.end);
-        parts.push(command.name);
-        if (argument) {
-          parts.push(syntax.source.slice(argument.start, argument.end));
-          cursor = argument.end;
-        } else {
-          cursor = command.end;
-        }
-      } else {
-        parts.push(command.name);
-        cursor = command.end;
-      }
+    let pending = request.sources.get(key);
+    if (!pending) {
+      pending = (async () => {
+        const source = await (request.options.readSource?.(file) ?? Workspace.readDocumentText(file));
+        LaTeXProject.checkRequest(request);
+        // An overriding reader owns its snapshot. Otherwise prefer a buffer that
+        // may have opened while the disk read was pending.
+        const current = request.options.readSource ? source : Workspace.findOpenDocument(file)?.getText() ?? source;
+        return { syntax: new LaTeXParser.LaTeXSource(current) };
+      })();
+      request.sources.set(key, pending);
     }
-    parts.push(scanner.maskedSource.slice(cursor).replace(/[^{}]/g, ''));
-    return JSON.stringify(parts);
+    return pending;
   }
 
   static readonly LaTeXFileType = {
@@ -242,38 +165,32 @@ export default class LaTeXProject {
   }
 
   /** Return a project only after its complete file list has been collected. */
-  public static async create(file: vscode.Uri | null): Promise<LaTeXProject> {
-    LaTeXProject.ensureWatching();
-    const lifetime = LaTeXProject.lifetime;
-    while (true) {
-      if (lifetime !== LaTeXProject.lifetime) { throw new vscode.CancellationError(); }
-      const revision = LaTeXProject.revision;
-      const description = await LaTeXProject.generate_project(file);
-      const entries = await LaTeXProject.collectProjectEntries(description[1]);
-      if (lifetime !== LaTeXProject.lifetime) { throw new vscode.CancellationError(); }
-      if (revision !== LaTeXProject.revision) { continue; }
+  public static async create(file: vscode.Uri | null, options: ProjectReadOptions = {}): Promise<LaTeXProject> {
+    return LaTeXProject.request(options, async request => {
+      const description = await LaTeXProject.generate_project(request, file);
+      const entries = await LaTeXProject.collectProjectEntries(request, description[1]);
       return new LaTeXProject(description, entries);
-    }
+    });
   }
 
-  private static async get_class_option_from_main(main: vscode.Uri): Promise<[string, string]> {
-    const parsed = await LaTeXProject.readSource(main);
-    return [...parsed.documentClass];
+  private static async get_class_option_from_main(request: ProjectRequest, main: vscode.Uri): Promise<[string, string]> {
+    const parsed = await LaTeXProject.readSource(request, main);
+    return LaTeXProject.get_classfile(parsed.syntax);
   }
-  private static async fileExists(file: vscode.Uri): Promise<boolean> {
+  private static async fileExists(request: ProjectRequest, file: vscode.Uri): Promise<boolean> {
+    LaTeXProject.dependency(request, file);
+    let exists = false;
     try {
       const stat = await vscode.workspace.fs.stat(file);
-      return (stat.type & vscode.FileType.File) !== 0;
-    } catch {
-      return false;
-    }
+      exists = (stat.type & vscode.FileType.File) !== 0;
+    } catch { /* An unavailable candidate cannot be selected as main. */ }
+    LaTeXProject.checkRequest(request);
+    return exists;
   }
   private static async mainFromMagic(file: vscode.Uri, directives: { [key: string]: string }): Promise<vscode.Uri | undefined> {
     const name = directives.main?.trim();
     if (!name) { return undefined; }
     const main = vscode.Uri.file(path.resolve(path.dirname(file.fsPath), name));
-    if (LaTeXProject.watching) { LaTeXProject.trackedFiles.add(Workspace.uriKey(main)); }
-    LaTeXProject.watchDirectory(vscode.Uri.joinPath(main, '..'));
     return main;
   }
 
@@ -282,76 +199,31 @@ export default class LaTeXProject {
   }
 
   /** Resolve the main URI without an additional file-list collection. */
-  public static async resolveMainFile(file: vscode.Uri | null): Promise<vscode.Uri> {
-    return (await LaTeXProject.generate_project(file))[1];
+  public static async resolveMainFile(file: vscode.Uri | null, options: ProjectReadOptions = {}): Promise<vscode.Uri> {
+    return LaTeXProject.request(options, async request => (await LaTeXProject.generate_project(request, file))[1]);
   }
 
-  private static async generate_project(f: vscode.Uri | null): Promise<ProjectDescription> {
-    LaTeXProject.ensureWatching();
+  private static async generate_project(request: ProjectRequest, f: vscode.Uri | null): Promise<ProjectDescription> {
     const file = f ?? vscode.window.activeTextEditor?.document.uri;
     if (!file) { throw new Error("Cannot get the current file"); }
-    const key = Workspace.uriKey(file);
-    const lifetime = LaTeXProject.lifetime;
-    while (true) {
-      if (lifetime !== LaTeXProject.lifetime) { throw new vscode.CancellationError(); }
-      const revision = LaTeXProject.revision;
-      const parsed = await LaTeXProject.readSource(file);
-      // Directives always come from the original document, including fresh build
-      // options when the parent itself is unchanged.
-      const directives = LaTeXProject.parse_percent_sharp_doc(parsed.syntax);
-      const order = Config.mainFileOrder();
-      const signature = JSON.stringify([parsed.signature, order]);
-      if (revision !== LaTeXProject.revision) { continue; }
-      let cached = LaTeXProject.mainFiles.get(key);
-      const reused = cached?.signature === signature;
-      if (cached?.signature !== signature) {
-        const entry: MainFileCacheEntry = {
-          signature,
-          main: LaTeXProject.discoverMain(file, directives, order)
-        };
-        LaTeXProject.mainFiles.set(key, entry);
-        cached = entry;
-        // Rejections must not poison later requests after a missing file appears.
-        void entry.main.catch(() => {
-          if (LaTeXProject.mainFiles.get(key) === entry) { LaTeXProject.mainFiles.delete(key); }
-        });
-      }
-      let main: vscode.Uri;
-      try {
-        main = await cached.main;
-      } catch (error) {
-        if (revision !== LaTeXProject.revision) { continue; }
-        throw error;
-      }
-      if (revision !== LaTeXProject.revision || LaTeXProject.mainFiles.get(key) !== cached) { continue; }
-      let cls: string;
-      let options: string;
-      try {
-        [cls, options] = await LaTeXProject.get_class_option_from_main(main);
-      } catch (error) {
-        if (LaTeXProject.mainFiles.get(key) === cached) { LaTeXProject.mainFiles.delete(key); }
-        if (revision !== LaTeXProject.revision) { continue; }
-        // A deleted cached main can be noticed before its filesystem event.
-        // Retry discovery once; a newly selected unreadable main still fails.
-        if (reused) { LaTeXProject.invalidate(); continue; }
-        throw error;
-      }
-      if (revision !== LaTeXProject.revision || LaTeXProject.mainFiles.get(key) !== cached) { continue; }
-      return [f, main, cls, options, directives];
-    }
+    const parsed = await LaTeXProject.readSource(request, file);
+    const directives = LaTeXProject.parse_percent_sharp_doc(parsed.syntax);
+    const main = await LaTeXProject.discoverMain(request, file, directives, request.order);
+    const [cls, options] = await LaTeXProject.get_class_option_from_main(request, main);
+    return [f, main, cls, options, directives];
   }
 
-  private static async discoverMain(file: vscode.Uri, directives: { [key: string]: string }, order: readonly string[]): Promise<vscode.Uri> {
+  private static async discoverMain(request: ProjectRequest, file: vscode.Uri, directives: { [key: string]: string }, order: readonly string[]): Promise<vscode.Uri> {
     // Strategies are data-driven so changing `mainFileOrder` does not duplicate
     // the validation and result assembly below.
     const strategies = new Map<string, () => Promise<vscode.Uri | undefined>>([
       ['magic', () => LaTeXProject.mainFromMagic(file, directives)],
-      ['guess', () => LaTeXProject.guessMainFile(file)],
+      ['guess', () => LaTeXProject.guessMainFile(request, file)],
       ['current', () => LaTeXProject.mainFromCurrentFile(file)]
     ]);
     for (const name of order) {
       const main = await strategies.get(name)?.();
-      if (main && await LaTeXProject.fileExists(main)) { return main; }
+      if (main && await LaTeXProject.fileExists(request, main)) { return main; }
     }
     throw new Error("The main cannot be found.");
   }
@@ -368,14 +240,14 @@ export default class LaTeXProject {
     return [name, options ? scanner.textWithoutComments(options.contentStart, options.contentEnd) ?? '' : ''];
   }
 
-  private static async guessMainFile(file: vscode.Uri): Promise<vscode.Uri | undefined> {
-    const [cls] = await LaTeXProject.get_class_option_from_main(file);
+  private static async guessMainFile(request: ProjectRequest, file: vscode.Uri): Promise<vscode.Uri | undefined> {
+    const [cls] = await LaTeXProject.get_class_option_from_main(request, file);
     if (cls) { return file; }
     let directory = vscode.Uri.file(path.dirname(file.fsPath));
     // Search every ancestor. A candidate is accepted only when it has a
     // document class and recursively includes the active file.
     while (true) {
-      const main = await LaTeXProject.findMainInDirectory(directory, file);
+      const main = await LaTeXProject.findMainInDirectory(request, directory, file);
       if (main) { return main; }
       const parent = vscode.Uri.file(path.dirname(directory.fsPath));
       if (Workspace.uriKey(parent) === Workspace.uriKey(directory)) { break; }
@@ -384,25 +256,31 @@ export default class LaTeXProject {
     return undefined;
   }
 
-  private static async findMainInDirectory(directory: vscode.Uri, target: vscode.Uri): Promise<vscode.Uri | undefined> {
+  private static async findMainInDirectory(request: ProjectRequest, directory: vscode.Uri, target: vscode.Uri): Promise<vscode.Uri | undefined> {
     // Only top-level documents in this directory are candidates; recursive
     // inclusion is checked by collectProjectFiles for each candidate.
     try {
-      LaTeXProject.watchDirectory(directory);
+      LaTeXProject.checkRequest(request);
+      const key = Workspace.uriKey(directory);
+      if (!request.directories.has(key)) {
+        request.directories.add(key);
+        request.options.onDirectory?.(directory);
+      }
       const files = await vscode.workspace.fs.readDirectory(directory);
+      LaTeXProject.checkRequest(request);
       for (const file of files) {
         if (file[1] === vscode.FileType.Directory) { continue; }
         if (path.extname(file[0]).toLowerCase() !== ".tex") { continue; }
         const filepath = vscode.Uri.joinPath(directory, file[0]);
         try {
-          const [cls] = await LaTeXProject.get_class_option_from_main(filepath);
+          const [cls] = await LaTeXProject.get_class_option_from_main(request, filepath);
           if (!cls) { continue; }
-          const projectFiles = await LaTeXProject.collectProjectFiles(filepath);
+          const projectFiles = await LaTeXProject.collectProjectFiles(request, filepath);
           if (projectFiles.some((projectFile) => Workspace.uriKey(projectFile) === Workspace.uriKey(target))) {
             return filepath;
           }
         } catch (error) {
-          if (error instanceof vscode.CancellationError) { throw error; }
+          if (error instanceof vscode.CancellationError || error instanceof ChangedRequest) { throw error; }
           continue;
         }
       }
@@ -410,32 +288,23 @@ export default class LaTeXProject {
 
     }
     catch (error) {
-      if (error instanceof vscode.CancellationError) { throw error; }
+      if (error instanceof vscode.CancellationError || error instanceof ChangedRequest) { throw error; }
       return undefined;
     }
   }
 
-  private static async collectProjectEntries(main: vscode.Uri): Promise<ProjectFileEntry[]> {
+  private static async collectProjectEntries(request: ProjectRequest, main: vscode.Uri): Promise<ProjectFileEntry[]> {
     const entries: ProjectFileEntry[] = [];
     const listed = new Set<string>();
     const ancestors = new Set<string>();
-    const sources = new Map<string, Promise<ProjectSource>>();
     const macros = new MacroState();
     const directory = vscode.Uri.file(path.dirname(main.fsPath));
-    const lifetime = LaTeXProject.lifetime;
     let visits = 0;
-    const track = (uri: vscode.Uri): boolean => {
-      const key = Workspace.uriKey(uri);
-      const fresh = !LaTeXProject.trackedFiles.has(key);
-      LaTeXProject.trackedFiles.add(key);
-      LaTeXProject.watchDirectory(vscode.Uri.joinPath(uri, '..'));
-      return fresh;
-    };
     const visit = async (entry: IncludedFile, knownExists?: boolean): Promise<void> => {
-      if (lifetime !== LaTeXProject.lifetime) { throw new vscode.CancellationError(); }
+      LaTeXProject.checkRequest(request);
       const key = Workspace.uriKey(entry.uri);
-      track(entry.uri);
-      const exists = knownExists ?? await LaTeXProject.fileExists(entry.uri);
+      LaTeXProject.dependency(request, entry.uri);
+      const exists = knownExists ?? await LaTeXProject.fileExists(request, entry.uri);
       if (!listed.has(key)) {
         listed.add(key);
         entries.push({ ...entry, exists });
@@ -444,14 +313,9 @@ export default class LaTeXProject {
       if (++visits > 10000 || ancestors.size >= 256) { throw new Error('Too many nested LaTeX inputs'); }
       let parsed: ProjectSource;
       try {
-        let pending = sources.get(key);
-        if (!pending) {
-          pending = LaTeXProject.readSource(entry.uri);
-          sources.set(key, pending);
-        }
-        parsed = await pending;
+        parsed = await LaTeXProject.readSource(request, entry.uri);
       } catch (error) {
-        if (error instanceof vscode.CancellationError) { throw error; }
+        if (error instanceof vscode.CancellationError || error instanceof ChangedRequest) { throw error; }
         return;
       }
       ancestors.add(key);
@@ -494,15 +358,16 @@ export default class LaTeXProject {
             let resolved;
             while (true) {
               resolved = await resolveInputFile(syntax, command as InputToken, directory, name => macros.lookup(name));
-              const fresh = resolved.checkedCandidates.filter(candidate => track(candidate.uri));
+              LaTeXProject.checkRequest(request);
+              const fresh = resolved.checkedCandidates.filter(candidate => LaTeXProject.dependency(request, candidate.uri));
               // A previously unknown candidate may change while stat is pending,
               // before its directory/dependency has been registered. Check it
               // once more under tracking before publishing the resolution.
               const changed = await Promise.all(fresh.map(async candidate =>
-                (await LaTeXProject.fileExists(candidate.uri)) !== candidate.exists));
+                (await LaTeXProject.fileExists(request, candidate.uri)) !== candidate.exists));
               if (!changed.some(Boolean)) { break; }
             }
-            if (lifetime !== LaTeXProject.lifetime) { throw new vscode.CancellationError(); }
+            LaTeXProject.checkRequest(request);
             cursor = Math.max(cursor, resolved.consumedEnd);
             const target = resolved.status === 'resolved' ? resolved.uri
               : resolved.status === 'missing' ? resolved.checkedCandidates[0]?.uri : undefined;
@@ -524,8 +389,8 @@ export default class LaTeXProject {
     return entries;
   }
 
-  private static async collectProjectFiles(main: vscode.Uri): Promise<vscode.Uri[]> {
-    const entries = await LaTeXProject.collectProjectEntries(main);
+  private static async collectProjectFiles(request: ProjectRequest, main: vscode.Uri): Promise<vscode.Uri[]> {
+    const entries = await LaTeXProject.collectProjectEntries(request, main);
     return entries.filter(entry => entry.exists).map(entry => entry.uri);
   }
 

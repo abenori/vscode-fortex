@@ -1,146 +1,48 @@
 import * as vscode from 'vscode';
 import { COMMAND_CATALOG, CommandCatalogEntry } from './CommandCatalog';
-import { CommandContext, CustomCommandDefinition, findCustomCommands } from './CommandParser';
-import * as LaTeXParser from '../../latex-parser';
+import { CommandContext } from './CommandParser';
+import Config from '../../Config';
+import CompletionSession from '../CompletionSession';
+import { completionSources } from '../CompletionSources';
+import { collectRawCommands, RawCommand } from '../RawCompletionCollector';
 
-interface CommandCacheEntry {
-  source: string;
-  commands: CustomCommandDefinition[];
-  declarationLines: readonly { start: number; end: number }[];
-}
-
-const reindexDelayMilliseconds = 300;
-
-/** Provides cached standard and document-local LaTeX command completions. */
+/** Combines the fixed catalog with definitions collected for one input context. */
 export default class CommandCompletionProvider implements vscode.Disposable {
-  private readonly cache = new Map<string, CommandCacheEntry>();
-  private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
-  private readonly disposables: vscode.Disposable[];
+  private readonly session = new CompletionSession<RawCommand[]>();
 
-  public constructor() {
-    for (const document of vscode.workspace.textDocuments) {
-      if (document.languageId === 'latex') {
-        this.index(document);
-      }
-    }
-    this.disposables = [
-      vscode.workspace.onDidOpenTextDocument((document) => {
-        if (document.languageId === 'latex') {
-          this.index(document);
-        }
-      }),
-      vscode.workspace.onDidChangeTextDocument((event) => this.onDocumentChanged(event)),
-      vscode.workspace.onDidCloseTextDocument((document) => this.remove(document))
-    ];
-  }
-
-  public complete(
+  public async complete(
     document: vscode.TextDocument,
     position: vscode.Position,
     context: CommandContext,
     token: vscode.CancellationToken
-  ): vscode.CompletionList | undefined {
-    if (token.isCancellationRequested) {
-      return undefined;
-    }
-
+  ): Promise<vscode.CompletionList | undefined> {
+    if (token.isCancellationRequested) { return undefined; }
+    const commands = await this.session.get(document, {
+      start: context.start + 1, end: document.offsetAt(position), scope: Config.completionScope('command', document.uri)
+    }, token, async requestToken => {
+      const sources = await completionSources(document, 'command', requestToken, (uris, directories) => {
+        this.session.watch(uris, requestToken); this.session.watchDirectories(directories ?? [], requestToken);
+      });
+      const unique = new Map<string, RawCommand>();
+      for (const { source } of sources) {
+        for (const command of collectRawCommands(source)) { unique.set(command.name, command); }
+      }
+      return [...unique.values()];
+    });
+    if (!commands || token.isCancellationRequested) { return undefined; }
     const range = new vscode.Range(document.positionAt(context.start), position);
     const items = new Map<string, vscode.CompletionItem>();
     for (const command of COMMAND_CATALOG) {
-      if (fuzzyMatch(command.name, context.query)) {
-        items.set(command.name, catalogItem(command, range));
-      }
+      if (fuzzyMatch(command.name, context.query)) { items.set(command.name, catalogItem(command, range)); }
     }
-    for (const command of this.commandsFor(document)) {
-      if (fuzzyMatch(command.name, context.query)) {
-        // A local renewcommand intentionally overrides the built-in snippet.
-        items.set(command.name, customCommandItem(command, range));
-      }
+    for (const command of commands) {
+      if (fuzzyMatch(command.name, context.query)) { items.set(command.name, customCommandItem(command, range)); }
     }
-    return new vscode.CompletionList([...items.values()], false);
+    return new vscode.CompletionList([...items.values()], true);
   }
 
-  public dispose(): void {
-    for (const disposable of this.disposables) {
-      disposable.dispose();
-    }
-    for (const timer of this.timers.values()) {
-      clearTimeout(timer);
-    }
-    this.timers.clear();
-    this.cache.clear();
-  }
-
-  private commandsFor(document: vscode.TextDocument): CustomCommandDefinition[] {
-    return this.cache.get(document.uri.toString())?.commands ?? this.index(document).commands;
-  }
-
-  private index(document: vscode.TextDocument): CommandCacheEntry {
-    const source = document.getText();
-    const parser = new LaTeXParser.LaTeXSource(source).definitionParser;
-    const declarationLines = parser.definitions.map(definition => ({
-      start: document.positionAt(definition.start).line,
-      end: document.positionAt(definition.end).line
-    }));
-    const entry = { source, commands: findCustomCommands(parser), declarationLines };
-    this.cache.set(document.uri.toString(), entry);
-    return entry;
-  }
-
-  private onDocumentChanged(event: vscode.TextDocumentChangeEvent): void {
-    if (event.document.languageId !== 'latex' || event.contentChanges.length === 0) {
-      return;
-    }
-    const key = event.document.uri.toString();
-    const cached = this.cache.get(key);
-    if (!cached) {
-      this.index(event.document);
-      return;
-    }
-
-    const oldSource = cached.source;
-    const relevant = event.contentChanges.some((change) => {
-      const removed = oldSource.slice(change.rangeOffset, change.rangeOffset + change.rangeLength);
-      if (/[\r\n\\%{}\[\]]/.test(change.text) || /[\r\n\\%{}\[\]]/.test(removed)) {
-        return true;
-      }
-      if (cached.declarationLines.some(range => change.range.start.line <= range.end && change.range.end.line >= range.start)) {
-        return true;
-      }
-      const lineNumber = Math.min(change.range.start.line, Math.max(0, event.document.lineCount - 1));
-      const oldLineStart = Math.max(oldSource.lastIndexOf('\n', change.rangeOffset - 1), oldSource.lastIndexOf('\r', change.rangeOffset - 1)) + 1;
-      const oldLineEnd = oldSource.slice(change.rangeOffset).search(/[\r\n]/);
-      const oldLine = oldSource.slice(oldLineStart, oldLineEnd < 0 ? oldSource.length : change.rangeOffset + oldLineEnd);
-      // Changing an existing literal introducer or environment name can expose
-      // declarations far away from the edited line.
-      return /[\\%{}]/.test(oldLine) || /[\\%{}]/.test(event.document.lineAt(lineNumber).text);
-    });
-    cached.source = applyContentChanges(oldSource, event.contentChanges);
-    if (!relevant) {
-      return;
-    }
-
-    const previous = this.timers.get(key);
-    if (previous) {
-      clearTimeout(previous);
-    }
-    this.timers.set(key, setTimeout(() => {
-      this.timers.delete(key);
-      if (vscode.workspace.textDocuments.includes(event.document)) {
-        this.index(event.document);
-      }
-    }, reindexDelayMilliseconds));
-  }
-
-  private remove(document: vscode.TextDocument): void {
-    const key = document.uri.toString();
-    const timer = this.timers.get(key);
-    if (timer) {
-      clearTimeout(timer);
-      this.timers.delete(key);
-    }
-    this.cache.delete(key);
-  }
+  public invalidate(): void { this.session.invalidate(); }
+  public dispose(): void { this.session.dispose(); }
 }
 
 function catalogItem(command: CommandCatalogEntry, range: vscode.Range): vscode.CompletionItem {
@@ -156,7 +58,7 @@ function catalogItem(command: CommandCatalogEntry, range: vscode.Range): vscode.
   return item;
 }
 
-function customCommandItem(command: CustomCommandDefinition, range: vscode.Range): vscode.CompletionItem {
+function customCommandItem(command: RawCommand, range: vscode.Range): vscode.CompletionItem {
   const item = new vscode.CompletionItem(`\\${command.name}`, vscode.CompletionItemKind.Function);
   item.range = range;
   item.filterText = `\\${command.name}`;
@@ -169,7 +71,7 @@ function customCommandItem(command: CustomCommandDefinition, range: vscode.Range
 }
 
 /** Builds argument tab stops for classic newcommand declarations. */
-function customCommandSnippet(command: CustomCommandDefinition): vscode.SnippetString {
+function customCommandSnippet(command: RawCommand): vscode.SnippetString {
   const snippet = new vscode.SnippetString();
   snippet.appendText(`\\${command.name}`);
   let tabstop = 1;
@@ -205,12 +107,4 @@ function fuzzyMatch(value: string, query: string): boolean {
     }
   }
   return false;
-}
-
-function applyContentChanges(source: string, changes: readonly vscode.TextDocumentContentChangeEvent[]): string {
-  const descending = [...changes].sort((left, right) => right.rangeOffset - left.rangeOffset);
-  for (const change of descending) {
-    source = source.slice(0, change.rangeOffset) + change.text + source.slice(change.rangeOffset + change.rangeLength);
-  }
-  return source;
 }

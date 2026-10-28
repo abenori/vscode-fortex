@@ -2,10 +2,21 @@ import * as vscode from 'vscode';
 import { CitationContext } from './Citation';
 import CitationService from './CitationService';
 import { searchCitations } from './CitationSearch';
+import CompletionSession from '../CompletionSession';
+import { CitationEntry } from './Citation';
 
 /** Supplies BibTeX keys while the cursor is inside a cite-like command. */
-export default class CitationCompletionProvider {
+export default class CitationCompletionProvider implements vscode.Disposable {
+  private readonly session = new CompletionSession<CitationEntry[]>();
   public constructor(private readonly service: CitationService) {}
+
+  public invalidate(): void {
+    this.session.invalidate();
+  }
+
+  public dispose(): void {
+    this.session.dispose();
+  }
 
   public async complete(
     document: vscode.TextDocument,
@@ -17,8 +28,12 @@ export default class CitationCompletionProvider {
       return undefined;
     }
 
-    const entries = await this.service.entriesFor(document);
-    if (token.isCancellationRequested) {
+    const entries = await this.session.get(document, {
+      start: context.queryStart, end: document.offsetAt(position), scope: 'project'
+    }, token, requestToken => this.service.entriesFor(document, requestToken,
+      uris => this.session.watch(uris, requestToken),
+      uris => this.session.watchDirectories(uris, requestToken)));
+    if (!entries || token.isCancellationRequested) {
       return undefined;
     }
     // Rank all entries before capping the UI list.

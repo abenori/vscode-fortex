@@ -21,7 +21,7 @@ import TexdocService from './documentation/TexdocService';
 import { openDocumentation } from './documentation/DocumentationCommand';
 import StructureService from './structure/StructureService';
 import StructureView from './structure/StructureView';
-import LaTeXDocumentSymbolProvider from './structure/LaTeXDocumentSymbolProvider';
+import { registerDocumentSymbols } from './structure/LaTeXDocumentSymbolProvider';
 import LaTeXProject from './project/LaTeXProject';
 
 let buildManager: BuildManager | undefined;
@@ -80,20 +80,22 @@ export function activate(context: vscode.ExtensionContext) {
   // Providers and commands are registered together so every disposable follows
   // the extension context lifetime.
   const citations = new CitationService();
+  const citationCompletion = new CitationCompletionProvider(citations);
   const labels = new LabelCompletionProvider();
   const commands = new CommandCompletionProvider();
+  const environments = new EnvironmentCompletionProvider();
   const greek = new GreekCompletionController();
   const structure = new StructureService();
   context.subscriptions.push(
     citations,
+    citationCompletion,
     labels,
     commands,
+    environments,
     greek,
     structure,
     new StructureView(context, structure),
-    vscode.languages.registerDocumentSymbolProvider(
-      { language: 'latex' }, new LaTeXDocumentSymbolProvider(), { label: 'Fortex' }
-    ),
+    registerDocumentSymbols(structure),
     vscode.commands.registerCommand('vscode-fortex.greekCompletion.start', () => greek.start()),
     vscode.commands.registerCommand('vscode-fortex.greekCompletion.input', (args) => greek.input(args)),
     vscode.commands.registerCommand('vscode-fortex.greekCompletion.commit', (args) => greek.commit(args)),
@@ -104,8 +106,8 @@ export function activate(context: vscode.ExtensionContext) {
       { language: 'latex' },
       new LaTeXCompletionProvider({
         reference: labels,
-        citation: new CitationCompletionProvider(citations),
-        environment: new EnvironmentCompletionProvider(),
+        citation: citationCompletion,
+        environment: environments,
         command: commands
       }),
       '{',

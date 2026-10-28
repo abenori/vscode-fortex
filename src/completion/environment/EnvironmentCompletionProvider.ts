@@ -1,30 +1,52 @@
 import * as vscode from 'vscode';
 import Config from '../../Config';
 import * as LaTeXParser from '../../latex-parser';
+import CompletionSession from '../CompletionSession';
+import { completionSources } from '../CompletionSources';
+import { collectRawEnvironments } from '../RawCompletionCollector';
 import {
-  collectEnvironmentNames,
+  STANDARD_ENVIRONMENTS,
   EnvironmentCompletionContext
 } from './EnvironmentParser';
 
 /** Inserts a complete environment pair from a `\begin{...}` or `\[` completion. */
-export default class EnvironmentCompletionProvider {
-  public complete(
+export default class EnvironmentCompletionProvider implements vscode.Disposable {
+  private readonly session = new CompletionSession<string[]>();
+
+  public async complete(
     document: vscode.TextDocument,
     position: vscode.Position,
     context: EnvironmentCompletionContext,
     token: vscode.CancellationToken
-  ): vscode.CompletionList | undefined {
+  ): Promise<vscode.CompletionList | undefined> {
     if (token.isCancellationRequested) {
       return undefined;
     }
 
     if (context.style === 'display') {
+      this.invalidate();
       return new vscode.CompletionList([this.makeDisplayItem(document, position, context)], false);
     }
 
-    const items = collectEnvironmentNames(document.getText()).map((name) => this.makeNamedItem(document, position, context, name));
-    return new vscode.CompletionList(items, false);
+    const names = await this.session.get(document, {
+      start: context.queryStart, end: document.offsetAt(position), scope: Config.completionScope('environment', document.uri)
+    }, token, async requestToken => {
+      const sources = await completionSources(document, 'environment', requestToken, (uris, directories) => {
+        this.session.watch(uris, requestToken); this.session.watchDirectories(directories ?? [], requestToken);
+      });
+      const unique = new Set<string>(STANDARD_ENVIRONMENTS);
+      for (const { source } of sources) {
+        for (const name of collectRawEnvironments(source)) { unique.add(name); }
+      }
+      return [...unique].sort((left, right) => left.localeCompare(right));
+    });
+    if (!names || token.isCancellationRequested) { return undefined; }
+    const items = names.map((name) => this.makeNamedItem(document, position, context, name));
+    return new vscode.CompletionList(items, true);
   }
+
+  public invalidate(): void { this.session.invalidate(); }
+  public dispose(): void { this.session.dispose(); }
 
   private makeNamedItem(
     document: vscode.TextDocument,

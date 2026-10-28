@@ -6,6 +6,8 @@ export interface StructureLocation {
   uri: vscode.Uri;
   start: number;
   end: number;
+  /** Identifies the outline text that owns these offsets. */
+  sourceVersion?: number;
 }
 
 export interface StructureLabel {
@@ -40,4 +42,6 @@ export interface StructureSnapshot {
   labels: StructureLabelEntry[];
   files: vscode.Uri[];
   message?: string;
+  /** The displayed structure is retained until the contributing buffers are saved. */
+  waitingForSave?: boolean;
 }

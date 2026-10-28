@@ -53,7 +53,6 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
   readonly onDidChangeTreeData = this.changes.event;
   private readonly view: vscode.TreeView<TreeElement>;
   private readonly disposables: vscode.Disposable[] = [];
-  private readonly documents = new Map<string, Promise<vscode.TextDocument | undefined>>();
   private snapshot: StructureSnapshot | undefined;
   private settings: StructureViewSettings;
   private roots: TreeElement[] = [];
@@ -73,7 +72,6 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
         }
       }));
     };
-    register('refresh', () => service.refresh());
     register('filter', () => this.chooseFilter());
     register('toggleLabels', () => this.updateSetting('showLabels', !this.settings.showLabels));
     register('toggleLabeledOnly', () => this.updateSetting('labeledOnly', !this.settings.labeledOnly));
@@ -85,8 +83,11 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
       service.onDidChange(snapshot => {
         this.snapshot = snapshot;
         this.settings = this.readSettings();
-        this.documents.clear();
         this.rebuild();
+      }),
+      service.onDidChangeStatus(() => {
+        this.snapshot = service.snapshot;
+        this.updateStatus();
       }),
       vscode.workspace.onDidChangeConfiguration(event => {
         if (event.affectsConfiguration('vscode-fortex.outline')) {
@@ -162,14 +163,21 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
       this.roots = filterStructure(this.snapshot?.roots ?? [], this.settings).map(wrap);
     }
     this.view.title = this.settings.viewMode === 'labels' ? 'LaTeX Structure: Labels' : 'LaTeX Structure';
-    this.view.description = this.snapshot
-      ? `${this.fileName(this.snapshot.main)}${this.snapshot.followIncludes ? '' : ' · Current file only'}` : undefined;
-    this.view.message = this.snapshot?.message || (!this.snapshot ? 'Open a LaTeX document to see its structure.'
-      : this.roots.length > 0 ? undefined : this.settings.viewMode === 'labels' ? 'No labels found.' : 'No structure items match the current filter.');
+    this.updateStatus();
     void vscode.commands.executeCommand('setContext', 'fortex.structure.showLabels', this.settings.showLabels);
     void vscode.commands.executeCommand('setContext', 'fortex.structure.labeledOnly', this.settings.labeledOnly);
     void vscode.commands.executeCommand('setContext', 'fortex.structure.labelMode', this.settings.viewMode === 'labels');
     this.changes.fire(undefined);
+  }
+
+  private updateStatus(): void {
+    this.view.description = this.snapshot
+      ? `${this.fileName(this.snapshot.main)}${this.snapshot.followIncludes ? '' : ' · Current file only'}${this.snapshot.waitingForSave ? ' · Waiting for save' : ''}`
+      : undefined;
+    this.view.message = this.snapshot?.waitingForSave
+      ? 'Waiting for save. Save the edited source to update its structure and enable navigation.'
+      : this.snapshot?.message || (!this.snapshot ? 'Open a LaTeX document to see its structure.'
+        : this.roots.length > 0 ? undefined : this.settings.viewMode === 'labels' ? 'No labels found.' : 'No structure items match the current filter.');
   }
 
   private readSettings(): StructureViewSettings {
@@ -273,7 +281,16 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
   }
 
   private async openLocation(location: StructureLocation): Promise<void> {
+    if (!this.service.canNavigate(location)) {
+      void vscode.window.showInformationMessage('Save the edited source before navigating to its structure.');
+      return;
+    }
     const document = await vscode.workspace.openTextDocument(location.uri);
+    // Opening a document or editing during I/O can change the offset owner.
+    if (!this.service.canNavigate(location, document)) {
+      void vscode.window.showInformationMessage('Save the edited source before navigating to its structure.');
+      return;
+    }
     const range = new vscode.Range(document.positionAt(location.start), document.positionAt(location.end));
     const editor = await vscode.window.showTextDocument(document, { selection: range, preview: true });
     editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
@@ -283,28 +300,17 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
     return uri.path.split('/').filter(Boolean).at(-1) || uri.toString();
   }
 
-  private document(uri: vscode.Uri): Promise<vscode.TextDocument | undefined> {
-    const key = uri.toString();
-    let document = this.documents.get(key);
-    if (!document) {
-      document = Promise.resolve(vscode.workspace.openTextDocument(uri)).then(value => value, () => undefined);
-      this.documents.set(key, document);
-    }
-    return document;
-  }
-
   private async sourceDescription(location: StructureLocation): Promise<string> {
     return `${this.fileName(location.uri)}${await this.lineSuffix(location)}`;
   }
 
   private async lineSuffix(location: StructureLocation): Promise<string> {
-    const document = await this.document(location.uri);
-    return document ? `:${document.positionAt(location.start).line + 1}` : '';
+    const line = this.service.lineNumber(location);
+    return line === undefined ? '' : `:${line}`;
   }
 
   dispose(): void {
     this.disposed = true;
-    this.documents.clear();
     this.view.dispose();
     this.changes.dispose();
     for (const disposable of this.disposables) {

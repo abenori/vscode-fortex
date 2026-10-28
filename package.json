@@ -50,7 +50,6 @@
     },
     "menus": {
       "view/title": [
-        { "command": "vscode-fortex.outline.refresh", "when": "view == fortex.structure", "group": "navigation@1" },
         { "command": "vscode-fortex.outline.searchLabels", "when": "view == fortex.structure", "group": "navigation@2" },
         { "command": "vscode-fortex.outline.filter", "when": "view == fortex.structure", "group": "navigation@3" },
         { "command": "vscode-fortex.outline.toggleMode", "when": "view == fortex.structure", "group": "1_display@1" },
@@ -66,7 +65,6 @@
       ]
     },
     "commands": [
-      { "command": "vscode-fortex.outline.refresh", "title": "Refresh LaTeX Structure", "category": "Fortex", "icon": "$(refresh)" },
       { "command": "vscode-fortex.outline.searchLabels", "title": "Go to LaTeX Label", "category": "Fortex", "icon": "$(search)" },
       { "command": "vscode-fortex.outline.filter", "title": "Filter LaTeX Structure", "category": "Fortex", "icon": "$(filter)" },
       { "command": "vscode-fortex.outline.toggleMode", "title": "Show Labels in Name Order", "category": "Fortex", "toggled": "fortex.structure.labelMode" },
@@ -1633,6 +1631,30 @@
       "type": "object",
       "title": "fortex",
       "properties": {
+        "vscode-fortex.completion.label.scope": {
+          "type": "string",
+          "enum": ["document", "project"],
+          "default": "document",
+          "scope": "resource",
+          "enumDescriptions": ["Collect labels from the current document.", "Collect labels from the main document and its recursive input/include files."],
+          "description": "Source scope for label completion. Unsaved editor contents are used."
+        },
+        "vscode-fortex.completion.command.scope": {
+          "type": "string",
+          "enum": ["document", "project"],
+          "default": "document",
+          "scope": "resource",
+          "enumDescriptions": ["Collect command definitions from the current document.", "Collect command definitions from the main document and its recursive input/include files."],
+          "description": "Source scope for user-defined command completion. The fixed command catalog is always available."
+        },
+        "vscode-fortex.completion.environment.scope": {
+          "type": "string",
+          "enum": ["document", "project"],
+          "default": "document",
+          "scope": "resource",
+          "enumDescriptions": ["Collect environment names from the current document.", "Collect environment names from the main document and its recursive input/include files."],
+          "description": "Source scope for environment completion. The fixed environment catalog is always available."
+        },
         "vscode-fortex.mainFileOrder": {
           "type": "array",
           "items": {

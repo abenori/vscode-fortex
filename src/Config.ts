@@ -14,6 +14,14 @@ export default class Config {
     return Config.get<string[]>("mainFileOrder", ["magic", "guess", "current"]);
   }
 
+  public static completionScope(
+    kind: 'label' | 'command' | 'environment',
+    uri: vscode.Uri
+  ): 'document' | 'project' {
+    return vscode.workspace.getConfiguration(Config.config_name, uri)
+      .get<string>('completion.' + kind + '.scope', 'document') === 'project' ? 'project' : 'document';
+  }
+
   public static compileTrigger(){
     return Config.get<string[]>("compileTrigger", ["onSave"]);
   }

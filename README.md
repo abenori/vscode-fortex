@@ -64,17 +64,31 @@ The Explorer's **LaTeX Structure** view shows headings, theorems, display equati
 
 By default, Fortex uses the same main-file detection as a build (`vscode-fortex.mainFileOrder`, including `%#main`), then expands literal `\input` and `\include` commands at their source positions. Included headings participate in the surrounding document hierarchy. Set `vscode-fortex.outline.followIncludes` to `false` to display only the current file without main-file discovery. This setting affects structure display only. The view identifies its main file or indicates **Current file only**. Untitled documents are local only.
 
-The view's toolbar offers **Refresh LaTeX Structure**, **Go to LaTeX Label**, and **Filter LaTeX Structure**. The filter chooses visible categories and whether to show labeled, all, or no display equations. Its menu also switches to **Show Labels in Name Order**, toggles attached label names, and enables **Show Only Labeled Items**. Hidden parents promote visible descendants; labeled-only mode keeps the headings needed to locate visible items. Label mode and label search include every label in the selected scope, independently of category filters. Labels declared at different positions with the same key are marked as duplicates; repeated inclusion of one declaration shows its inclusion count. Display choices are saved for the workspace (or in the window's workspace state when no folder is open).
+The view's toolbar offers **Go to LaTeX Label** and **Filter LaTeX Structure**. The filter chooses visible categories and whether to show labeled, all, or no display equations. Its menu also switches to **Show Labels in Name Order**, toggles attached label names, and enables **Show Only Labeled Items**. Hidden parents promote visible descendants; labeled-only mode keeps the headings needed to locate visible items. Label mode and label search include every label in the selected scope, independently of category filters. Labels declared at different positions with the same key are marked as duplicates; repeated inclusion of one declaration shows its inclusion count. Display choices are saved for the workspace (or in the window's workspace state when no folder is open).
 
 `\newtheorem` and `\newtheorem*` declarations in the parsed sources supply theorem environment names and titles. Use `vscode-fortex.outline.theoremEnvironments` to add names defined in a class or package, for example `{ "claim": "Claim" }`. Headings use their full titles; theorems use their declared name and optional title, figures and tables use their first caption, and equations show a source excerpt. An `align` block remains one item with all its labels. Inline math and nested equation helpers such as `aligned` are not separate items.
 
-Unsaved editor contents and changes to included files update the view without compiling. Comments, verbatim examples, and macro definition bodies are ignored. Missing files and circular includes appear at the relevant inclusion site. This is a source structure index: macros, conditionals, and `\includeonly` are not evaluated, and LaTeX-generated numbering is not reproduced. Label attachment describes source containment, rather than guaranteeing the counter to which a compiled reference resolves.
+The structure is first read when needed, then updated when a document is saved. Editing keeps the previous project tree and marks it **Waiting for save**; navigation into a changed document is blocked until its snapshot is updated. Saving one document does not reparse another unsaved document. External dependency changes, file creation/deletion, target changes, and related configuration changes also update the view. There is no manual refresh command. Comments, verbatim examples, and macro definition bodies are ignored. Missing files and circular includes appear at the relevant inclusion site. This is a source structure index: macros, conditionals, and `\includeonly` are not evaluated, and LaTeX-generated numbering is not reproduced. Label attachment describes source containment, rather than guaranteeing the counter to which a compiled reference resolves.
 
-The standard **Outline**, breadcrumbs, and **Go to Symbol in Editor** (`Ctrl+Shift+O`, or `Cmd+Shift+O` on macOS) show the current file's heading hierarchy regardless of the project view's filters.
+The standard **Outline**, breadcrumbs, and **Go to Symbol in Editor** (`Ctrl+Shift+O`, or `Cmd+Shift+O` on macOS) use the same document snapshots and show the current file's heading hierarchy regardless of the project view's filters. A changed document's standard symbols are withheld until save, so the editor cannot navigate using outdated offsets.
 
 ## Label reference completion
 
-Inside `\ref{...}`, IntelliSense lists `\label{...}` targets from the current LaTeX file. Selecting a suggestion shows the target line and its nearby LaTeX source in the suggestion details popup. The same completion is available for common variants including `\pageref`, `\eqref`, `\autoref`, `\nameref`, `\cref`, and `\Cref`.
+Inside `\ref{...}`, IntelliSense lists `\label{...}` names from the current LaTeX file. Only names are collected initially; the source preview is obtained when suggestion details are requested. Nested braces, escaped braces, multiline arguments, and comments within arguments are supported. Declarations in comments or verbatim examples are also collected as completion candidates. The same completion is available for common variants including `\pageref`, `\eqref`, `\autoref`, `\nameref`, `\cref`, and `\Cref`.
+
+The label, command, and environment completion scopes can be configured independently:
+
+```json
+{
+  "vscode-fortex.completion.label.scope": "document",
+  "vscode-fortex.completion.command.scope": "document",
+  "vscode-fortex.completion.environment.scope": "document"
+}
+```
+
+All three default to `document`. Set a scope to `project` to collect from the main file and its recursive `\input`/`\include` sources. Open documents contribute their current unsaved text. When project discovery is unavailable, such as in an untitled document, completion uses the current document. Package files are not automatically loaded through `\usepackage`. Candidate collection includes declarations inside comments and literal examples, while completion context detection, project discovery, navigation, and outlines retain strict lexical rules.
+
+Completion collects fresh sources when a new input context starts and reuses candidates only while editing that context's query. Main-file discovery and project construction retain no results between requests. Ordinary typing does not rebuild completion indexes or compute project signatures.
 
 Press `Ctrl+T G` with the cursor on a `\label{...}` or reference command to move to the command using the same key. Moving from a label shows Quick Pick when the label has several references. This navigation currently searches the active file only.
 
