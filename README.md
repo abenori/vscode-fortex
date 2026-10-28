@@ -4,6 +4,8 @@
 
 Run **Build LaTeX Project** from the Command Palette or press `Ctrl+T T T`. For this shortcut and the PDF shortcuts below, press `Ctrl+T`, release Ctrl, then press the remaining keys without Shift.
 
+Builds and PDF previews discover their main file from saved source files. Builds also obtain the document class, input files, and build directives from those saved sources. Save changes to `%#main`, `\documentclass`, `\input`, `\include`, and `%#` build directives before using them. Editing can continue while discovery runs: each discovery reads a source once and uses the main-file strategy order captured at its start. Later edits or configuration changes are used by the next request.
+
 Programs named by source-file build directives such as `%#!`, `%#bibtex`, `%#makeindex`, and `%#dvipdf` must be listed in `vscode-fortex.compile.allowedPrograms`. The default list contains common TeX engines and helper programs. Matching is exact; add another program explicitly when a document needs it. An empty list rejects every `%#`-selected program, while adding `*` permits any program. The setting is machine-scoped so an opened workspace cannot silently widen its own permissions.
 
 Fortex parses `%#!` command lines itself and starts the executable with `shell: false`. Quotes may be used for arguments containing spaces. Shell operators such as `|`, `&&`, `<`, and `>` are passed as ordinary arguments and are not interpreted. Semicolons outside quotes retain their existing meaning as separators between build actions. All programs named by `%#` directives are checked before the first build process starts. Programs selected without a `%#` directive are not restricted by this setting.

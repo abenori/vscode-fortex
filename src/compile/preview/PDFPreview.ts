@@ -5,6 +5,7 @@ import LaTeXProject from "../../project/LaTeXProject";
 import SumatraPDF from "./SumatraPDF";
 import InternalPDFViewer from "./InternalPDFViewer";
 import { assertWorkspaceTrusted } from "../../WorkspaceTrust";
+import * as Workspace from '../../workspace';
 
 export type PDFViewer = "internal" | "sumatra";
 
@@ -28,7 +29,7 @@ export default class PDFPreview implements vscode.Disposable {
     const sourceSelection = editor.selection;
     const sourceViewColumn = editor.viewColumn;
     const keepEditorFocus = sync && Config.syncTeXForwardSearchFocus() === "editor";
-    const main = await LaTeXProject.resolveMainFile(sourceDocument.uri);
+    const main = await LaTeXProject.resolveMainFile(sourceDocument.uri, { readSource: Workspace.readFileText });
     await this.open(main, viewer,
       sync ? sourceDocument.uri : undefined,
       sync ? sourceSelection.active.line + 1 : undefined,

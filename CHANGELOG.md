@@ -6,6 +6,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+- Use saved sources for build and PDF main-file discovery, and run project discovery once per request without restarting on editor or configuration changes.
 - Shared top-level comma-list parsing through `LaTeXParser.splitclist` and made TeX error document lookup safe for missing files and linked directories.
 - Made main-file discovery and project construction request-scoped, removed edit-driven completion indexes, and retained bibliography caching.
 - Added independent document/project scopes for label, command, and environment completion, with permissive candidate collection and lazy label descriptions.

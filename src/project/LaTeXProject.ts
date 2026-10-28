@@ -31,10 +31,13 @@ interface ProjectSource {
   readonly syntax: LaTeXParser.LaTeXSource;
 }
 
-/** Optional source snapshots and discovery traces owned by the caller. */
+/** Source selection and discovery notifications; callers own refreshes and watches. */
 export interface ProjectReadOptions {
+  /** Defaults to editor-buffer-first reading. Called once per URI, without later replacement or retry. */
   readonly readSource?: (uri: vscode.Uri) => Promise<string>;
+  /** Reports each read/existence candidate once, including missing files, so the caller can watch it. */
   readonly onDependency?: (uri: vscode.Uri) => void;
+  /** Reports each directory searched for main-file candidates once. */
   readonly onDirectory?: (uri: vscode.Uri) => void;
 }
 
@@ -45,10 +48,7 @@ interface ProjectRequest {
   readonly sources: Map<string, Promise<ProjectSource>>;
   readonly dependencies: Set<string>;
   readonly directories: Set<string>;
-  changed: boolean;
 }
-
-class ChangedRequest extends Error {}
 
 /**
  * Describes the active LaTeX project and locates its main document.
@@ -65,46 +65,24 @@ export default class LaTeXProject {
   }
 
   private static async request<T>(options: ProjectReadOptions, run: (request: ProjectRequest) => Promise<T>): Promise<T> {
-    const lifetime = LaTeXProject.lifetime;
-    while (true) {
-      const request: ProjectRequest = {
-        lifetime, options, order: Config.mainFileOrder(), sources: new Map(),
-        dependencies: new Set(), directories: new Set(), changed: false
-      };
-      // These listeners live only while a request is running. They never read or
-      // parse edited text; an affected request simply retries with fresh inputs.
-      const changedDocument = (document: vscode.TextDocument) => {
-        if (request.dependencies.has(Workspace.uriKey(document.uri))) { request.changed = true; }
-      };
-      const subscriptions = [vscode.workspace.onDidChangeConfiguration(event => {
-        if (event.affectsConfiguration('vscode-fortex.mainFileOrder')) { request.changed = true; }
-      })];
-      if (!options.readSource) {
-        subscriptions.push(
-          vscode.workspace.onDidChangeTextDocument(event => {
-            if (event.contentChanges.length) { changedDocument(event.document); }
-          }),
-          vscode.workspace.onDidOpenTextDocument(changedDocument),
-          vscode.workspace.onDidCloseTextDocument(changedDocument)
-        );
-      }
-      try {
-        LaTeXProject.checkRequest(request);
-        const result = await run(request);
-        LaTeXProject.checkRequest(request);
-        return result;
-      } catch (error) {
-        if (lifetime !== LaTeXProject.lifetime) { throw new vscode.CancellationError(); }
-        if (!request.changed && !(error instanceof ChangedRequest)) { throw error; }
-      } finally {
-        for (const subscription of subscriptions) { subscription.dispose(); }
-      }
+    // Inputs are captured as they are first read. Changes affect the next call,
+    // rather than restarting an operation that is already in progress.
+    const request: ProjectRequest = {
+      lifetime: LaTeXProject.lifetime, options, order: [...Config.mainFileOrder()],
+      sources: new Map(), dependencies: new Set(), directories: new Set()
+    };
+    try {
+      const result = await run(request);
+      LaTeXProject.checkRequest(request);
+      return result;
+    } catch (error) {
+      LaTeXProject.checkRequest(request);
+      throw error;
     }
   }
 
   private static checkRequest(request: ProjectRequest): void {
     if (request.lifetime !== LaTeXProject.lifetime) { throw new vscode.CancellationError(); }
-    if (request.changed) { throw new ChangedRequest(); }
   }
 
   private static dependency(request: ProjectRequest, uri: vscode.Uri): boolean {
@@ -124,10 +102,7 @@ export default class LaTeXProject {
       pending = (async () => {
         const source = await (request.options.readSource?.(file) ?? Workspace.readDocumentText(file));
         LaTeXProject.checkRequest(request);
-        // An overriding reader owns its snapshot. Otherwise prefer a buffer that
-        // may have opened while the disk read was pending.
-        const current = request.options.readSource ? source : Workspace.findOpenDocument(file)?.getText() ?? source;
-        return { syntax: new LaTeXParser.LaTeXSource(current) };
+        return { syntax: new LaTeXParser.LaTeXSource(source) };
       })();
       request.sources.set(key, pending);
     }
@@ -280,7 +255,7 @@ export default class LaTeXProject {
             return filepath;
           }
         } catch (error) {
-          if (error instanceof vscode.CancellationError || error instanceof ChangedRequest) { throw error; }
+          if (error instanceof vscode.CancellationError) { throw error; }
           continue;
         }
       }
@@ -288,7 +263,7 @@ export default class LaTeXProject {
 
     }
     catch (error) {
-      if (error instanceof vscode.CancellationError || error instanceof ChangedRequest) { throw error; }
+      if (error instanceof vscode.CancellationError) { throw error; }
       return undefined;
     }
   }
@@ -315,7 +290,7 @@ export default class LaTeXProject {
       try {
         parsed = await LaTeXProject.readSource(request, entry.uri);
       } catch (error) {
-        if (error instanceof vscode.CancellationError || error instanceof ChangedRequest) { throw error; }
+        if (error instanceof vscode.CancellationError) { throw error; }
         return;
       }
       ancestors.add(key);
@@ -355,17 +330,21 @@ export default class LaTeXProject {
               else { macros.popScope(); }
             }
           } else if (command.name === 'input' || command.name === 'include') {
-            let resolved;
-            while (true) {
+            let resolved = await resolveInputFile(syntax, command as InputToken, directory, name => macros.lookup(name));
+            LaTeXProject.checkRequest(request);
+            const fresh = resolved.checkedCandidates.filter(candidate => LaTeXProject.dependency(request, candidate.uri));
+            // A trace consumer may register watches after the first stat. Only
+            // such callers need to close that gap; ordinary reads need no restat.
+            if (request.options.onDependency && (await Promise.all(fresh.map(async candidate =>
+              (await LaTeXProject.fileExists(request, candidate.uri)) !== candidate.exists))).some(Boolean)) {
               resolved = await resolveInputFile(syntax, command as InputToken, directory, name => macros.lookup(name));
               LaTeXProject.checkRequest(request);
-              const fresh = resolved.checkedCandidates.filter(candidate => LaTeXProject.dependency(request, candidate.uri));
-              // A previously unknown candidate may change while stat is pending,
-              // before its directory/dependency has been registered. Check it
-              // once more under tracking before publishing the resolution.
-              const changed = await Promise.all(fresh.map(async candidate =>
+              const added = resolved.checkedCandidates.filter(candidate => LaTeXProject.dependency(request, candidate.uri));
+              const unstable = await Promise.all(added.map(async candidate =>
                 (await LaTeXProject.fileExists(request, candidate.uri)) !== candidate.exists));
-              if (!changed.some(Boolean)) { break; }
+              // Bound this existence correction. A watcher owner can schedule a
+              // later request if another candidate changes during registration.
+              if (unstable.some(Boolean)) { throw new vscode.CancellationError(); }
             }
             LaTeXProject.checkRequest(request);
             cursor = Math.max(cursor, resolved.consumedEnd);

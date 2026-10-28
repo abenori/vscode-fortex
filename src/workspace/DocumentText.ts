@@ -10,5 +10,10 @@ export function findOpenDocument(uri: vscode.Uri): vscode.TextDocument | undefin
 /** Reads unsaved editor contents first, otherwise UTF-8 text from the provider. */
 export async function readDocumentText(uri: vscode.Uri): Promise<string> {
   const document = findOpenDocument(uri);
-  return document?.getText() ?? Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8');
+  return document?.getText() ?? await readFileText(uri);
+}
+
+/** Reads saved UTF-8 source from the provider without consulting editor buffers. */
+export async function readFileText(uri: vscode.Uri): Promise<string> {
+  return Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8');
 }

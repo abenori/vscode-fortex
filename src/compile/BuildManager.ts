@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import LaTeXCompile from './LaTeXCompile';
 import LaTeXProject from '../project/LaTeXProject';
 import type PDFPreview from './preview/PDFPreview';
+import * as Workspace from '../workspace';
 
 /** Serializes builds and keeps the long-running progress notification dismissible. */
 export default class BuildManager{
@@ -38,9 +39,9 @@ export default class BuildManager{
     } else {
       try{
         this.clearProgress();
-        // Project discovery must happen for every build because `%#main` and the
-        // include graph may have changed since the previous save.
-        let proj = await LaTeXProject.create(doc.uri);
+        // Use the saved sources that TeX reads, even if editing continues while
+        // project discovery is pending.
+        let proj = await LaTeXProject.create(doc.uri, { readSource: Workspace.readFileText });
         let compile = new LaTeXCompile(proj);
         await vscode.window.withProgress({
           location: vscode.ProgressLocation.Notification,
