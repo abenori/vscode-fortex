@@ -6,6 +6,13 @@ import { StructureKind, StructureLabelEntry, StructureLocation, StructureNode, S
 import * as Workspace from '../workspace';
 import * as LaTeXParser from '../latex-parser';
 import { resolveInputFile } from '../project/InputFileResolver';
+import NativeOutlinePositions, { OutlineEdit } from './NativeOutlinePositions';
+import { sourceTextChanges } from './SourceTextChanges';
+
+interface SourceAnalysis {
+  syntax?: LaTeXParser.LaTeXSource;
+  events?: StructureEvent[];
+}
 
 interface ParsedSource {
   uri: vscode.Uri;
@@ -16,6 +23,7 @@ interface ParsedSource {
   document?: vscode.TextDocument;
   documentVersion?: number;
   textRanges?: { start: number; end: number }[];
+  analysis?: SourceAnalysis;
 }
 
 interface LoadedSnapshot extends StructureSnapshot {
@@ -27,10 +35,31 @@ interface LoadedSnapshot extends StructureSnapshot {
   directories: Set<string>;
 }
 
+interface LivePositions {
+  document: vscode.TextDocument;
+  version: number;
+  sourceId: number | undefined;
+  /** Edits are queued even before the first native heading tree is requested. */
+  batches: OutlineEdit[][];
+  tracker?: NativeOutlinePositions;
+  projection?: { version: number; tree: StructureNode[]; nodes: StructureNode[] };
+  unknown?: boolean;
+}
+
 interface ExpandedEvent {
   parsed: ParsedSource;
   occurrence: string;
   event: StructureEvent | { type: 'text'; start: number; end: number } | { type: 'issue'; title: string; start: number; end: number };
+}
+
+/** Compare the native provider's output, ignoring internal source identities. */
+function sameHeadings(left: readonly StructureNode[], right: readonly StructureNode[]): boolean {
+  return left === right || (left.length === right.length && left.every((node, index) => {
+    const other = right[index];
+    return node.title === other.title && node.command === other.command
+      && node.location.start === other.location.start && node.location.end === other.location.end
+      && node.end.end === other.end.end && sameHeadings(node.children, other.children);
+  }));
 }
 
 const equationEnvironments = new Set(['equation', 'equation*', 'align', 'align*', 'alignat', 'alignat*',
@@ -203,20 +232,22 @@ export async function localDocumentStructure(document: vscode.TextDocument): Pro
 export default class StructureService implements vscode.Disposable {
   private readonly changed = new vscode.EventEmitter<StructureSnapshot | undefined>();
   readonly onDidChange = this.changed.event;
-  private readonly statusChanged = new vscode.EventEmitter<void>();
-  readonly onDidChangeStatus = this.statusChanged.event;
-  private readonly sourcesChanged = new vscode.EventEmitter<void>();
-  readonly onDidChangeSources = this.sourcesChanged.event;
-  private readonly disposables: vscode.Disposable[] = [this.changed, this.statusChanged, this.sourcesChanged];
+  /** Saved-source, settings, or position-baseline changes requiring explicit symbol refresh.
+   * VS Code requests symbols automatically for ordinary text edits. */
+  private readonly documentSymbolsChanged = new vscode.EventEmitter<vscode.Uri>();
+  readonly onDidChangeDocumentSymbols = this.documentSymbolsChanged.event;
+  private readonly sourceUpdatesChanged = new vscode.EventEmitter<void>();
+  private readonly disposables: vscode.Disposable[] = [this.changed, this.documentSymbolsChanged, this.sourceUpdatesChanged];
   private readonly watches = new Map<string, vscode.Disposable>();
   private readonly watchedFiles = new Set<string>();
   private readonly candidateDirectories = new Set<string>();
-  private readonly stateFiles = new Set<string>();
   private readonly sources = new Map<string, ParsedSource>();
   private readonly sourceReads = new Map<string, Promise<ParsedSource>>();
   private readonly sourceRevisions = new Map<string, number>();
+  private readonly sourceUpdates = new Map<string, Promise<void>>();
+  private readonly sourceFailures = new Set<string>();
+  private readonly livePositions = new Map<string, LivePositions>();
   private readonly dirty = new Set<string>();
-  private readonly externalReloads = new Map<string, string>();
   private readonly localFiles = new Set<string>();
   private readonly localTrees = new Map<string, { source: ParsedSource; settings: string; nodes: StructureNode[] }>();
   private selected?: vscode.TextDocument;
@@ -225,6 +256,7 @@ export default class StructureService implements vscode.Disposable {
   private generation = 0;
   private nextSourceVersion = 0;
   private pending?: Promise<void>;
+  private projectRefreshFailed = false;
   private disposed = false;
   private state?: StructureSnapshot;
   get snapshot(): StructureSnapshot | undefined { return this.state; }
@@ -240,51 +272,42 @@ export default class StructureService implements vscode.Disposable {
           return;
         }
         const parsed = this.sources.get(key);
-        if (!parsed || (parsed.document === event.document && parsed.documentVersion === event.document.version)) { return; }
+        if (!parsed) { return; }
+        const live = this.livePositions.get(key);
+        if (live?.document === event.document && live.version === event.document.version) { return; }
         // No getText, parsing, project discovery, timers, or tree rebuilds on typing.
-        const firstChange = !this.dirty.has(key);
-        this.dirty.add(key);
-        if (firstChange && this.stateFiles.has(key)) { this.updateStatus(); }
-        // Dirty flags arrive separately from content changes in VS Code. Only
-        // a verified filesystem change can authorize an external reload here.
-        const external = this.externalReloads.get(key);
-        if (external !== undefined) {
-          this.externalReloads.delete(key);
-          queueMicrotask(() => {
-            if (this.disposed || event.document.isClosed || event.document.getText() !== external) { return; }
-            this.capture(event.document);
-            this.sourcesChanged.fire();
-            if (this.stateFiles.has(key)) { this.schedule(); }
-          });
+        const changes = event.contentChanges.map(change => ({
+          offset: change.rangeOffset, length: change.rangeLength, insertedLength: change.text.length
+        }));
+        if (live?.document === event.document && live.sourceId === parsed.id) {
+          if (live.tracker) { live.tracker.record(changes); }
+          else { live.batches.push(changes); }
+          live.version = event.document.version;
+          live.projection = undefined;
+        } else {
+          // A document identity switch needs verification before old ranges can
+          // be projected into it. Ordinary edits always use the numeric path.
+          this.livePositions.set(key, { document: event.document, version: event.document.version,
+            sourceId: parsed.id, batches: [], unknown: true });
         }
+        this.dirty.add(key);
       }),
       vscode.workspace.onDidSaveTextDocument(document => {
         if (!this.relevant(document.uri)) { return; }
-        const key = Workspace.uriKey(document.uri);
-        const previous = this.sources.get(key);
-        const advanced = previous?.document !== document || previous.documentVersion !== document.version || this.dirty.has(key);
-        // Capture exactly this save. Other edited buffers keep their old text.
-        this.capture(document);
-        // A clean-state notification can precede the save event. Do not emit a
-        // second native-provider invalidation for the same captured version.
-        if (advanced) {
-          this.sourcesChanged.fire();
-          if (this.selected) { this.schedule(); }
-        }
+        // didSave carries the live document, not the bytes written by that save.
+        // Read the successful disk snapshot before advancing this one source.
+        void this.refreshSource(document.uri, document);
       }),
       vscode.workspace.onDidOpenTextDocument(document => {
         const key = Workspace.uriKey(document.uri);
         if (!this.sources.has(key)) { return; }
-        this.capture(document);
-        this.sourcesChanged.fire();
-        if (this.selected) { this.schedule(); }
+        void this.refreshSource(document.uri, document);
       }),
       vscode.workspace.onDidCloseTextDocument(document => {
         const key = Workspace.uriKey(document.uri);
         if (!this.sources.has(key) && !this.watchedFiles.has(key)) { return; }
         this.invalidateSource(key);
         this.localFiles.delete(key);
-        this.sourcesChanged.fire();
         if (this.selected === document) { this.selected = undefined; }
         if (this.selected) { this.schedule(); }
         else if (this.watch) { this.state = undefined; this.changed.fire(undefined); }
@@ -293,8 +316,16 @@ export default class StructureService implements vscode.Disposable {
         if (event.affectsConfiguration('vscode-fortex.mainFileOrder')
           || event.affectsConfiguration('vscode-fortex.outline.followIncludes')
           || event.affectsConfiguration('vscode-fortex.outline.theoremEnvironments')) {
-          this.localTrees.clear();
-          this.sourcesChanged.fire();
+          if (event.affectsConfiguration('vscode-fortex.outline.theoremEnvironments')) {
+            for (const key of this.localFiles) {
+              const parsed = this.sources.get(key);
+              const document = parsed && Workspace.findOpenDocument(parsed.uri);
+              if (!parsed || !document) { continue; }
+              const before = this.localNodes(document, parsed, false);
+              this.localTrees.delete(key);
+              this.notifyDocumentSymbolsChange(document, before, this.localNodes(document, parsed));
+            }
+          }
           if (this.selected) { this.schedule(); }
         }
       })
@@ -312,25 +343,84 @@ export default class StructureService implements vscode.Disposable {
     }
   }
 
-  /** Native Outline shares the saved per-file parse, but never exposes stale offsets. */
+  /** Native Outline keeps saved headings and projects only their live positions. */
   async local(document: vscode.TextDocument): Promise<StructureNode[]> {
     if (this.disposed || document.isClosed) { return []; }
     const key = Workspace.uriKey(document.uri);
     this.localFiles.add(key);
     this.watchedFiles.add(key);
     this.watchDirectory(vscode.Uri.joinPath(document.uri, '..'));
+    await this.waitForSourceUpdates(key);
+    if (this.disposed || document.isClosed) { return []; }
     const parsed = await this.read(document.uri);
-    if (this.disposed || !this.matchesDocument(parsed, document)) { return []; }
-    const settings = theoremSettings(document.uri);
-    const signature = JSON.stringify(settings);
+    if (this.disposed || document.isClosed) { return []; }
+    return this.localNodes(document, parsed);
+  }
+
+  /** Synchronous so source commits can compare both trees in the same live version. */
+  private localNodes(document: vscode.TextDocument, parsed: ParsedSource, updateSettings = true): StructureNode[] {
+    const key = Workspace.uriKey(document.uri);
+    let live = this.livePositions.get(key);
+    if (!live || live.document !== document || live.sourceId !== parsed.id) {
+      this.bindLive(parsed, document, document.getText());
+      live = this.livePositions.get(key)!;
+    }
+    if (live.unknown || live.version !== document.version) { return []; }
     let local = this.localTrees.get(key);
+    const settings = updateSettings || !local ? theoremSettings(document.uri) : undefined;
+    const signature = settings ? JSON.stringify(settings) : local!.settings;
     if (local?.source !== parsed || local.settings !== signature) {
       const expanded: ExpandedEvent[] = [];
       appendEvents(parsed, 'local', entry => expanded.push(entry));
-      local = { source: parsed, settings: signature, nodes: buildStructure(expanded, settings) };
+      local = { source: parsed, settings: signature, nodes: this.onlyHeadings(buildStructure(expanded, settings ?? {})) };
       this.localTrees.set(key, local);
     }
-    return local.nodes;
+    if (live.projection?.version === document.version && live.projection.tree === local.nodes) {
+      return live.projection.nodes;
+    }
+    if (!live.tracker) {
+      const headings = this.headingNodes(local.nodes);
+      live.tracker = new NativeOutlinePositions(headings.map(node => ({
+        start: node.location.start, end: node.location.end, extent: node.end.end
+      })));
+      for (const batch of live.batches) { live.tracker.record(batch); }
+      live.batches = [];
+    }
+    const nodes = this.projectHeadings(local.nodes, live.tracker.project());
+    live.projection = { version: document.version, tree: local.nodes, nodes };
+    return nodes;
+  }
+
+  private notifyDocumentSymbolsChange(document: vscode.TextDocument, before: StructureNode[], after: StructureNode[]): void {
+    if (!sameHeadings(before, after)) { this.documentSymbolsChanged.fire(document.uri); }
+    else if (before[0]?.location.sourceVersion === after[0]?.location.sourceVersion) {
+      // An unchanged save keeps the same immutable projection and conversion.
+      const live = this.livePositions.get(Workspace.uriKey(document.uri));
+      if (live?.projection) { live.projection.nodes = before; }
+    }
+  }
+
+  private headingNodes(nodes: readonly StructureNode[]): StructureNode[] {
+    return nodes.flatMap(node => [...(node.kind === 'section' ? [node] : []), ...this.headingNodes(node.children)]);
+  }
+
+  private onlyHeadings(nodes: readonly StructureNode[]): StructureNode[] {
+    return nodes.flatMap(node => {
+      const children = this.onlyHeadings(node.children);
+      return node.kind === 'section' ? [{ ...node, children }] : children;
+    });
+  }
+
+  private projectHeadings(
+    nodes: readonly StructureNode[], positions: ReturnType<NativeOutlinePositions['project']>
+  ): StructureNode[] {
+    return nodes.flatMap(node => {
+      const children = this.projectHeadings(node.children, positions);
+      const position = positions.get(node.location.start);
+      if (node.kind !== 'section' || !position?.valid) { return children; }
+      return [{ ...node, location: { ...node.location, start: position.start, end: position.end },
+        end: { ...node.end, start: position.extent, end: position.extent }, children }];
+    });
   }
 
   /** A location is usable only with the exact text that supplied its offsets. */
@@ -349,7 +439,8 @@ export default class StructureService implements vscode.Disposable {
   }
 
   private matchesDocument(parsed: ParsedSource, document: vscode.TextDocument): boolean {
-    return !document.isClosed && parsed.document === document && parsed.documentVersion === document.version;
+    return !document.isClosed && !this.dirty.has(Workspace.uriKey(document.uri))
+      && parsed.document === document && parsed.documentVersion === document.version;
   }
 
   private relevant(uri: vscode.Uri): boolean {
@@ -359,33 +450,27 @@ export default class StructureService implements vscode.Disposable {
         && this.candidateDirectories.has(Workspace.uriKey(vscode.Uri.joinPath(uri, '..'))));
   }
 
-  private updateStatus(): void {
-    if (this.state) { this.state = { ...this.state, waitingForSave: true }; }
-    this.statusChanged.fire();
-  }
-
   private reconcileClean(document: vscode.TextDocument): void {
     const key = Workspace.uriKey(document.uri);
     const parsed = this.sources.get(key);
     if (!parsed || document.isClosed) { return; }
     const source = document.getText();
     if (source !== parsed.source) {
-      // The first display may have captured an already-dirty buffer. Returning
-      // from that initial text to disk is a clean source transition.
-      this.capture(document);
-      this.sourcesChanged.fire();
-      if (this.selected) { this.schedule(); }
+      // A save can report clean while an even newer buffer was never written.
+      // Only verified disk contents may replace a differing saved snapshot.
+      queueMicrotask(() => {
+        if (!this.disposed && !document.isClosed && !this.sourceUpdates.has(key)) {
+          void this.refreshSource(document.uri, document);
+        }
+      });
       return;
     }
+    const before = this.localFiles.has(key) ? this.localNodes(document, parsed) : undefined;
     parsed.document = document;
     parsed.documentVersion = document.version;
+    this.bindLive(parsed, document, source);
     this.dirty.delete(key);
-    this.externalReloads.delete(key);
-    if (this.state) {
-      this.state = { ...this.state, waitingForSave: [...this.stateFiles].some(file => this.dirty.has(file)) };
-    }
-    this.statusChanged.fire();
-    this.sourcesChanged.fire();
+    if (before) { this.notifyDocumentSymbolsChange(document, before, this.localNodes(document, parsed)); }
   }
 
   private schedule(): void {
@@ -403,7 +488,11 @@ export default class StructureService implements vscode.Disposable {
     if (!active || active.isClosed || active.languageId !== 'latex') { return; }
     this.selected = active;
     const generation = ++this.generation;
-    const request = this.load(active, generation).then(async snapshot => {
+    const request = (async () => {
+      await this.waitForSourceUpdates();
+      if (this.disposed || generation !== this.generation) { throw new vscode.CancellationError(); }
+      return this.load(active, generation);
+    })().then(async snapshot => {
       if (this.disposed || generation !== this.generation) { return; }
       // An input resolver may discover an absent candidate just before its watch
       // was registered. Recheck existence under the now-established observation.
@@ -435,17 +524,16 @@ export default class StructureService implements vscode.Disposable {
       for (const key of snapshot.neededFiles) { this.watchedFiles.add(key); }
       this.candidateDirectories.clear();
       for (const key of snapshot.directories) { this.candidateDirectories.add(key); }
-      this.stateFiles.clear();
-      this.stateFiles.add(Workspace.uriKey(active.uri));
-      for (const uri of snapshot.dependencies) { this.stateFiles.add(Workspace.uriKey(uri)); }
-      snapshot.waitingForSave = [...this.stateFiles].some(key => this.dirty.has(key));
       this.publishedDocument = active;
       this.state = snapshot;
+      this.projectRefreshFailed = false;
       this.changed.fire(snapshot);
     }).catch(error => {
       if (this.disposed || generation !== this.generation) { return; }
-      this.state = { main: active.uri, followIncludes: false, roots: [], labels: [], files: [active.uri],
-        message: `Unable to read LaTeX structure: ${error instanceof Error ? error.message : String(error)}` };
+      this.projectRefreshFailed = true;
+      const message = `Unable to read LaTeX structure: ${error instanceof Error ? error.message : String(error)}`;
+      this.state = this.state ? { ...this.state, message }
+        : { main: active.uri, followIncludes: false, roots: [], labels: [], files: [active.uri], message };
       this.changed.fire(this.state);
     });
     this.pending = request;
@@ -454,6 +542,8 @@ export default class StructureService implements vscode.Disposable {
 
   async current(): Promise<StructureSnapshot | undefined> {
     while (!this.disposed) {
+      await this.waitForSourceUpdates();
+      if (this.disposed) { break; }
       if (this.timer) { await this.refresh(); continue; }
       const request = this.pending;
       await request;
@@ -466,13 +556,18 @@ export default class StructureService implements vscode.Disposable {
   private remember(uri: vscode.Uri, source: string, document?: vscode.TextDocument): ParsedSource {
     const key = Workspace.uriKey(uri);
     const previous = this.sources.get(key);
-    let syntax: LaTeXParser.LaTeXSource | undefined;
-    let events: StructureEvent[] | undefined;
-    const parsed: ParsedSource = previous?.source === source
-      ? { ...previous, document, documentVersion: document?.version }
-      : { uri, source, id: ++this.nextSourceVersion, document, documentVersion: document?.version,
-        get syntax() { return syntax ??= new LaTeXParser.LaTeXSource(source); },
-        get events() { return events ??= parseStructureEvents(this.syntax); } };
+    const sameSource = previous?.source === source;
+    if (sameSource) {
+      previous.document = document;
+      previous.documentVersion = document?.version;
+      this.dirty.delete(key);
+      return previous;
+    }
+    const analysis: SourceAnalysis = {};
+    const parsed: ParsedSource = { uri, source, id: ++this.nextSourceVersion,
+      document, documentVersion: document?.version, analysis,
+      get syntax() { return analysis.syntax ??= new LaTeXParser.LaTeXSource(source); },
+      get events() { return analysis.events ??= parseStructureEvents(this.syntax); } };
     this.sources.set(key, parsed);
     this.localTrees.delete(key);
     this.dirty.delete(key);
@@ -482,16 +577,108 @@ export default class StructureService implements vscode.Disposable {
   private capture(document: vscode.TextDocument): ParsedSource {
     const key = Workspace.uriKey(document.uri);
     this.sourceRevisions.set(key, (this.sourceRevisions.get(key) ?? 0) + 1);
-    this.externalReloads.delete(key);
-    return this.remember(document.uri, document.getText(), document);
+    const source = document.getText();
+    const parsed = this.remember(document.uri, source, document);
+    this.bindLive(parsed, document, source);
+    return parsed;
+  }
+
+  private bindLive(parsed: ParsedSource, document: vscode.TextDocument, liveSource: string): void {
+    const key = Workspace.uriKey(parsed.uri);
+    const edits = sourceTextChanges(parsed.source, liveSource);
+    this.livePositions.set(key, { document, version: document.version, sourceId: parsed.id,
+      batches: edits.length ? [edits] : [] });
+    if (parsed.source === liveSource) {
+      parsed.document = document;
+      parsed.documentVersion = document.version;
+      this.dirty.delete(key);
+    } else {
+      parsed.document = undefined;
+      parsed.documentVersion = undefined;
+      this.dirty.add(key);
+    }
+  }
+
+  private async waitForSourceUpdates(key?: string): Promise<void> {
+    while (!this.disposed) {
+      let subscription: vscode.Disposable | undefined;
+      const changed = new Promise<void>(resolve => { subscription = this.sourceUpdatesChanged.event(() => resolve()); });
+      try {
+        const requests = key ? [this.sourceUpdates.get(key)].filter((value): value is Promise<void> => value !== undefined)
+          : [...this.sourceUpdates.values()];
+        if (!requests.length) { return; }
+        // A newer save can supersede blocked old I/O. Waiters follow the latest
+        // source request instead of remaining attached to an obsolete read.
+        await Promise.race([Promise.all(requests), changed]);
+      } finally { subscription?.dispose(); }
+    }
+  }
+
+  /** Read the saved bytes, then atomically bridge them to one captured live version. */
+  private refreshSource(uri: vscode.Uri, expectedDocument?: vscode.TextDocument): Promise<void> {
+    if (this.disposed) { return Promise.resolve(); }
+    const key = Workspace.uriKey(uri);
+    const revision = (this.sourceRevisions.get(key) ?? 0) + 1;
+    this.sourceRevisions.set(key, revision);
+    const current = () => !this.disposed && this.sourceRevisions.get(key) === revision
+      && (!expectedDocument || !expectedDocument.isClosed);
+    const request = (async () => {
+      const source = await Workspace.readFileText(uri);
+      if (!current()) { return; }
+      const document = Workspace.findOpenDocument(uri);
+      if (expectedDocument && document !== expectedDocument) { return; }
+      // No await between capturing this live version, creating its bridge, and
+      // installing the new source. Later edit events append to this new journal.
+      const liveSource = document?.getText();
+      const previous = this.sources.get(key);
+      const changed = previous?.source !== source;
+      const before = previous && document && this.localFiles.has(key) ? this.localNodes(document, previous) : undefined;
+      const live = this.livePositions.get(key);
+      if (document && source === previous?.source && liveSource !== source
+        && live?.document === document && live.version === document.version && live.sourceId === previous.id && !live.unknown) {
+        // An unchanged disk notification must not replace an exact edit journal
+        // with a potentially conservative diff across a large ambiguous body.
+        this.dirty.add(key);
+      } else {
+        const parsed = this.remember(uri, source);
+        if (document && liveSource !== undefined) { this.bindLive(parsed, document, liveSource); }
+        else { this.livePositions.delete(key); }
+      }
+      const recovered = this.sourceFailures.delete(key);
+      if (before && document) {
+        this.notifyDocumentSymbolsChange(document, before, this.localNodes(document, this.sources.get(key)!));
+      }
+      // Save and filesystem notifications may describe the same bytes. Rebind
+      // positions above, but do not repeat project discovery/tree construction.
+      if (this.selected && (changed || recovered || this.projectRefreshFailed)) { this.schedule(); }
+    })().catch(error => {
+      if (!current()) { return; }
+      // Keep both the previous structure and its numeric projection on failure.
+      this.sourceFailures.add(key);
+      if (expectedDocument) { this.dirty.add(key); }
+      if (this.state) {
+        this.state = { ...this.state, message: `Unable to update LaTeX structure: ${error instanceof Error ? error.message : String(error)}` };
+        this.changed.fire(this.state);
+      }
+    }).finally(() => {
+      if (this.sourceUpdates.get(key) === request) {
+        this.sourceUpdates.delete(key);
+        this.sourceUpdatesChanged.fire();
+      }
+    });
+    this.sourceUpdates.set(key, request);
+    this.sourceUpdatesChanged.fire();
+    return request;
   }
 
   private invalidateSource(key: string): void {
     this.sourceRevisions.set(key, (this.sourceRevisions.get(key) ?? 0) + 1);
     this.sources.delete(key);
+    this.sourceFailures.delete(key);
     this.localTrees.delete(key);
     this.dirty.delete(key);
-    this.externalReloads.delete(key);
+    this.livePositions.delete(key);
+    if (this.sourceUpdates.delete(key)) { this.sourceUpdatesChanged.fire(); }
   }
 
   private async read(uri: vscode.Uri, allowInitialDirty = true): Promise<ParsedSource> {
@@ -506,7 +693,7 @@ export default class StructureService implements vscode.Disposable {
           const revision = this.sourceRevisions.get(key) ?? 0;
           const document = Workspace.findOpenDocument(uri);
           if (document && allowInitialDirty) { return this.capture(document); }
-          const source = Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8');
+          const source = await Workspace.readFileText(uri);
           if (this.disposed) { throw new vscode.CancellationError(); }
           const newer = this.sources.get(key);
           if (newer) { return newer; }
@@ -518,12 +705,7 @@ export default class StructureService implements vscode.Disposable {
           // A save that discovers a previously unseen dirty dependency must use
           // its disk baseline, not incorporate that other buffer's unsaved edit.
           if (opened) {
-            // Compare text rather than relying on isDirty, whose notification
-            // can lag behind the content change that triggered another save.
-            if (opened.getText() === source) {
-              parsed.document = opened;
-              parsed.documentVersion = opened.version;
-            } else { this.dirty.add(key); }
+            this.bindLive(parsed, opened, opened.getText());
           }
           return parsed;
         }
@@ -547,38 +729,15 @@ export default class StructureService implements vscode.Disposable {
       if (!this.relevant(uri)) { return; }
       const fileKey = Workspace.uriKey(uri);
       const document = Workspace.findOpenDocument(uri);
-      // Ordinary saves are already captured by onDidSave. Preserve every other
-      // dirty buffer even when a neighboring save triggers a project rebuild.
-      if (!document) { this.invalidateSource(fileKey); }
-      else if (!existence && document.isDirty) { return; }
-      else if (!existence) {
-        void this.readExternalChange(uri, document).catch(() => {});
-        return;
-      }
-      this.sourcesChanged.fire();
-      this.schedule();
+      if (this.sources.has(fileKey)) { void this.refreshSource(uri, document); }
+      else { this.invalidateSource(fileKey); this.schedule(); }
+      // Existence changes can alter root/input selection even if reading the
+      // old source now fails (for example, deletion of an included document).
+      if (existence) { this.schedule(); }
     };
     this.watches.set(key, vscode.Disposable.from(watcher,
       watcher.onDidChange(uri => changed(uri)), watcher.onDidCreate(uri => changed(uri, true)),
       watcher.onDidDelete(uri => changed(uri, true))));
-  }
-
-  private async readExternalChange(uri: vscode.Uri, document: vscode.TextDocument): Promise<void> {
-    const key = Workspace.uriKey(uri);
-    const revision = this.sourceRevisions.get(key) ?? 0;
-    const source = Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8');
-    if (this.disposed || document.isClosed || document.isDirty || revision !== (this.sourceRevisions.get(key) ?? 0)) { return; }
-    if (document.getText() === source) {
-      this.capture(document);
-    } else {
-      // The provider can report disk changes before VS Code reloads its clean
-      // buffer. These offsets stay non-navigable until that buffer catches up.
-      this.sourceRevisions.set(key, revision + 1);
-      this.remember(uri, source);
-      this.externalReloads.set(key, source);
-    }
-    this.sourcesChanged.fire();
-    this.schedule();
   }
 
   private dependency(uri: vscode.Uri, dependencies: Map<string, vscode.Uri>): void {
@@ -611,6 +770,7 @@ export default class StructureService implements vscode.Disposable {
       } catch (error) {
         checkCurrent();
         if (error instanceof vscode.CancellationError) { throw error; }
+        if (this.publishedDocument === document && this.state) { throw error; }
         message = 'Main file could not be determined; showing the current file.';
       }
     }
@@ -630,8 +790,9 @@ export default class StructureService implements vscode.Disposable {
       }
       let parsed: ParsedSource;
       try { parsed = await this.read(uri, allowInitialDirty); checkCurrent(); }
-      catch {
+      catch (error) {
         checkCurrent();
+        if ((error as { code?: string }).code !== 'FileNotFound') { throw error; }
         if (site) { expanded.push({ ...site, event: { ...site.event, type: 'issue', title: `Missing include: ${path.basename(uri.fsPath)}` } }); }
         else { throw new Error(`Cannot read ${uri.fsPath}`); }
         return;
@@ -680,14 +841,15 @@ export default class StructureService implements vscode.Disposable {
 
   dispose(): void {
     this.disposed = true;
+    this.sourceUpdatesChanged.fire();
     this.generation++;
     if (this.timer) { clearTimeout(this.timer); }
     this.timer = undefined;
     for (const watcher of this.watches.values()) { watcher.dispose(); }
     this.watches.clear(); this.watchedFiles.clear(); this.candidateDirectories.clear();
     this.sources.clear(); this.sourceReads.clear(); this.sourceRevisions.clear(); this.dirty.clear();
-    this.externalReloads.clear();
-    this.localTrees.clear(); this.localFiles.clear(); this.stateFiles.clear();
+    this.livePositions.clear(); this.sourceUpdates.clear();
+    this.localTrees.clear(); this.localFiles.clear(); this.sourceFailures.clear();
     for (const disposable of this.disposables) { disposable.dispose(); }
   }
 }

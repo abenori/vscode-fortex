@@ -42,6 +42,4 @@ export interface StructureSnapshot {
   labels: StructureLabelEntry[];
   files: vscode.Uri[];
   message?: string;
-  /** The displayed structure is retained until the contributing buffers are saved. */
-  waitingForSave?: boolean;
 }

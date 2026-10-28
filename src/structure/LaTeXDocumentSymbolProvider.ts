@@ -2,8 +2,13 @@ import * as vscode from 'vscode';
 import StructureService from './StructureService';
 import { StructureNode } from './StructureTypes';
 
-/** Re-registration invalidates VS Code's native symbol cache even on a save
- * without a content-version change; DocumentSymbolProvider has no change event. */
+interface ConvertedSymbols {
+  version: number;
+  nodes: StructureNode[];
+  symbols: vscode.DocumentSymbol[];
+}
+
+/** Saved changes can alter symbols without a document-version change. */
 export function registerDocumentSymbols(service: StructureService): vscode.Disposable {
   const provider = new LaTeXDocumentSymbolProvider(service);
   const register = () => vscode.languages.registerDocumentSymbolProvider(
@@ -11,7 +16,7 @@ export function registerDocumentSymbols(service: StructureService): vscode.Dispo
   );
   let registration = register();
   const refresh = () => { registration.dispose(); registration = register(); };
-  const subscriptions = vscode.Disposable.from(service.onDidChange(refresh), service.onDidChangeSources(refresh));
+  const subscriptions = service.onDidChangeDocumentSymbols(refresh);
   return vscode.Disposable.from(subscriptions, new vscode.Disposable(() => registration.dispose()), provider);
 }
 
@@ -19,6 +24,7 @@ export function registerDocumentSymbols(service: StructureService): vscode.Dispo
 export default class LaTeXDocumentSymbolProvider implements vscode.DocumentSymbolProvider, vscode.Disposable {
   private readonly service: StructureService;
   private readonly ownsService: boolean;
+  private converted = new WeakMap<vscode.TextDocument, ConvertedSymbols>();
 
   constructor(service?: StructureService) {
     this.service = service ?? new StructureService(false);
@@ -26,16 +32,20 @@ export default class LaTeXDocumentSymbolProvider implements vscode.DocumentSymbo
   }
 
   dispose(): void {
+    this.converted = new WeakMap();
     if (this.ownsService) { this.service.dispose(); }
   }
 
   async provideDocumentSymbols(document: vscode.TextDocument, token?: vscode.CancellationToken): Promise<vscode.DocumentSymbol[]> {
     if (token?.isCancellationRequested) {
-      return [];
+      throw new vscode.CancellationError();
     }
+    const version = document.version;
     const nodes = await this.service.local(document);
-    if (token?.isCancellationRequested) {
-      return [];
+    if (token?.isCancellationRequested || document.isClosed || version !== document.version) { throw new vscode.CancellationError(); }
+    const cached = this.converted.get(document);
+    if (cached?.version === version && cached.nodes === nodes) {
+      return cached.symbols;
     }
 
     const toSymbols = (items: StructureNode[]): vscode.DocumentSymbol[] => items.flatMap(node => {
@@ -56,6 +66,8 @@ export default class LaTeXDocumentSymbolProvider implements vscode.DocumentSymbo
       symbol.children = children;
       return [symbol];
     });
-    return toSymbols(nodes);
+    const symbols = toSymbols(nodes);
+    this.converted.set(document, { version, nodes, symbols });
+    return symbols;
   }
 }

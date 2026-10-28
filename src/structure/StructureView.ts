@@ -85,10 +85,6 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
         this.settings = this.readSettings();
         this.rebuild();
       }),
-      service.onDidChangeStatus(() => {
-        this.snapshot = service.snapshot;
-        this.updateStatus();
-      }),
       vscode.workspace.onDidChangeConfiguration(event => {
         if (event.affectsConfiguration('vscode-fortex.outline')) {
           this.settings = this.readSettings();
@@ -172,11 +168,10 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
 
   private updateStatus(): void {
     this.view.description = this.snapshot
-      ? `${this.fileName(this.snapshot.main)}${this.snapshot.followIncludes ? '' : ' · Current file only'}${this.snapshot.waitingForSave ? ' · Waiting for save' : ''}`
+      ? `${this.fileName(this.snapshot.main)}${this.snapshot.followIncludes ? '' : ' · Current file only'}`
       : undefined;
-    this.view.message = this.snapshot?.waitingForSave
-      ? 'Waiting for save. Save the edited source to update its structure and enable navigation.'
-      : this.snapshot?.message || (!this.snapshot ? 'Open a LaTeX document to see its structure.'
+    this.view.message = this.snapshot?.message
+      || (!this.snapshot ? 'Open a LaTeX document to see its structure.'
         : this.roots.length > 0 ? undefined : this.settings.viewMode === 'labels' ? 'No labels found.' : 'No structure items match the current filter.');
   }
 

@@ -6,6 +6,8 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+- Refresh native Outline symbols only when their output changes, reuse unchanged saved-source trees, and remove the Waiting for save display.
+- Keep standard Outline headings visible during body edits by tracking their positions, and verify saved outline snapshots against persisted source when editing overlaps a save.
 - Use saved sources for build and PDF main-file discovery, and run project discovery once per request without restarting on editor or configuration changes.
 - Shared top-level comma-list parsing through `LaTeXParser.splitclist` and made TeX error document lookup safe for missing files and linked directories.
 - Made main-file discovery and project construction request-scoped, removed edit-driven completion indexes, and retained bibliography caching.
