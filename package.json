@@ -1134,6 +1134,123 @@
           "order": 11,
           "markdownDescription": "Maximum number of LaTeX runs allowed for a single build. Set to `0` to allow unlimited runs. This limit is applied to the number of LaTeX runs, not the total number of compilation runs, which may include BibTeX or Biber runs."
         },
+        "vscode-fortex.compile.latex.engineSelection": {
+          "type": "string",
+          "enum": ["source", "fixed"],
+          "enumDescriptions": [
+            "Select the first matching document-class and option rule, falling back to the configured engine.",
+            "Always use the configured engine."
+          ],
+          "default": "source",
+          "scope": "machine",
+          "order": 12,
+          "markdownDescription": "How to select the LaTeX engine when no `%#!` directive overrides it."
+        },
+        "vscode-fortex.compile.latex.engine": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S",
+          "default": "pdflatex",
+          "scope": "machine",
+          "order": 13,
+          "markdownDescription": "Engine used in `fixed` mode and when no source rule matches. It may be an unregistered program name or executable path. `%#!` takes precedence."
+        },
+        "vscode-fortex.compile.latex.engineRules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["engine"],
+            "additionalProperties": false,
+            "properties": {
+              "classes": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Match any of these literal document-class names. Omit to match any class."
+              },
+              "options": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Require every listed document-class option. Options are compared exactly after trimming surrounding whitespace."
+              },
+              "engine": { "type": "string", "minLength": 1, "pattern": "\\S" }
+            }
+          },
+          "default": [
+            { "classes": ["article", "report", "book"], "engine": "pdflatex" },
+            { "classes": ["jarticle", "jreport", "jbook"], "engine": "platex" },
+            { "classes": ["ujarticle", "ujreport", "ujbook"], "engine": "uplatex" },
+            { "classes": ["jsarticle", "jsbook", "jsreport"], "options": ["uplatex"], "engine": "uplatex" },
+            { "classes": ["jsarticle", "jsbook", "jsreport"], "engine": "platex" },
+            { "classes": ["ltjsarticle", "ltjsbook", "ltjsreport"], "engine": "lualatex" },
+            { "classes": ["jlreq"], "options": ["platex"], "engine": "platex" },
+            { "classes": ["jlreq"], "options": ["lualatex"], "engine": "lualatex" },
+            { "classes": ["jlreq"], "engine": "uplatex" }
+          ],
+          "scope": "machine",
+          "order": 14,
+          "markdownDescription": "Rules evaluated from top to bottom in `source` mode. The first matching rule selects the engine. Setting this array replaces all default rules; an empty array always uses `compile.latex.engine`. Reads the main file's saved `\\documentclass` name and options without macro expansion."
+        },
+        "vscode-fortex.compile.latex.engines": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "command": {
+                "type": "string", "minLength": 1, "pattern": "\\S",
+                "description": "Executable name or path. Defaults to the engine name. A single-program %#! directive always executes its literal program."
+              },
+              "args": {
+                "type": "array", "items": { "type": "string" },
+                "description": "Extra arguments appended after the mandatory -interaction=nonstopmode, -halt-on-error, -synctex=1 and -file-line-error arguments. Defaults to an empty array. The %#t2dopt arguments and source filename follow."
+              },
+              "output": {
+                "type": "string", "enum": ["pdf", "dvi"],
+                "description": "Output format. Omit to infer from the executable name as before. The -output-format=dvi argument always selects DVI."
+              }
+            }
+          },
+          "default": {},
+          "scope": "machine",
+          "order": 15,
+          "markdownDescription": "Optional overrides keyed by engine name. Unregistered engines use their name as the command, no extra arguments, and the existing PDF/DVI detection. Use `output` for executable paths or custom names whose format cannot be inferred."
+        },
+        "vscode-fortex.compile.bibtex": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "command": { "type": "string", "minLength": 1, "pattern": "\\S" },
+            "args": { "type": "array", "items": { "type": "string" } }
+          },
+          "default": { "command": "upbibtex", "args": [] },
+          "scope": "machine",
+          "order": 17,
+          "markdownDescription": "Bibliography program and arguments. Missing fields use `upbibtex` and `[]`. `%#bibtex` overrides the executable. The job basename is appended to the arguments. This setting does not change the BibTeX run-detection logic."
+        },
+        "vscode-fortex.compile.makeindex": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "command": { "type": "string", "minLength": 1, "pattern": "\\S" },
+            "args": { "type": "array", "items": { "type": "string" } }
+          },
+          "default": { "command": "upmendex", "args": [] },
+          "scope": "machine",
+          "order": 18,
+          "markdownDescription": "Index program and arguments. Missing fields use `upmendex` and `[]`. `%#makeindex` overrides the executable. The job basename is appended to the arguments."
+        },
+        "vscode-fortex.compile.dvipdf": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "command": { "type": "string", "minLength": 1, "pattern": "\\S" },
+            "args": { "type": "array", "items": { "type": "string" } }
+          },
+          "default": { "command": "dvipdfmx", "args": [] },
+          "scope": "machine",
+          "order": 19,
+          "markdownDescription": "DVI-to-PDF program and arguments. Missing fields use `dvipdfmx` and `[]`. `%#dvipdf` overrides the executable. The DVI filename is appended to the arguments."
+        },
         "vscode-fortex.pdfViewer": {
           "type": "string",
           "enum": ["internal", "sumatra"],

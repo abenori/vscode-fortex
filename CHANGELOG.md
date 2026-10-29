@@ -6,6 +6,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+- Added configurable fixed/source LaTeX engine selection, ordered class/option rules with the existing defaults, optional engine overrides, and bibliography/index/DVI-to-PDF program settings inside `TeXToPDF`, retaining `%#` priority and mandatory LaTeX arguments.
 - Commit Greek letter previews when typing punctuation such as `^`, `_`, and `+`, preserving the typed character, editor bracket behavior, and one-step Undo.
 - Reuse a lazily built line-start index for line-number lookups in saved outline sources.
 - Reuse Structure display items per file, redraw only changed names during editing, and preserve heading-level relationships across included files on save.

@@ -4,9 +4,10 @@ import * as vscode from 'vscode';
 import LaTeXProject from '../project/LaTeXProject';
 import Log from '../log';
 import Process from './Process';
-import Config from '../Config';
+import Config, { CompileProgram, CompileProgramSettings, LaTeXEngineSettings } from '../Config';
 import { singleProgramFromDirective } from './BuildSecurity';
 import * as Workspace from '../workspace';
+import { SourceScanner, splitclist } from '../latex-parser';
 
 /**
  * Runs the TeX/BibTeX/index/PDF pipeline until auxiliary files stabilize.
@@ -14,6 +15,9 @@ import * as Workspace from '../workspace';
  * stage must run again.
  */
 export default class TeXToPDF {
+  private static readonly requiredLaTeXArgs = [
+    '-interaction=nonstopmode', '-halt-on-error', '-synctex=1', '-file-line-error'
+  ];
   LaTeXProject: LaTeXProject;
   // 現在状態によらず必ずLaTeXを実行するフラグ
   forcelatex = false;
@@ -45,71 +49,35 @@ export default class TeXToPDF {
     }
   }
 
-  private make_latex_command(): [string, string[]] {
-    // Prefer an explicit `%#!` engine, otherwise infer a sensible Japanese or
-    // standard LaTeX engine from the document class and its options.
-    let cls = this.LaTeXProject.classfile;
-    let clsopt = this.LaTeXProject.classoption;
-    let cmd = "";
-    let ps = this.LaTeXProject.percent_sharp("!");
-    if (ps) {
-      cmd = singleProgramFromDirective(ps.trim()) ?? "";
-    }
-    if (!cmd) {
-      switch (cls) {
-        case "article":
-        case "report":
-        case "book":
-          cmd = "pdflatex";
-          break;
-        case "jarticle":
-        case "jreport":
-        case "jbook":
-          cmd = "platex";
-          break;
-        case "ujarticle":
-        case "ujreport":
-        case "ujbook":
-          cmd = "uplatex";
-          break;
-        case "jsarticle":
-        case "jsbook":
-        case "jsreport":
-          cmd = (/,\s*uplatex\s*,/.test("," + clsopt + ",")) ? "uplatex" : "platex";
-          break;
-        case "ltjsarticle":
-        case "ltjsbook":
-        case "ltjsreport":
-          cmd = "lualatex";
-          break;
-        case "jlreq":
-          cmd = "uplatex";
-          if (/,\s*platex\s*,/.test("," + clsopt + ",")) { cmd = "platex"; }
-          else if (/,\s*lualatex\s*,/.test("," + clsopt + ",")) { cmd = "lualatex"; }
-          break;
-        default:
-          cmd = "pdflatex";
+  private select_latex_engine(): string {
+    if (Config.latexEngineSelection() === 'source') {
+      const scanner = new SourceScanner(this.LaTeXProject.classoption);
+      const options = new Set(splitclist(scanner).map(range =>
+        scanner.textWithoutComments(range.start, range.end)?.trim() ?? ''));
+      for (const rule of Config.latexEngineRules()) {
+        if ((!rule.classes || rule.classes.includes(this.LaTeXProject.classfile))
+          && (rule.options ?? []).every(option => options.has(option))) {
+          return rule.engine;
+        }
       }
     }
-    //Log.debug_log("class file = " + cls + ", class option = " + clsopt + ", guessed command: " + cmd);
-    let opt = this.LaTeXProject.percent_sharp("t2dopt") ?? "";
-    let opts = opt.split(" ").filter((s) => s.length > 0);
-    return [cmd, ["-interaction=nonstopmode", "-halt-on-error", "-synctex=1", "-file-line-error",...opts]];
+    return Config.latexEngine();
   }
 
-  private make_bibtex_command(): [string, string[]] {
-    let prog = (this.LaTeXProject.percent_sharp("bibtex") ?? "upbibtex").trim();
-    return [prog, []];
+  private make_latex_command(): LaTeXEngineSettings {
+    const directive = this.LaTeXProject.percent_sharp('!')?.trim();
+    const explicitProgram = directive ? singleProgramFromDirective(directive) : undefined;
+    const engine = explicitProgram ?? this.select_latex_engine();
+    // A source directive always names the executable literally; a configured
+    // command must not redirect a program already checked by BuildSecurity.
+    const settings = Config.latexEngineSettings(engine, explicitProgram);
+    const directiveArgs = (this.LaTeXProject.percent_sharp('t2dopt') ?? '').split(' ').filter(s => s.length > 0);
+    const args = [...TeXToPDF.requiredLaTeXArgs, ...settings.args, ...directiveArgs];
+    return { command: settings.command, args, output: args.includes('-output-format=dvi') ? 'dvi' : settings.output };
   }
 
-  private make_makeindex_command(): [string, string[]] {
-    let prog = (this.LaTeXProject.percent_sharp("makeindex") ?? "upmendex").trim();
-    return [prog, []];
-  }
-
-  private make_dvipdfm_command(): [string, string[]] {
-    let prog = (this.LaTeXProject.percent_sharp("dvipdf") ?? "dvipdfmx").trim();
-    return [prog, []];
+  private make_program_command(key: CompileProgram): CompileProgramSettings {
+    return Config.programSettings(key, this.LaTeXProject.percent_sharp(key)?.trim());
   }
 
   async build(): Promise<boolean> {
@@ -119,31 +87,23 @@ export default class TeXToPDF {
     let runCount = 1;
     let LaTeXrunCount = 1;
     this.read_status();
-    let latex_cmd = this.make_latex_command();
-    let output_pdf = (
-      latex_cmd[0].startsWith("lua") ||
-      latex_cmd[0].startsWith("pdf") ||
-      latex_cmd[0].startsWith("xe") ||
-      latex_cmd[0] === "context"
-    );
-    for (let i = 0; i < latex_cmd[1].length; ++i) {
-      if (latex_cmd[1][i] === "-output-format=dvi") {
-        output_pdf = false;
-        break;
-      }
-    }
+    // Resolve all commands once so settings changes take effect on the next build.
+    const latex_cmd = this.make_latex_command();
+    const bibtex_cmd = this.make_program_command('bibtex');
+    const makeindex_cmd = this.make_program_command('makeindex');
+    const dvipdf_cmd = this.make_program_command('dvipdf');
     let dir = path.dirname(this.LaTeXProject.mainfile.fsPath);
     let base = path.basename(this.LaTeXProject.mainfile.fsPath);
-    Log.log(`(${runCount}) Executing: ${latex_cmd[0]} ${latex_cmd[1].join(" ")} ${TeXToPDF.change_extension(base, ".tex")}${dir ? `\n   in directory ${dir}` : ''}`);
+    Log.log(`(${runCount}) Executing: ${latex_cmd.command} ${latex_cmd.args.join(" ")} ${TeXToPDF.change_extension(base, ".tex")}${dir ? `\n   in directory ${dir}` : ''}`);
     try {
       let process = new Process();
-      let result = await process.execute(latex_cmd[0], [...latex_cmd[1], TeXToPDF.change_extension(base, ".tex")], dir, false);
+      let result = await process.execute(latex_cmd.command, [...latex_cmd.args, TeXToPDF.change_extension(base, ".tex")], dir, false);
       if (result !== 0) {
         return false;
       }
     }
     catch (e) {
-      Log.error(`Error running ${latex_cmd[0]}:`, e);
+      Log.error(`Error running ${latex_cmd.command}:`, e);
       return false;
     }
     while (true) {
@@ -153,34 +113,34 @@ export default class TeXToPDF {
         return false;
       }
 
-      let cmd: [string, string[]] = ["", []];
+      let cmd: CompileProgramSettings;
       let target = "";
       let ignore_error = false;
 
       if (this.latex_check()) {
-        cmd = this.make_latex_command();
+        cmd = latex_cmd;
         target = TeXToPDF.change_extension(base, ".tex");
         LaTeXrunCount++;
       } else if (!this.bibtex && this.bibtex_check()) {
-        cmd = this.make_bibtex_command();
+        cmd = bibtex_cmd;
         target = TeXToPDF.remove_extension(base);
         ignore_error = true;
         this.bibtex = true;
         this.forcelatex = true;
       } else if (!this.makeindex && this.makeindex_check()) {
-        cmd = this.make_makeindex_command();
+        cmd = makeindex_cmd;
         target = TeXToPDF.remove_extension(base);
         this.makeindex = true;
         ignore_error = true;
         this.forcelatex = true;
       } else { break; }
-      Log.log(`(${runCount}) Executing: ${cmd[0]} ${cmd[1].join(" ")}${dir ? `\n   in directory ${dir}` : ''}`);
+      Log.log(`(${runCount}) Executing: ${cmd.command} ${cmd.args.join(" ")}${dir ? `\n   in directory ${dir}` : ''}`);
       try {
         let process = new Process();
-        let result = await process.execute(cmd[0], [...cmd[1], target], dir, false);
+        let result = await process.execute(cmd.command, [...cmd.args, target], dir, false);
         if (result === null || result !== 0) {
           if (ignore_error) {
-            Log.log(`Warning: ${cmd[0]} ${cmd[1].join(" ")} failed with exit code ${result}. Continuing...`);
+            Log.log(`Warning: ${cmd.command} ${cmd.args.join(" ")} failed with exit code ${result}. Continuing...`);
           } else {
             return false;
           }
@@ -188,25 +148,24 @@ export default class TeXToPDF {
       }
       catch (e) {
         if (ignore_error) {
-          Log.process_message(`Warning: ${cmd[0]} ${cmd[1].join(" ")} failed with error ${e}. Continuing...`);
+          Log.process_message(`Warning: ${cmd.command} ${cmd.args.join(" ")} failed with error ${e}. Continuing...`);
         } else {
           return false;
         }
       }
     }
 
-    if (!output_pdf) {
-      let dvipdfm = this.make_dvipdfm_command();
-      Log.log(`Generating PDF using ${dvipdfm[0]} ${dvipdfm[1].join(" ")}`);
+    if (latex_cmd.output === 'dvi') {
+      Log.log(`Generating PDF using ${dvipdf_cmd.command} ${dvipdf_cmd.args.join(" ")}`);
       try {
         let process = new Process();
-        let result = await process.execute(dvipdfm[0], [...dvipdfm[1], TeXToPDF.change_extension(base, ".dvi")], dir, false);
+        let result = await process.execute(dvipdf_cmd.command, [...dvipdf_cmd.args, TeXToPDF.change_extension(base, ".dvi")], dir, false);
         if (result === null || result !== 0) {
           return false;
         }
       }
       catch (e) {
-        Log.error(`Error generating PDF with ${dvipdfm[0]}:`, e);
+        Log.error(`Error generating PDF with ${dvipdf_cmd.command}:`, e);
         return false;
       }
     }

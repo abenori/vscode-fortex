@@ -12,6 +12,51 @@ Fortex parses `%#!` command lines itself and starts the executable with `shell: 
 
 LaTeX builds, PDF previews, SyncTeX, SumatraPDF, `kpsewhich`, and `texdoc` execution run only when VS Code trusts the current workspace. In Restricted Mode, the corresponding commands and keybindings are disabled, and runtime checks also block programmatic calls. Citation completion can still read bibliography files resolved directly from the project, but does not start `kpsewhich`. Editing, navigation, and other completion features remain available.
 
+## Build configuration
+
+LaTeX engine selection and program overrides are user/machine settings. Commands are resolved once before the first build process; settings changes apply to the next build.
+
+- `vscode-fortex.compile.latex.engineSelection`: `source` (default) selects the first matching rule from `compile.latex.engineRules`; `fixed` uses `compile.latex.engine` directly.
+- `vscode-fortex.compile.latex.engine`: defaults to `pdflatex`. Also used when no source rule matches.
+- `vscode-fortex.compile.latex.engineRules`: an ordered array of `{ "classes": [...], "options": [...], "engine": "..." }`. A rule matches any listed class and requires every listed option. Omit `classes` to match any class, and omit `options` to accept any options. Matching uses literal class names and top-level comma-separated options with surrounding whitespace removed, without macro expansion. Setting the array replaces the default rules; `[]` always selects the fallback engine.
+- `vscode-fortex.compile.latex.engines`: an optional map of engine names to `{ "command": "...", "args": [...], "output": "pdf" }`. Defaults to `{}`. Each field is optional: `command` defaults to the selected engine name, `args` to `[]`, and `output` to the existing executable-name detection. Unregistered engines use the same defaults. Set `output` to `pdf` or `dvi` explicitly for paths or custom names whose format cannot be inferred.
+
+The default rules preserve the existing engine selection:
+
+| Class | Engine |
+| --- | --- |
+| `article`, `report`, `book` | `pdflatex` |
+| `jarticle`, `jreport`, `jbook` | `platex` |
+| `ujarticle`, `ujreport`, `ujbook` | `uplatex` |
+| `jsarticle`, `jsbook`, `jsreport` | `uplatex` with the `uplatex` option; otherwise `platex` |
+| `ltjsarticle`, `ltjsbook`, `ltjsreport` | `lualatex` |
+| `jlreq` | `platex` with the `platex` option, then `lualatex` with the `lualatex` option; otherwise `uplatex` |
+
+For example, select a fixed executable with additional arguments:
+
+```json
+{
+  "vscode-fortex.compile.latex.engineSelection": "fixed",
+  "vscode-fortex.compile.latex.engine": "my-latex",
+  "vscode-fortex.compile.latex.engines": {
+    "my-latex": {
+      "command": "C:\\TeX Programs\\lualatex.exe",
+      "args": ["-recorder"],
+      "output": "pdf"
+    }
+  },
+  "vscode-fortex.compile.bibtex": { "command": "upbibtex", "args": [] },
+  "vscode-fortex.compile.makeindex": { "command": "upmendex", "args": [] },
+  "vscode-fortex.compile.dvipdf": { "command": "dvipdfmx", "args": [] }
+}
+```
+
+The standard LaTeX pipeline always supplies `-interaction=nonstopmode`, `-halt-on-error`, `-synctex=1`, and `-file-line-error`. These arguments have no setting. Engine-specific `args`, `%#t2dopt` arguments, and the source filename are appended in that order. `-output-format=dvi` selects DVI conversion even when the engine's configured output is `pdf`.
+
+`compile.bibtex`, `compile.makeindex`, and `compile.dvipdf` accept optional `command` and `args` fields, defaulting to `upbibtex`, `upmendex`, and `dvipdfmx` with no extra arguments. The bibliography and index stages append the job basename; the converter appends the DVI filename. Changing a program does not change the run-detection logic; Biber's `.bcf`-based scheduling is not implemented.
+
+Source `%#` directives retain priority in both selection modes. A single-program `%#!` executes that program literally, ignoring a configured `command` override for that name while still using its extra arguments and output setting. An argument-bearing `%#!` command or action sequence retains its existing execution semantics. `%#bibtex`, `%#makeindex`, and `%#dvipdf` override the corresponding executable while retaining configured arguments. The existing program allowlist still applies to every `%#`-selected executable.
+
 ## TeX documentation
 
 Press `Ctrl+T`, release Ctrl, then press `I` and `C` without Shift in a LaTeX editor, or run **Fortex: Open Documentation** from the Command Palette. Enter a package, class, or documentation name. The input is prefilled with selected text or the literal name at the cursor in `\usepackage{...}`, `\RequirePackage{...}`, or `\documentclass{...}` when available. The Command Palette also works without an open editor.
