@@ -4,10 +4,14 @@ import * as vscode from 'vscode';
 import LaTeXProject from '../project/LaTeXProject';
 import Log from '../log';
 import Process from './Process';
-import Config, { CompileProgram, CompileProgramSettings, LaTeXEngineSettings } from '../Config';
+import Config, { CompileProgram, CompileProgramSettings } from '../Config';
 import { singleProgramFromDirective } from './BuildSecurity';
 import * as Workspace from '../workspace';
 import { SourceScanner, splitclist } from '../latex-parser';
+
+interface LaTeXCommand extends CompileProgramSettings {
+  output: 'pdf' | 'dvi';
+}
 
 /**
  * Runs the TeX/BibTeX/index/PDF pipeline until auxiliary files stabilize.
@@ -64,7 +68,7 @@ export default class TeXToPDF {
     return Config.latexEngine();
   }
 
-  private make_latex_command(): LaTeXEngineSettings {
+  private make_latex_command(): LaTeXCommand {
     const directive = this.LaTeXProject.percent_sharp('!')?.trim();
     const explicitProgram = directive ? singleProgramFromDirective(directive) : undefined;
     const engine = explicitProgram ?? this.select_latex_engine();
@@ -73,7 +77,10 @@ export default class TeXToPDF {
     const settings = Config.latexEngineSettings(engine, explicitProgram);
     const directiveArgs = (this.LaTeXProject.percent_sharp('t2dopt') ?? '').split(' ').filter(s => s.length > 0);
     const args = [...TeXToPDF.requiredLaTeXArgs, ...settings.args, ...directiveArgs];
-    return { command: settings.command, args, output: args.includes('-output-format=dvi') ? 'dvi' : settings.output };
+    const command = settings.command;
+    const output = settings.output ?? (command.startsWith('lua') || command.startsWith('pdf')
+      || command.startsWith('xe') || command === 'context' ? 'pdf' : 'dvi');
+    return { command, args, output: args.includes('-output-format=dvi') ? 'dvi' : output };
   }
 
   private make_program_command(key: CompileProgram): CompileProgramSettings {

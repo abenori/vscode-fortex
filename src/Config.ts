@@ -15,7 +15,7 @@ export interface CompileProgramSettings {
 }
 
 export interface LaTeXEngineSettings extends CompileProgramSettings {
-  output: 'pdf' | 'dvi';
+  output?: 'pdf' | 'dvi';
 }
 
 /** Centralized, typed access to the `vscode-fortex` configuration section. */
@@ -143,9 +143,8 @@ export default class Config {
     const command = commandOverride ?? (settings.command === undefined ? engine
       : Config.settingString(settings.command, `${engineKey}.command`));
     const args = settings.args === undefined ? [] : Config.settingArgs(settings.args, `${engineKey}.args`);
-    const output = settings.output === undefined ? (command.startsWith('lua') || command.startsWith('pdf')
-      || command.startsWith('xe') || command === 'context' ? 'pdf' : 'dvi') : settings.output;
-    if (output !== 'pdf' && output !== 'dvi') {
+    const output = settings.output;
+    if (output !== undefined && output !== 'pdf' && output !== 'dvi') {
       return Config.settingError(`${engineKey}.output`, '"pdf" or "dvi"');
     }
     return { command, args, output };
