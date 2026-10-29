@@ -152,11 +152,11 @@ Press `Ctrl+T`, release Ctrl, then press `J` without Shift to start Greek letter
 | `Tab` | Open a candidate picker for the current code |
 | `Ctrl+Z` (`Cmd+Z` on macOS) | Cancel the preview without undoing earlier document edits |
 
-An English letter, digit, or supported punctuation character that cannot continue the code commits the current candidate and inserts that character. For example, `a` followed by `2` inserts `\alpha2`, and `a` followed by `x` inserts `\alpha x`; the separating space prevents two command names from joining. Since `p-` means `\varpi`, use `p`, `Enter`, then `-` to insert `\pi-`.
+An English letter, digit, or punctuation character that cannot continue the code commits the displayed candidate and inserts that character. For example, `g` followed by `^`, `_`, or `+` inserts `\gamma^`, `\gamma_`, or `\gamma+`; `a` followed by `2` inserts `\alpha2`. Following `a` with `x` inserts `\alpha x`; the separating space prevents the letter from becoming part of the command name. If no candidate is displayed, the character is inserted on its own and Greek input ends. Since `p-` means `\varpi`, use `p`, `Enter`, then `-` to insert `\pi-`.
 
-The punctuation supported during input is `-`, `,`, `.`, `/`, `!`, `#`, `$`, `%`, `<`, `>`, and `?`. For other symbols such as `+`, `=`, `_`, `^`, and parentheses, press `Enter` to commit first, then type the symbol normally. Punctuation bindings are limited to the keys shared by standard US and Japanese layouts; using a layout-dependent key without committing first cancels the preview and performs normal input.
+All directly typed ASCII letters, digits, and punctuation are supported. Input follows the actual characters typed on either US or Japanese keyboards. Parentheses and other brackets follow the editor's normal auto-closing settings. Typing `^` or `_` leaves the cursor immediately after that character.
 
-Codes are case-sensitive. Use Shift for uppercase letters; these keybindings do not interpret Caps Lock. The standard Greek commands and their variant forms use the following codes:
+Codes are case-sensitive; Shift and Caps Lock work as in normal typing. The standard Greek commands and their variant forms use the following codes:
 
 | Lowercase code | Command | Uppercase code | Command |
 | --- | --- | --- | --- |
@@ -184,7 +184,7 @@ Codes are case-sensitive. Use Shift for uppercase letters; these keybindings do 
 | `ps` | `\psi` | `Ps` | `\Psi` |
 | `o`, `w` | `\omega` | `O`, `W` | `\Omega` |
 
-Greek input currently requires a single cursor with no selection. Moving the cursor, switching editors, or editing the document through another command, paste, or IME cancels the preview. A committed completion is inserted as one edit and can be undone normally.
+Greek input currently requires a single cursor with no selection. Moving the cursor, switching editors, or editing the document through another command, paste, or IME cancels the preview. A committed completion and the character that committed it can be undone together with one Undo.
 
 The code mapping follows [YaTeX's Greek completion table](https://github.com/hiroseyuuji/yatex/blob/master/yatexmth.el). AMS-only uppercase variants and the non-Greek `foo` entry are not included.
 

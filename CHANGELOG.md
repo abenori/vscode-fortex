@@ -6,6 +6,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+- Commit Greek letter previews when typing punctuation such as `^`, `_`, and `+`, preserving the typed character, editor bracket behavior, and one-step Undo.
 - Reuse a lazily built line-start index for line-number lookups in saved outline sources.
 - Reuse Structure display items per file, redraw only changed names during editing, and preserve heading-level relationships across included files on save.
 - Share live heading titles and approximate source positions between Outline and LaTeX Structure, retain existing items during incomplete edits, and always allow navigation.

@@ -22,6 +22,8 @@ export default class GreekCompletionController implements vscode.Disposable {
   private committingSession: GreekSession | undefined;
   private generation = 0;
   private pending = Promise.resolve();
+  private pendingActions = 0;
+  private typingSubscriptions: vscode.Disposable[] = [];
   private disposed = false;
   private readonly decoration = vscode.window.createTextEditorDecorationType({
     rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
@@ -72,6 +74,9 @@ export default class GreekCompletionController implements vscode.Disposable {
       }
       if (editor.selections.length !== 1 || !editor.selection.isEmpty) {
         vscode.window.setStatusBarMessage('Greek completion requires a single cursor with no selection.', 4000);
+        return;
+      }
+      if (!this.captureTyping()) {
         return;
       }
       this.session = {
@@ -191,6 +196,7 @@ export default class GreekCompletionController implements vscode.Disposable {
     // Invalidate even already queued input from a session whose commit has ended.
     this.generation++;
     void this.clearPreview();
+    this.releaseTyping();
   }
 
   private clearPreview(): Thenable<unknown> {
@@ -256,10 +262,17 @@ export default class GreekCompletionController implements vscode.Disposable {
         this.cancel();
         return;
       }
-      const applied = !text || await session.editor.insertSnippet(
-        new vscode.SnippetString().appendText(text), session.position,
-        { undoStopBefore: true, undoStopAfter: true }
-      );
+      let applied: boolean;
+      if (/^[([{]$/.test(suffix)) {
+        applied = await this.insertWithBracket(session, (command ?? '') + separator, suffix);
+      } else if (/^[)\]}]$/.test(suffix)) {
+        applied = await this.insertWithClosingBracket(session, text);
+      } else {
+        applied = !text || await session.editor.insertSnippet(
+          new vscode.SnippetString().appendText(text), session.position,
+          { undoStopBefore: true, undoStopAfter: true }
+        );
+      }
       if (applied) {
         session.committed = true;
       } else {
@@ -282,7 +295,92 @@ export default class GreekCompletionController implements vscode.Disposable {
       || session.editor.selections.length !== 1 || !session.editor.selection.isEmpty) {
       return;
     }
-    await vscode.commands.executeCommand(command, ...(args ? [args] : []));
+    await vscode.commands.executeCommand(command === 'type' ? 'default:type' : command, ...(args ? [args] : []));
+  }
+
+  private async insertWithBracket(session: GreekSession, prefix: string, bracket: string): Promise<boolean> {
+    const editor = session.editor;
+    // Native opening-bracket input places its own undo stop. Type it first, then
+    // prepend the command to the same undo group; native auto-close/caret tracking survives.
+    const prepared = await editor.edit(edit => edit.insert(session.position, ''), { undoStopBefore: true, undoStopAfter: false });
+    if (!prepared || session.generation !== this.generation || vscode.window.activeTextEditor !== editor
+      || editor.document.isClosed
+      || editor.document.version !== session.version || !this.selectionMatches(session)) {
+      return false;
+    }
+    await vscode.commands.executeCommand('default:type', { text: bracket });
+    if (session.generation !== this.generation || vscode.window.activeTextEditor !== editor
+      || editor.document.isClosed || editor.document.version !== session.version + 1
+      || editor.selections.length !== 1 || !editor.selection.isEmpty
+      || !editor.selection.active.isEqual(session.position.translate(0, 1))
+      || editor.document.getText(new vscode.Range(session.position, session.position.translate(0, 1))) !== bracket) {
+      return false;
+    }
+    return editor.edit(edit => edit.insert(session.position, prefix), { undoStopBefore: false, undoStopAfter: true });
+  }
+
+  private async insertWithClosingBracket(session: GreekSession, text: string): Promise<boolean> {
+    const editor = session.editor;
+    const prepared = await editor.edit(edit => edit.insert(session.position, ''), { undoStopBefore: true, undoStopAfter: false });
+    if (!prepared || session.generation !== this.generation || vscode.window.activeTextEditor !== editor
+      || editor.document.isClosed || editor.document.version !== session.version || !this.selectionMatches(session)) {
+      return false;
+    }
+    // Type the whole control word and closer natively so overtype/electric-indent
+    // see the committed word. Unlike an opener, a closer keeps this typing undo group.
+    await vscode.commands.executeCommand('default:type', { text });
+    if (session.generation !== this.generation || vscode.window.activeTextEditor !== editor || editor.document.isClosed) {
+      return false;
+    }
+    return editor.edit(edit => edit.insert(editor.selection.active, ''), { undoStopBefore: false, undoStopAfter: true });
+  }
+
+  private captureTyping(): boolean {
+    if (this.typingSubscriptions.length) {
+      return true;
+    }
+    try {
+      // Receive layout-translated text, not physical key names (notably ^/_ on JIS/US).
+      this.typingSubscriptions.push(vscode.commands.registerCommand('type', (args: { text: string }) => {
+        const session = this.session ?? this.committingSession;
+        if (!session) {
+          // Preserve order for text arriving while the last queued commit is finishing.
+          const editor = vscode.window.activeTextEditor;
+          const generation = this.generation;
+          return this.run(async () => {
+            if (editor && vscode.window.activeTextEditor === editor && generation === this.generation) {
+              await vscode.commands.executeCommand('default:type', args);
+            }
+          });
+        }
+        if (!this.picker && vscode.window.activeTextEditor === session.editor && args?.text === ' ') {
+          return this.commit({ text: ' ' });
+        }
+        if (!this.picker && vscode.window.activeTextEditor === session.editor
+          && typeof args?.text === 'string' && /^[\x21-\x7e]$/.test(args.text)) {
+          return this.input(args);
+        }
+        // IME/non-ASCII/bulk input remains ordinary editor input, with no preview committed.
+        this.cancel();
+        return vscode.commands.executeCommand('default:type', args);
+      }));
+      this.typingSubscriptions.push(vscode.commands.registerCommand('compositionStart', (args: unknown) => {
+        this.cancel();
+        return vscode.commands.executeCommand('default:compositionStart', args);
+      }));
+      return true;
+    } catch {
+      this.releaseTyping();
+      void vscode.window.showWarningMessage('Greek input could not start because another extension is handling typing.');
+      return false;
+    }
+  }
+
+  private releaseTyping(): void {
+    for (const subscription of this.typingSubscriptions) {
+      subscription.dispose();
+    }
+    this.typingSubscriptions = [];
   }
 
   private closePicker(): void {
@@ -298,7 +396,13 @@ export default class GreekCompletionController implements vscode.Disposable {
   }
 
   private run(action: () => void | Promise<void>): Promise<void> {
-    const next = this.pending.then(() => { if (!this.disposed) { return action(); } });
+    this.pendingActions++;
+    const next = this.pending.then(() => { if (!this.disposed) { return action(); } }).finally(() => {
+      this.pendingActions--;
+      if (!this.session && this.pendingActions === 0) {
+        this.releaseTyping();
+      }
+    });
     this.pending = next.catch(() => undefined);
     return next;
   }
