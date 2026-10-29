@@ -13,6 +13,8 @@ export interface OutlineHeading {
 
 export interface MappedOutlineHeading extends OutlineHeading {
   valid: boolean;
+  /** Advances only when an edit touches this declaration, not its surrounding body. */
+  revision: number;
 }
 
 /** Moves saved heading positions without reading text or reparsing on input. */
@@ -23,7 +25,7 @@ export default class NativeOutlinePositions {
 
   constructor(headings: readonly OutlineHeading[]) {
     for (const heading of headings) {
-      this.headings.set(heading.start, { start: heading.start, end: heading.end, extent: heading.extent, valid: true });
+      this.headings.set(heading.start, { start: heading.start, end: heading.end, extent: heading.extent, valid: true, revision: 0 });
     }
   }
 
@@ -44,7 +46,15 @@ export default class NativeOutlinePositions {
         for (const heading of this.headings.values()) {
           const removalOverlaps = change.length > 0 && change.offset < heading.end && removedEnd > heading.start;
           const insertionInside = change.insertedLength > 0 && heading.start < change.offset && change.offset < heading.end;
-          if (removalOverlaps || insertionInside) { heading.valid = false; }
+          // A missing closing brace may be reinserted at the mapped end. Keep
+          // its left affinity, but let the bounded title reader retry there.
+          const insertionAtEnd = change.insertedLength > 0 && heading.start < heading.end && change.offset === heading.end;
+          if (removalOverlaps || insertionInside) {
+            heading.valid = false;
+          }
+          if (removalOverlaps || insertionInside || insertionAtEnd) {
+            heading.revision++;
+          }
           const start = mapPosition(heading.start, change, true);
           const end = Math.max(start, mapPosition(heading.end, change, false));
           heading.start = start;

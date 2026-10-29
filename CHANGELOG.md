@@ -6,6 +6,9 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+- Reuse a lazily built line-start index for line-number lookups in saved outline sources.
+- Reuse Structure display items per file, redraw only changed names during editing, and preserve heading-level relationships across included files on save.
+- Share live heading titles and approximate source positions between Outline and LaTeX Structure, retain existing items during incomplete edits, and always allow navigation.
 - Refresh native Outline symbols only when their output changes, reuse unchanged saved-source trees, and remove the Waiting for save display.
 - Keep standard Outline headings visible during body edits by tracking their positions, and verify saved outline snapshots against persisted source when editing overlaps a save.
 - Use saved sources for build and PDF main-file discovery, and run project discovery once per request without restarting on editor or configuration changes.

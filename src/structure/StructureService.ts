@@ -1,17 +1,19 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import LaTeXProject from '../project/LaTeXProject';
-import { isStructureTrivia, parseStructureEvents, StructureEvent, structurePlainText } from './LaTeXStructureParser';
+import { isStructureTrivia, parseStructureEvents, readHeadingTitle, StructureEvent, structurePlainText } from './LaTeXStructureParser';
 import { StructureKind, StructureLabelEntry, StructureLocation, StructureNode, StructureSnapshot } from './StructureTypes';
 import * as Workspace from '../workspace';
 import * as LaTeXParser from '../latex-parser';
 import { resolveInputFile } from '../project/InputFileResolver';
 import NativeOutlinePositions, { OutlineEdit } from './NativeOutlinePositions';
 import { sourceTextChanges } from './SourceTextChanges';
+import SourceLineIndex from './SourceLineIndex';
 
 interface SourceAnalysis {
   syntax?: LaTeXParser.LaTeXSource;
   events?: StructureEvent[];
+  lines?: SourceLineIndex;
 }
 
 interface ParsedSource {
@@ -42,8 +44,14 @@ interface LivePositions {
   /** Edits are queued even before the first native heading tree is requested. */
   batches: OutlineEdit[][];
   tracker?: NativeOutlinePositions;
+  titles?: Map<number, { revision: number; title: string; complete: boolean }>;
   projection?: { version: number; tree: StructureNode[]; nodes: StructureNode[] };
   unknown?: boolean;
+}
+
+interface SourceProjection {
+  live: LivePositions;
+  positions: ReturnType<NativeOutlinePositions['project']>;
 }
 
 interface ExpandedEvent {
@@ -236,8 +244,11 @@ export default class StructureService implements vscode.Disposable {
    * VS Code requests symbols automatically for ordinary text edits. */
   private readonly documentSymbolsChanged = new vscode.EventEmitter<vscode.Uri>();
   readonly onDidChangeDocumentSymbols = this.documentSymbolsChanged.event;
+  /** Cheap edit notification; consumers decide whether a visible view needs repainting. */
+  private readonly liveSourcesChanged = new vscode.EventEmitter<vscode.Uri>();
+  readonly onDidChangeLiveSources = this.liveSourcesChanged.event;
   private readonly sourceUpdatesChanged = new vscode.EventEmitter<void>();
-  private readonly disposables: vscode.Disposable[] = [this.changed, this.documentSymbolsChanged, this.sourceUpdatesChanged];
+  private readonly disposables: vscode.Disposable[] = [this.changed, this.documentSymbolsChanged, this.liveSourcesChanged, this.sourceUpdatesChanged];
   private readonly watches = new Map<string, vscode.Disposable>();
   private readonly watchedFiles = new Set<string>();
   private readonly candidateDirectories = new Set<string>();
@@ -275,7 +286,7 @@ export default class StructureService implements vscode.Disposable {
         if (!parsed) { return; }
         const live = this.livePositions.get(key);
         if (live?.document === event.document && live.version === event.document.version) { return; }
-        // No getText, parsing, project discovery, timers, or tree rebuilds on typing.
+        // No getText, parsing, project discovery, or tree rebuilds on typing.
         const changes = event.contentChanges.map(change => ({
           offset: change.rangeOffset, length: change.rangeLength, insertedLength: change.text.length
         }));
@@ -291,6 +302,7 @@ export default class StructureService implements vscode.Disposable {
             sourceId: parsed.id, batches: [], unknown: true });
         }
         this.dirty.add(key);
+        this.liveSourcesChanged.fire(event.document.uri);
       }),
       vscode.workspace.onDidSaveTextDocument(document => {
         if (!this.relevant(document.uri)) { return; }
@@ -308,6 +320,7 @@ export default class StructureService implements vscode.Disposable {
         if (!this.sources.has(key) && !this.watchedFiles.has(key)) { return; }
         this.invalidateSource(key);
         this.localFiles.delete(key);
+        this.liveSourcesChanged.fire(document.uri);
         if (this.selected === document) { this.selected = undefined; }
         if (this.selected) { this.schedule(); }
         else if (this.watch) { this.state = undefined; this.changed.fire(undefined); }
@@ -343,7 +356,7 @@ export default class StructureService implements vscode.Disposable {
     }
   }
 
-  /** Native Outline keeps saved headings and projects only their live positions. */
+  /** Saved hierarchy with shared live heading names and approximate positions. */
   async local(document: vscode.TextDocument): Promise<StructureNode[]> {
     if (this.disposed || document.isClosed) { return []; }
     const key = Workspace.uriKey(document.uri);
@@ -360,12 +373,8 @@ export default class StructureService implements vscode.Disposable {
   /** Synchronous so source commits can compare both trees in the same live version. */
   private localNodes(document: vscode.TextDocument, parsed: ParsedSource, updateSettings = true): StructureNode[] {
     const key = Workspace.uriKey(document.uri);
-    let live = this.livePositions.get(key);
-    if (!live || live.document !== document || live.sourceId !== parsed.id) {
-      this.bindLive(parsed, document, document.getText());
-      live = this.livePositions.get(key)!;
-    }
-    if (live.unknown || live.version !== document.version) { return []; }
+    const projection = this.sourcePositions(parsed, document);
+    const live = projection.live;
     let local = this.localTrees.get(key);
     const settings = updateSettings || !local ? theoremSettings(document.uri) : undefined;
     const signature = settings ? JSON.stringify(settings) : local!.settings;
@@ -378,15 +387,7 @@ export default class StructureService implements vscode.Disposable {
     if (live.projection?.version === document.version && live.projection.tree === local.nodes) {
       return live.projection.nodes;
     }
-    if (!live.tracker) {
-      const headings = this.headingNodes(local.nodes);
-      live.tracker = new NativeOutlinePositions(headings.map(node => ({
-        start: node.location.start, end: node.location.end, extent: node.end.end
-      })));
-      for (const batch of live.batches) { live.tracker.record(batch); }
-      live.batches = [];
-    }
-    const nodes = this.projectHeadings(local.nodes, live.tracker.project());
+    const nodes = this.projectHeadings(local.nodes, parsed, document, projection);
     live.projection = { version: document.version, tree: local.nodes, nodes };
     return nodes;
   }
@@ -400,10 +401,6 @@ export default class StructureService implements vscode.Disposable {
     }
   }
 
-  private headingNodes(nodes: readonly StructureNode[]): StructureNode[] {
-    return nodes.flatMap(node => [...(node.kind === 'section' ? [node] : []), ...this.headingNodes(node.children)]);
-  }
-
   private onlyHeadings(nodes: readonly StructureNode[]): StructureNode[] {
     return nodes.flatMap(node => {
       const children = this.onlyHeadings(node.children);
@@ -411,36 +408,115 @@ export default class StructureService implements vscode.Disposable {
     });
   }
 
-  private projectHeadings(
-    nodes: readonly StructureNode[], positions: ReturnType<NativeOutlinePositions['project']>
-  ): StructureNode[] {
-    return nodes.flatMap(node => {
-      const children = this.projectHeadings(node.children, positions);
-      const position = positions.get(node.location.start);
-      if (node.kind !== 'section' || !position?.valid) { return children; }
-      return [{ ...node, location: { ...node.location, start: position.start, end: position.end },
-        end: { ...node.end, start: position.extent, end: position.extent }, children }];
-    });
+  private projectHeadings(nodes: readonly StructureNode[], parsed: ParsedSource,
+    document: vscode.TextDocument, projection: SourceProjection): StructureNode[] {
+    return nodes.map(node => ({ ...this.projectSourceNode(node, parsed, document, projection),
+      children: this.projectHeadings(node.children, parsed, document, projection) }));
   }
 
-  /** A location is usable only with the exact text that supplied its offsets. */
-  canNavigate(location: StructureLocation, document = Workspace.findOpenDocument(location.uri)): boolean {
-    if (this.disposed) { return false; }
+  /** One numerical projection per source is shared by local and project views. */
+  private sourcePositions(parsed: ParsedSource, document: vscode.TextDocument): SourceProjection {
+    const key = Workspace.uriKey(parsed.uri);
+    let live = this.livePositions.get(key);
+    if (!live || live.document !== document || live.sourceId !== parsed.id || live.unknown || live.version !== document.version) {
+      this.bindLive(parsed, document, document.getText());
+      live = this.livePositions.get(key)!;
+    }
+    if (!live.tracker) {
+      // Structural events already belong to the saved analysis. Include their
+      // endpoints so labels and cross-file section extents can move too.
+      const anchors = new Map(parsed.events.map(event => [event.start,
+        { start: event.start, end: event.end, extent: event.end }]));
+      for (const offset of [...parsed.events.map(event => event.end), parsed.source.length]) {
+        if (!anchors.has(offset)) { anchors.set(offset, { start: offset, end: offset, extent: offset }); }
+      }
+      live.tracker = new NativeOutlinePositions([...anchors.values()]);
+      for (const batch of live.batches) { live.tracker.record(batch); }
+      live.batches = [];
+    }
+    return { live, positions: live.tracker.project() };
+  }
+
+  /** Best-effort mapping; a missing baseline never prevents navigation. */
+  projectLocation(location: StructureLocation): StructureLocation {
     const parsed = this.sources.get(Workspace.uriKey(location.uri));
-    if (!parsed || parsed.id !== location.sourceVersion) { return false; }
-    return document ? this.matchesDocument(parsed, document) : parsed.document === undefined;
+    const document = Workspace.findOpenDocument(location.uri);
+    if (this.disposed || !parsed || parsed.id !== location.sourceVersion || !document) { return location; }
+    const { positions } = this.sourcePositions(parsed, document);
+    return this.mapLocation(location, positions);
   }
 
-  /** Descriptions use captured text and never open documents as a rendering side effect. */
+  private mapLocation(location: StructureLocation, positions: SourceProjection['positions']): StructureLocation {
+    const mapped = positions.get(location.start);
+    const start = mapped?.start ?? location.start;
+    const end = location.end === location.start ? start
+      : mapped?.end ?? positions.get(location.end)?.start ?? location.end;
+    return { ...location, start, end: Math.max(start, end) };
+  }
+
+  /** Preserve saved identity/hierarchy, even while a declaration is incomplete or removed. */
+  projectNode(node: StructureNode, projectEnd = true): StructureNode {
+    const parsed = this.sources.get(Workspace.uriKey(node.location.uri));
+    const document = Workspace.findOpenDocument(node.location.uri);
+    if (this.disposed || !parsed || parsed.id !== node.location.sourceVersion || !document) {
+      return { ...node, end: projectEnd ? this.projectLocation(node.end) : node.end };
+    }
+    return this.projectSourceNode(node, parsed, document, this.sourcePositions(parsed, document), projectEnd);
+  }
+
+  private projectSourceNode(node: StructureNode, parsed: ParsedSource, document: vscode.TextDocument,
+    { live, positions }: SourceProjection, projectEnd = true): StructureNode {
+    const end = !projectEnd ? node.end : node.end.uri.toString() === parsed.uri.toString() && node.end.sourceVersion === parsed.id
+      ? this.mapLocation(node.end, positions) : this.projectLocation(node.end);
+    const projected = { ...node, location: this.mapLocation(node.location, positions), end };
+    if (node.kind !== 'section') { return projected; }
+    const position = positions.get(node.location.start);
+    if (!position) { return projected; }
+    live.titles ??= new Map();
+    let title = live.titles.get(node.location.start);
+    if (!title) {
+      title = { revision: 0, title: node.title, complete: true };
+      live.titles.set(node.location.start, title);
+    }
+    if (title.revision !== position.revision) {
+      // Bound work for unusually large/incomplete pasted declarations. Keep the
+      // last readable name rather than scanning a document-sized fragment.
+      const fragment = position.end - position.start <= 16_384
+        ? document.getText(new vscode.Range(document.positionAt(position.start), document.positionAt(position.end))) : undefined;
+      let updated = fragment === undefined ? undefined : readHeadingTitle(fragment, node.command);
+      if (updated === undefined && fragment !== undefined && fragment.length < 16_384) {
+        // Reinserting a deleted closing brace sits just outside the left-affine
+        // saved declaration end. Probe one character, not the following body.
+        const suffix = document.getText(new vscode.Range(document.positionAt(position.end), document.positionAt(position.end + 1)));
+        if (suffix === '}') { updated = readHeadingTitle(fragment + suffix, node.command); }
+      }
+      title = { revision: position.revision, title: updated === undefined ? title.title : updated || `\\${node.command}`,
+        complete: updated !== undefined };
+      live.titles.set(node.location.start, title);
+    }
+    projected.title = title.title;
+    if (!title.complete) {
+      // The command start still provides a useful destination when its argument
+      // is unfinished. Deleted commands retain an approximate destination too.
+      projected.location.end = projected.location.start + node.command.length + 1;
+    }
+    return projected;
+  }
+
+  /** Retained for consumers; stale or approximate offsets are intentionally navigable. */
+  canNavigate(_location: StructureLocation, _document?: vscode.TextDocument): boolean {
+    return !this.disposed;
+  }
+
+  /** Descriptions never open documents as a rendering side effect. */
   lineNumber(location: StructureLocation): number | undefined {
+    const document = Workspace.findOpenDocument(location.uri);
+    if (document) { return document.positionAt(this.projectLocation(location).start).line + 1; }
     const parsed = this.sources.get(Workspace.uriKey(location.uri));
     if (!parsed || parsed.id !== location.sourceVersion) { return undefined; }
-    return parsed.source.slice(0, location.start).split(/\r\n|\r|\n/).length;
-  }
-
-  private matchesDocument(parsed: ParsedSource, document: vscode.TextDocument): boolean {
-    return !document.isClosed && !this.dirty.has(Workspace.uriKey(document.uri))
-      && parsed.document === document && parsed.documentVersion === document.version;
+    const analysis = parsed.analysis ??= {};
+    const lines = analysis.lines ??= new SourceLineIndex(parsed.source);
+    return lines.lineNumberAt(location.start);
   }
 
   private relevant(uri: vscode.Uri): boolean {
@@ -471,6 +547,7 @@ export default class StructureService implements vscode.Disposable {
     this.bindLive(parsed, document, source);
     this.dirty.delete(key);
     if (before) { this.notifyDocumentSymbolsChange(document, before, this.localNodes(document, parsed)); }
+    this.liveSourcesChanged.fire(document.uri);
   }
 
   private schedule(): void {
@@ -648,6 +725,7 @@ export default class StructureService implements vscode.Disposable {
       if (before && document) {
         this.notifyDocumentSymbolsChange(document, before, this.localNodes(document, this.sources.get(key)!));
       }
+      this.liveSourcesChanged.fire(uri);
       // Save and filesystem notifications may describe the same bytes. Rebind
       // positions above, but do not repeat project discovery/tree construction.
       if (this.selected && (changed || recovered || this.projectRefreshFailed)) { this.schedule(); }

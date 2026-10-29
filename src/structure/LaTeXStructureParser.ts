@@ -298,6 +298,17 @@ export function isStructureTrivia(source: string): boolean {
   return new LaTeXParser.LaTeXSource(source).sourceScanner.skipTrivia(0) === source.length;
 }
 
+/** Read one isolated heading declaration without parsing the document's structure. */
+export function readHeadingTitle(source: string, expectedCommand: string): string | undefined {
+  if (!headingLevels.has(expectedCommand)) { return undefined; }
+  const syntax = new LaTeXParser.LaTeXSource(source);
+  const command = syntax.sourceScanner.commands[0];
+  if (command?.start !== 0 || command.name !== expectedCommand) { return undefined; }
+  const title = readTitle(syntax.argumentScanner, command.end);
+  if (!title || title.end !== source.length) { return undefined; }
+  return structurePlainText(source.slice(title.contentStart, title.contentEnd));
+}
+
 function readTitle(scanner: LaTeXParser.ArgumentScanner, offset: number): LaTeXParser.ScannedArgument | undefined {
   let cursor = scanner.readStar(offset)?.end ?? offset;
   const optional = scanner.readArgument(cursor, '[');
