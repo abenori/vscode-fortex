@@ -1,12 +1,13 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import LaTeXProject from '../project/LaTeXProject';
-import { isStructureTrivia, parseStructureEvents, readHeadingTitle, StructureEvent, structurePlainText } from './LaTeXStructureParser';
-import { StructureKind, StructureLabelEntry, StructureLocation, StructureNode, StructureSnapshot } from './StructureTypes';
+import { isStructureTrivia, parseStructureEvents, readHeadingTitle, StructureEvent } from './LaTeXStructureParser';
+import { StructureLocation, StructureNode, StructureSnapshot } from './StructureTypes';
 import * as Workspace from '../workspace';
 import * as LaTeXParser from '../latex-parser';
 import { resolveInputFile } from '../project/InputFileResolver';
-import NativeOutlinePositions, { OutlineEdit } from './NativeOutlinePositions';
+import NativeOutlinePositions, { MappedOutlineHeading, OutlineEdit } from './NativeOutlinePositions';
+import { buildStructure, ExpandedEvent, labelEntries } from './StructureBuilder';
 import { sourceTextChanges } from './SourceTextChanges';
 import SourceLineIndex from './SourceLineIndex';
 
@@ -22,19 +23,22 @@ interface ParsedSource {
   syntax: LaTeXParser.LaTeXSource;
   events: StructureEvent[];
   id?: number;
-  document?: vscode.TextDocument;
-  documentVersion?: number;
   textRanges?: { start: number; end: number }[];
   analysis?: SourceAnalysis;
 }
 
 interface LoadedSnapshot extends StructureSnapshot {
   /** Includes absent candidates whose creation could change input resolution. */
-  dependencies: vscode.Uri[];
   checkedCandidates: readonly { readonly uri: vscode.Uri; readonly exists: boolean }[];
   neededFiles: Set<string>;
   neededDirectories: Set<string>;
   directories: Set<string>;
+}
+
+interface LiveHeadingTitle {
+  revision: number;
+  title: string;
+  complete: boolean;
 }
 
 interface LivePositions {
@@ -44,7 +48,7 @@ interface LivePositions {
   /** Edits are queued even before the first native heading tree is requested. */
   batches: OutlineEdit[][];
   tracker?: NativeOutlinePositions;
-  titles?: Map<number, { revision: number; title: string; complete: boolean }>;
+  titles?: Map<number, LiveHeadingTitle>;
   projection?: { version: number; tree: StructureNode[]; nodes: StructureNode[] };
   unknown?: boolean;
 }
@@ -52,12 +56,6 @@ interface LivePositions {
 interface SourceProjection {
   live: LivePositions;
   positions: ReturnType<NativeOutlinePositions['project']>;
-}
-
-interface ExpandedEvent {
-  parsed: ParsedSource;
-  occurrence: string;
-  event: StructureEvent | { type: 'text'; start: number; end: number } | { type: 'issue'; title: string; start: number; end: number };
 }
 
 /** Compare the native provider's output, ignoring internal source identities. */
@@ -70,135 +68,10 @@ function sameHeadings(left: readonly StructureNode[], right: readonly StructureN
   }));
 }
 
-const equationEnvironments = new Set(['equation', 'equation*', 'align', 'align*', 'alignat', 'alignat*',
-  'gather', 'gather*', 'multline', 'multline*', 'flalign', 'flalign*', 'displaymath', '\\[', '$$']);
-const defaultTheorems: Record<string, string> = {
-  theorem: 'Theorem', lemma: 'Lemma', proposition: 'Proposition', corollary: 'Corollary',
-  definition: 'Definition', remark: 'Remark', example: 'Example', conjecture: 'Conjecture'
-};
-
-function location(parsed: ParsedSource, start: number, end = start): StructureLocation {
-  return { uri: parsed.uri, start, end, sourceVersion: parsed.id };
-}
-
 function theoremSettings(uri: vscode.Uri): Record<string, string> {
   const configured = vscode.workspace.getConfiguration('vscode-fortex', uri).get<unknown>('outline.theoremEnvironments', {});
   if (!configured || typeof configured !== 'object' || Array.isArray(configured)) { return {}; }
   return Object.fromEntries(Object.entries(configured).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
-}
-
-/** Build semantic ownership after include expansion, preserving each occurrence. */
-function buildStructure(events: ExpandedEvent[], configuredTheorems: Record<string, string>): StructureNode[] {
-  const theoremNames = { ...defaultTheorems, ...configuredTheorems };
-  for (const { event } of events) {
-    if (event.type === 'theoremDefinition') { theoremNames[event.name] = event.title; }
-  }
-  const roots: StructureNode[] = [];
-  const sections: StructureNode[] = [];
-  const environments: { name: string; node?: StructureNode; parsed: ParsedSource; contentStart: number }[] = [];
-  let pendingHeading: StructureNode | undefined;
-  const environmentOwner = () => [...environments].reverse().find(entry => entry.node)?.node;
-  const add = (node: StructureNode) => (environmentOwner()?.children ?? sections.at(-1)?.children ?? roots).push(node);
-  const make = (entry: ExpandedEvent, kind: StructureKind, title: string, command: string): StructureNode => ({
-    id: `${entry.occurrence}:${entry.event.start}:${kind}`,
-    kind, title, command,
-    location: location(entry.parsed, entry.event.start, entry.event.end),
-    end: location(entry.parsed, entry.parsed.source.length),
-    labels: [], children: []
-  });
-
-  for (const entry of events) {
-    const { event, parsed } = entry;
-    if (event.type === 'text') { pendingHeading = undefined; continue; }
-    if (event.type === 'heading') {
-      while (sections.length && sections.at(-1)!.level! >= event.level) {
-        sections.pop()!.end = location(parsed, event.start);
-      }
-      const node = make(entry, 'section', event.title || `\\${event.command}`, event.command);
-      node.level = event.level;
-      add(node);
-      sections.push(node);
-      pendingHeading = node;
-      continue;
-    }
-    if (event.type === 'label') {
-      const label = { key: event.key, location: location(parsed, event.start, event.end) };
-      const owner = environmentOwner() ?? pendingHeading;
-      if (owner) { owner.labels.push(label); }
-      else {
-        const node = make(entry, 'label', event.key, 'label');
-        node.end = node.location;
-        node.labels.push(label);
-        add(node);
-      }
-      continue;
-    }
-    pendingHeading = undefined;
-    if (event.type === 'begin') {
-      const baseName = event.name.replace(/\*$/, '');
-      let kind: StructureKind | undefined;
-      let title = event.name;
-      if (equationEnvironments.has(event.name)) {
-        if (!environments.some(env => env.node?.kind === 'equation')) { kind = 'equation'; }
-      } else if (baseName === 'figure' || baseName === 'table') {
-        kind = baseName;
-        title = baseName === 'figure' ? 'Figure' : 'Table';
-      } else if (theoremNames[event.name] || theoremNames[baseName]) {
-        kind = 'theorem';
-        title = theoremNames[event.name] ?? theoremNames[baseName];
-        if (event.title) { title += `: ${event.title}`; }
-      }
-      const node = kind ? make(entry, kind, title, event.name) : undefined;
-      if (node) { add(node); }
-      environments.push({ name: event.name, node, parsed, contentStart: event.end });
-    } else if (event.type === 'end') {
-      let index = environments.length - 1;
-      while (index >= 0 && environments[index].name !== event.name) { index--; }
-      if (index < 0) { continue; }
-      for (const env of environments.splice(index)) {
-        if (!env.node) { continue; }
-        env.node.end = location(parsed, event.end);
-        if (env.node.kind === 'equation' && Workspace.uriKey(env.parsed.uri) === Workspace.uriKey(parsed.uri)) {
-          const content = parsed.source.slice(env.contentStart, event.start);
-          env.node.title = structurePlainText(content, { omitEnvironmentCommands: true }).slice(0, 100) || env.name;
-        }
-      }
-    } else if (event.type === 'caption') {
-      const owner = [...environments].reverse().find(env => env.node?.kind === 'figure' || env.node?.kind === 'table')?.node;
-      if (owner && (owner.title === 'Figure' || owner.title === 'Table')) { owner.title = event.title || owner.title; }
-    } else if (event.type === 'issue') {
-      const node = make(entry, 'issue', event.title, 'input');
-      node.end = node.location;
-      add(node);
-    }
-  }
-  const last = events.at(-1);
-  if (last) {
-    for (const node of sections) { node.end = location(last.parsed, last.parsed.source.length); }
-  }
-  return roots;
-}
-
-function labelEntries(roots: StructureNode[]): StructureLabelEntry[] {
-  const declarations = new Map<string, StructureLabelEntry>();
-  const keys = new Map<string, Set<string>>();
-  const visit = (nodes: StructureNode[]) => {
-    for (const node of nodes) {
-      for (const label of node.labels) {
-        const id = `${Workspace.uriKey(label.location.uri)}:${label.location.start}`;
-        const existing = declarations.get(id);
-        if (existing) { existing.occurrences++; }
-        else { declarations.set(id, { label, node, occurrences: 1, duplicate: false }); }
-        const definitions = keys.get(label.key) ?? new Set<string>();
-        definitions.add(id);
-        keys.set(label.key, definitions);
-      }
-      visit(node.children);
-    }
-  };
-  visit(roots);
-  for (const entry of declarations.values()) { entry.duplicate = keys.get(entry.label.key)!.size > 1; }
-  return [...declarations.values()];
 }
 
 function appendEvents(parsed: ParsedSource, occurrence: string, append: (entry: ExpandedEvent) => void): void {
@@ -224,16 +97,6 @@ function appendEvents(parsed: ParsedSource, occurrence: string, append: (entry: 
   while (index < parsed.textRanges.length) {
     append({ parsed, occurrence, event: { type: 'text', ...parsed.textRanges[index++] } });
   }
-}
-
-/** Local Outline always reads the active buffer and never discovers a parent. */
-export async function localDocumentStructure(document: vscode.TextDocument): Promise<StructureNode[]> {
-  const source = document.getText();
-  const syntax = new LaTeXParser.LaTeXSource(source);
-  const parsed = { uri: document.uri, source, syntax, events: parseStructureEvents(syntax) };
-  const expanded: ExpandedEvent[] = [];
-  appendEvents(parsed, 'local', entry => expanded.push(entry));
-  return buildStructure(expanded, theoremSettings(document.uri));
 }
 
 /** Outline snapshots advance on save and source/lifecycle changes, never on typing. */
@@ -426,9 +289,9 @@ export default class StructureService implements vscode.Disposable {
       // Structural events already belong to the saved analysis. Include their
       // endpoints so labels and cross-file section extents can move too.
       const anchors = new Map(parsed.events.map(event => [event.start,
-        { start: event.start, end: event.end, extent: event.end }]));
+        { start: event.start, end: event.end }]));
       for (const offset of [...parsed.events.map(event => event.end), parsed.source.length]) {
-        if (!anchors.has(offset)) { anchors.set(offset, { start: offset, end: offset, extent: offset }); }
+        if (!anchors.has(offset)) { anchors.set(offset, { start: offset, end: offset }); }
       }
       live.tracker = new NativeOutlinePositions([...anchors.values()]);
       for (const batch of live.batches) { live.tracker.record(batch); }
@@ -472,6 +335,18 @@ export default class StructureService implements vscode.Disposable {
     if (node.kind !== 'section') { return projected; }
     const position = positions.get(node.location.start);
     if (!position) { return projected; }
+    const title = this.liveHeadingTitle(node, document, live, position);
+    projected.title = title.title;
+    if (!title.complete) {
+      // The command start still provides a useful destination when its argument
+      // is unfinished. Deleted commands retain an approximate destination too.
+      projected.location.end = projected.location.start + node.command.length + 1;
+    }
+    return projected;
+  }
+
+  private liveHeadingTitle(node: StructureNode, document: vscode.TextDocument, live: LivePositions,
+    position: MappedOutlineHeading): LiveHeadingTitle {
     live.titles ??= new Map();
     let title = live.titles.get(node.location.start);
     if (!title) {
@@ -494,18 +369,7 @@ export default class StructureService implements vscode.Disposable {
         complete: updated !== undefined };
       live.titles.set(node.location.start, title);
     }
-    projected.title = title.title;
-    if (!title.complete) {
-      // The command start still provides a useful destination when its argument
-      // is unfinished. Deleted commands retain an approximate destination too.
-      projected.location.end = projected.location.start + node.command.length + 1;
-    }
-    return projected;
-  }
-
-  /** Retained for consumers; stale or approximate offsets are intentionally navigable. */
-  canNavigate(_location: StructureLocation, _document?: vscode.TextDocument): boolean {
-    return !this.disposed;
+    return title;
   }
 
   /** Descriptions never open documents as a rendering side effect. */
@@ -542,8 +406,6 @@ export default class StructureService implements vscode.Disposable {
       return;
     }
     const before = this.localFiles.has(key) ? this.localNodes(document, parsed) : undefined;
-    parsed.document = document;
-    parsed.documentVersion = document.version;
     this.bindLive(parsed, document, source);
     this.dirty.delete(key);
     if (before) { this.notifyDocumentSymbolsChange(document, before, this.localNodes(document, parsed)); }
@@ -630,19 +492,17 @@ export default class StructureService implements vscode.Disposable {
     return this.state;
   }
 
-  private remember(uri: vscode.Uri, source: string, document?: vscode.TextDocument): ParsedSource {
+  private remember(uri: vscode.Uri, source: string): ParsedSource {
     const key = Workspace.uriKey(uri);
     const previous = this.sources.get(key);
     const sameSource = previous?.source === source;
     if (sameSource) {
-      previous.document = document;
-      previous.documentVersion = document?.version;
       this.dirty.delete(key);
       return previous;
     }
     const analysis: SourceAnalysis = {};
     const parsed: ParsedSource = { uri, source, id: ++this.nextSourceVersion,
-      document, documentVersion: document?.version, analysis,
+      analysis,
       get syntax() { return analysis.syntax ??= new LaTeXParser.LaTeXSource(source); },
       get events() { return analysis.events ??= parseStructureEvents(this.syntax); } };
     this.sources.set(key, parsed);
@@ -655,7 +515,7 @@ export default class StructureService implements vscode.Disposable {
     const key = Workspace.uriKey(document.uri);
     this.sourceRevisions.set(key, (this.sourceRevisions.get(key) ?? 0) + 1);
     const source = document.getText();
-    const parsed = this.remember(document.uri, source, document);
+    const parsed = this.remember(document.uri, source);
     this.bindLive(parsed, document, source);
     return parsed;
   }
@@ -666,12 +526,8 @@ export default class StructureService implements vscode.Disposable {
     this.livePositions.set(key, { document, version: document.version, sourceId: parsed.id,
       batches: edits.length ? [edits] : [] });
     if (parsed.source === liveSource) {
-      parsed.document = document;
-      parsed.documentVersion = document.version;
       this.dirty.delete(key);
     } else {
-      parsed.document = undefined;
-      parsed.documentVersion = undefined;
       this.dirty.add(key);
     }
   }
@@ -913,7 +769,7 @@ export default class StructureService implements vscode.Disposable {
     }
     // Cleanup is performed after the request wins publication, not by stale work.
     return { main, followIncludes, roots, labels: labelEntries(roots), files: [...files.values()],
-      dependencies: [...dependencies.values()], checkedCandidates, message,
+      checkedCandidates, message,
       neededFiles, neededDirectories, directories };
   }
 

@@ -1,54 +1,8 @@
-import { latexToPlainText } from '../citation/CitationSearch';
 import * as LaTeXParser from '../../latex-parser';
-
-/** A label and the nearby source shown in reference completion details. */
-export interface LabelEntry {
-  key: string;
-  line: number;
-  context: string;
-  summary: string;
-}
 
 export interface ReferenceContext {
   query: string;
   queryStart: number;
-}
-
-/** Extracts unique labels and completion-specific descriptions. */
-export function findLabels(input: string | LaTeXParser.LaTeXSource | LaTeXParser.ReferenceParser): LabelEntry[] {
-  const parser = typeof input === 'string' ? new LaTeXParser.LaTeXSource(input).referenceParser
-    : input instanceof LaTeXParser.LaTeXSource ? input.referenceParser : input;
-  const source = parser.source;
-  const tokens = parser.tokens.filter(token => token.kind === 'label');
-  const sourceLines = source.split(/\r\n|\r|\n/);
-  const summaryCharacters = source.split('');
-  for (const token of tokens) {
-    for (let offset = token.commandStart; offset < token.commandEnd; offset++) {
-      if (source[offset] !== '\r' && source[offset] !== '\n') {
-        summaryCharacters[offset] = ' ';
-      }
-    }
-  }
-  const summaryLines = summaryCharacters.join('').split(/\r\n|\r|\n/);
-  const lineOffsets = makeLineOffsets(source);
-  const labels: LabelEntry[] = [];
-  const seen = new Set<string>();
-
-  for (const token of tokens) {
-    const key = token.key;
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    const line = lineAtOffset(lineOffsets, token.commandStart);
-    labels.push({
-      key,
-      line,
-      context: makeContext(sourceLines, line),
-      summary: makeSummary(summaryLines, line)
-    });
-  }
-  return labels;
 }
 
 export function findReferenceContext(input: string | LaTeXParser.LaTeXSource, offset?: number): ReferenceContext | undefined {
@@ -106,64 +60,4 @@ export function findReferenceContext(input: string | LaTeXParser.LaTeXSource, of
     };
   }
   return undefined;
-}
-
-function makeLineOffsets(source: string): number[] {
-  const offsets = [0];
-  for (let offset = 0; offset < source.length; offset++) {
-    if (source[offset] === '\r') {
-      if (source[offset + 1] === '\n') {
-        offset++;
-      }
-      offsets.push(offset + 1);
-    } else if (source[offset] === '\n') {
-      offsets.push(offset + 1);
-    }
-  }
-  return offsets;
-}
-
-function lineAtOffset(offsets: readonly number[], offset: number): number {
-  let low = 0;
-  let high = offsets.length;
-  while (low + 1 < high) {
-    const middle = Math.floor((low + high) / 2);
-    if (offsets[middle] <= offset) {
-      low = middle;
-    } else {
-      high = middle;
-    }
-  }
-  return low;
-}
-
-function makeContext(lines: readonly string[], targetLine: number): string {
-  // Include two lines on either side, trimming blank edges so the documentation
-  // popup remains compact while retaining the original LaTeX source.
-  let start = Math.max(0, targetLine - 2);
-  let end = Math.min(lines.length, targetLine + 3);
-  while (start < targetLine && lines[start].trim() === '') {
-    start++;
-  }
-  while (end > targetLine + 1 && lines[end - 1].trim() === '') {
-    end--;
-  }
-  return lines.slice(start, end).map((line) => line.length > 300 ? `${line.slice(0, 297)}...` : line).join('\n');
-}
-
-function makeSummary(lines: readonly string[], targetLine: number): string {
-  // Prefer the label's line, then nearby lines, and remove formatting commands for
-  // the short description displayed beside the completion key.
-  const candidateLines = [
-    lines[targetLine],
-    ...lines.slice(Math.max(0, targetLine - 2), targetLine).reverse(),
-    ...lines.slice(targetLine + 1, Math.min(lines.length, targetLine + 3))
-  ];
-  for (const line of candidateLines) {
-    const plain = latexToPlainText(line).trim();
-    if (plain) {
-      return plain.length > 100 ? `${plain.slice(0, 97)}...` : plain;
-    }
-  }
-  return '(No nearby text)';
 }

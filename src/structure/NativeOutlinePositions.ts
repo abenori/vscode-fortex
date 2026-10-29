@@ -8,11 +8,9 @@ export interface OutlineEdit {
 export interface OutlineHeading {
   start: number;
   end: number;
-  extent: number;
 }
 
 export interface MappedOutlineHeading extends OutlineHeading {
-  valid: boolean;
   /** Advances only when an edit touches this declaration, not its surrounding body. */
   revision: number;
 }
@@ -25,7 +23,7 @@ export default class NativeOutlinePositions {
 
   constructor(headings: readonly OutlineHeading[]) {
     for (const heading of headings) {
-      this.headings.set(heading.start, { start: heading.start, end: heading.end, extent: heading.extent, valid: true, revision: 0 });
+      this.headings.set(heading.start, { start: heading.start, end: heading.end, revision: 0 });
     }
   }
 
@@ -49,9 +47,6 @@ export default class NativeOutlinePositions {
           // A missing closing brace may be reinserted at the mapped end. Keep
           // its left affinity, but let the bounded title reader retry there.
           const insertionAtEnd = change.insertedLength > 0 && heading.start < heading.end && change.offset === heading.end;
-          if (removalOverlaps || insertionInside) {
-            heading.valid = false;
-          }
           if (removalOverlaps || insertionInside || insertionAtEnd) {
             heading.revision++;
           }
@@ -59,7 +54,6 @@ export default class NativeOutlinePositions {
           const end = Math.max(start, mapPosition(heading.end, change, false));
           heading.start = start;
           heading.end = end;
-          heading.extent = Math.max(end, mapPosition(heading.extent, change, true));
         }
       }
     }

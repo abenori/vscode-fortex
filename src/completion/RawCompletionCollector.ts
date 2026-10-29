@@ -1,3 +1,8 @@
+import {
+  CLASSIC_COMMAND_DECLARATIONS, CLASSIC_ENVIRONMENT_DECLARATIONS,
+  DOCUMENT_COMMAND_DECLARATIONS, DOCUMENT_ENVIRONMENT_DECLARATIONS, PRIMITIVE_COMMAND_DECLARATIONS
+} from '../latex-parser/DefinitionCommands';
+
 /** Completion-only text collection. Outer comments/literals/definitions are searchable. */
 export interface RawLabel { key: string; offset: number; end: number }
 export interface RawCommand { name: string; argumentCount: number; optionalFirstArgument: boolean }
@@ -65,13 +70,12 @@ export function collectRawLabels(source: string): RawLabel[] {
   return labels;
 }
 
-const classicCommands = new Set(['newcommand', 'renewcommand', 'providecommand', 'DeclareRobustCommand']);
-const documentCommands = new Set(['NewDocumentCommand', 'RenewDocumentCommand', 'ProvideDocumentCommand',
-  'DeclareDocumentCommand', 'NewExpandableDocumentCommand', 'RenewExpandableDocumentCommand',
-  'ProvideExpandableDocumentCommand', 'DeclareExpandableDocumentCommand']);
-const primitiveCommands = new Set(['def', 'gdef', 'edef', 'xdef']);
-const environmentCommands = new Set(['newenvironment', 'renewenvironment', 'provideenvironment',
-  'NewDocumentEnvironment', 'RenewDocumentEnvironment', 'ProvideDocumentEnvironment', 'DeclareDocumentEnvironment', 'newtheorem']);
+const classicCommands = new Set<string>(CLASSIC_COMMAND_DECLARATIONS);
+const documentCommands = new Set<string>(DOCUMENT_COMMAND_DECLARATIONS);
+const primitiveCommands = new Set<string>(PRIMITIVE_COMMAND_DECLARATIONS);
+const environmentCommands = new Set([
+  ...CLASSIC_ENVIRONMENT_DECLARATIONS, ...DOCUMENT_ENVIRONMENT_DECLARATIONS, 'newtheorem'
+]);
 
 /** Last textual declaration wins; xparse signatures remain name-only. */
 export function collectRawCommands(source: string): RawCommand[] {

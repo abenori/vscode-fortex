@@ -2,6 +2,10 @@ import SourceScanner, { readCommand } from './SourceScanner';
 import type { CommandToken, SourceRange } from './SourceScanner';
 import ArgumentScanner from './ArgumentScanner';
 import type { ArgumentOpening, ScannedArgument } from './ArgumentScanner';
+import {
+  CLASSIC_COMMAND_DECLARATIONS, CLASSIC_ENVIRONMENT_DECLARATIONS,
+  DOCUMENT_COMMAND_DECLARATIONS, DOCUMENT_ENVIRONMENT_DECLARATIONS, PRIMITIVE_COMMAND_DECLARATIONS
+} from './DefinitionCommands';
 
 /** A lexical definition, without macro expansion or interpretation of xparse specifications. */
 export interface DefinitionDeclaration extends SourceRange {
@@ -22,17 +26,11 @@ export interface DefinitionDeclaration extends SourceRange {
   readonly title?: string;
 }
 
-const classicCommands = new Set(['newcommand', 'renewcommand', 'providecommand', 'DeclareRobustCommand']);
-const classicEnvironments = new Set(['newenvironment', 'renewenvironment', 'provideenvironment']);
-const documentCommands = new Set([
-  'NewDocumentCommand', 'RenewDocumentCommand', 'ProvideDocumentCommand', 'DeclareDocumentCommand',
-  'NewExpandableDocumentCommand', 'RenewExpandableDocumentCommand',
-  'ProvideExpandableDocumentCommand', 'DeclareExpandableDocumentCommand'
-]);
-const documentEnvironments = new Set([
-  'NewDocumentEnvironment', 'RenewDocumentEnvironment', 'ProvideDocumentEnvironment', 'DeclareDocumentEnvironment'
-]);
-const primitiveCommands = new Set(['def', 'gdef', 'edef', 'xdef']);
+const classicCommands = new Set<string>(CLASSIC_COMMAND_DECLARATIONS);
+const classicEnvironments = new Set<string>(CLASSIC_ENVIRONMENT_DECLARATIONS);
+const documentCommands = new Set<string>(DOCUMENT_COMMAND_DECLARATIONS);
+const documentEnvironments = new Set<string>(DOCUMENT_ENVIRONMENT_DECLARATIONS);
+const primitiveCommands = new Set<string>(PRIMITIVE_COMMAND_DECLARATIONS);
 const definitionCommands = new Set([
   ...classicCommands, ...classicEnvironments, ...documentCommands,
   ...documentEnvironments, ...primitiveCommands, 'DeclareMathOperator', 'newtheorem'
