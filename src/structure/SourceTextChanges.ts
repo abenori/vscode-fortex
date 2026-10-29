@@ -1,11 +1,11 @@
-import type { OutlineEdit } from './NativeOutlinePositions';
+import type { SourceEditDelta } from './SourcePositionTracker';
 
 interface Line { start: number; end: number; text: string }
 
 /** Save/reload-only bridge from persisted text to a captured editor version. */
-export function sourceTextChanges(before: string, after: string): OutlineEdit[] {
+export function sourceTextChanges(before: string, after: string): SourceEditDelta[] {
   if (before === after) { return []; }
-  const edits: OutlineEdit[] = [];
+  const edits: SourceEditDelta[] = [];
   // Large rewrites fall back to a conservative replacement. Bound fine-grained
   // comparison work rather than running an unbounded diff in the extension host.
   let remainingCells = 1000000;
@@ -23,12 +23,12 @@ export function sourceTextChanges(before: string, after: string): OutlineEdit[] 
     if (cells <= 262144 && cells <= remainingCells) {
       remainingCells -= cells;
       const width = newLength + 1;
-      const matches = new Uint32Array(cells);
+      const lcsLengths = new Uint32Array(cells);
       for (let left = oldLength - 1; left >= 0; left--) {
         for (let right = newLength - 1; right >= 0; right--) {
-          matches[left * width + right] = before[oldStart + left] === after[newStart + right]
-            ? matches[(left + 1) * width + right + 1] + 1
-            : Math.max(matches[(left + 1) * width + right], matches[left * width + right + 1]);
+          lcsLengths[left * width + right] = before[oldStart + left] === after[newStart + right]
+            ? lcsLengths[(left + 1) * width + right + 1] + 1
+            : Math.max(lcsLengths[(left + 1) * width + right], lcsLengths[left * width + right + 1]);
         }
       }
       let left = 0;
@@ -41,7 +41,7 @@ export function sourceTextChanges(before: string, after: string): OutlineEdit[] 
         } else {
           pending ??= { offset: oldStart + left, length: 0, insertedLength: 0 };
           if (left < oldLength && (right === newLength
-            || matches[(left + 1) * width + right] >= matches[left * width + right + 1])) {
+            || lcsLengths[(left + 1) * width + right] >= lcsLengths[left * width + right + 1])) {
             pending.length++; left++;
           } else { pending.insertedLength++; right++; }
         }
@@ -60,7 +60,7 @@ export function sourceTextChanges(before: string, after: string): OutlineEdit[] 
         const next = newUnique.get(text);
         if (old >= 0 && next !== undefined && next >= 0) { candidates.push({ old, next }); }
       }
-      const anchors = increasing(candidates);
+      const anchors = selectIncreasingAnchors(candidates);
       if (anchors.length) {
         let oldCursor = oldStart;
         let newCursor = newStart;
@@ -101,7 +101,7 @@ function uniqueLines(entries: readonly Line[]): Map<string, number> {
 }
 
 /** Longest increasing subsequence keeps only unchanged lines in source order. */
-function increasing(entries: readonly { old: number; next: number }[]): { old: number; next: number }[] {
+function selectIncreasingAnchors(entries: readonly { old: number; next: number }[]): { old: number; next: number }[] {
   const tails: number[] = [];
   const previous: number[] = [];
   entries.forEach((entry, index) => {

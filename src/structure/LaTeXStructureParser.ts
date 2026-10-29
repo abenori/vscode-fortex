@@ -8,7 +8,7 @@ export type StructureEvent =
   | { type: 'end'; name: string; start: number; end: number }
   | { type: 'label'; key: string; start: number; end: number }
   | { type: 'caption'; title: string; start: number; end: number }
-  | { type: 'include'; command: 'input' | 'include'; path: string; start: number; end: number }
+  | { type: 'include'; path: string; start: number; end: number }
   | { type: 'theoremDefinition'; name: string; title: string; start: number; end: number };
 
 const headingLevels = new Map([
@@ -35,7 +35,7 @@ export function parseStructureEvents(input: string | LaTeXParser.LaTeXSource): S
   const includes = new Map<number, ReturnType<typeof readInputFilename>>();
   const titles = new Map<number, LaTeXParser.ScannedArgument>();
   const environmentTitles = new Map<number, LaTeXParser.ScannedArgument>();
-  const mathExcluded = [...hidden];
+  const excludedEnvironmentRanges = [...hidden];
   for (const command of scanner.commands) {
     if (rangeEndAt(hidden, command.start) !== undefined) { continue; }
     if (command.name === 'input' || command.name === 'include') {
@@ -46,13 +46,13 @@ export function parseStructureEvents(input: string | LaTeXParser.LaTeXSource): S
       if (group?.complete) {
         const result = readInputFilename(syntax, { ...command, name: command.name });
         includes.set(command.start, result);
-        mathExcluded.push({ start: command.end, end: result.consumedEnd });
+        excludedEnvironmentRanges.push({ start: command.end, end: result.consumedEnd });
       }
     } else if (headingLevels.has(command.name) || command.name === 'caption') {
       const title = readTitle(argumentsScanner, command.end);
       if (title) {
         titles.set(command.start, title);
-        mathExcluded.push({ start: command.end, end: title.end });
+        excludedEnvironmentRanges.push({ start: command.end, end: title.end });
       }
     } else if (command.name === 'begin') {
       const nameArgument = argumentsScanner.readArgument(command.end);
@@ -62,13 +62,13 @@ export function parseStructureEvents(input: string | LaTeXParser.LaTeXSource): S
         const title = argumentsScanner.readArgument(nameArgument.end, '[');
         if (title?.complete) {
           environmentTitles.set(command.start, title);
-          mathExcluded.push({ start: title.start, end: title.end });
+          excludedEnvironmentRanges.push({ start: title.start, end: title.end });
         }
       }
     }
   }
   // Skipped argument contents must not affect later dollar-delimiter state.
-  const environments = new Map(syntax.createEnvironmentParser(mathExcluded).tokens
+  const environments = new Map(syntax.createEnvironmentParser(excludedEnvironmentRanges).tokens
     .map(token => [token.start, token]));
   const events: StructureEvent[] = definitions
     .filter(definition => definition.kind === 'theorem' && definition.complete)
@@ -160,7 +160,7 @@ export function parseStructureEvents(input: string | LaTeXParser.LaTeXSource): S
       const include = includes.get(start);
       if (include) {
         if (include.status === 'resolved' && (command.name === 'input' || command.name === 'include')) {
-          events.push({ type: 'include', command: command.name, path: include.filename,
+          events.push({ type: 'include', path: include.filename,
             start, end: include.consumedEnd });
         }
         cursor = Math.max(cursor, include.consumedEnd);

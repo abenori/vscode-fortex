@@ -46,8 +46,8 @@ type TreeElement = NodeElement | LabelElement;
 
 interface DisplayItem {
   item: vscode.TreeItem;
-  title: string;
-  source: string;
+  nodeTitle: string;
+  sourceDescription: string;
   suffix: string;
   epoch: number;
 }
@@ -62,12 +62,12 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
   readonly onDidChangeTreeData = this.changes.event;
   private readonly view: vscode.TreeView<TreeElement>;
   private readonly disposables: vscode.Disposable[] = [];
-  private snapshot: StructureSnapshot | undefined;
+  private structureSnapshot: StructureSnapshot | undefined;
   private settings: StructureViewSettings;
   private roots: TreeElement[] = [];
   private readonly elementsByFile = new Map<string, TreeElement[]>();
   private readonly fileEpochs = new Map<string, number>();
-  private readonly dirtyFiles = new Set<string>();
+  private readonly pendingDisplayFiles = new Set<string>();
   private itemCache = new WeakMap<TreeElement, DisplayItem>();
   private elementFiles = new WeakMap<TreeElement, string>();
   private parents = new WeakMap<TreeElement, TreeElement>();
@@ -75,7 +75,7 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
   private disposed = false;
 
   constructor(private readonly context: vscode.ExtensionContext, private readonly service: StructureService) {
-    this.snapshot = service.snapshot;
+    this.structureSnapshot = service.snapshot;
     this.settings = this.readSettings();
     this.view = vscode.window.createTreeView('fortex.structure', { treeDataProvider: this, showCollapseAll: true });
     const register = (name: string, action: (element?: TreeElement) => unknown) => {
@@ -96,8 +96,8 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
     register('open', element => this.openElement(element ?? this.view.selection[0]));
     register('goToLabel', element => this.goToLabel(element ?? this.view.selection[0]));
     this.disposables.push(
-      service.onDidChange(snapshot => {
-        this.snapshot = snapshot;
+      service.onDidChange(structureSnapshot => {
+        this.structureSnapshot = structureSnapshot;
         this.settings = this.readSettings();
         this.rebuild();
       }),
@@ -105,13 +105,13 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
         const key = uriKey(uri);
         if (!this.elementsByFile.has(key)) { return; }
         this.fileEpochs.set(key, (this.fileEpochs.get(key) ?? 0) + 1);
-        this.dirtyFiles.add(key);
-        this.scheduleLiveDisplay();
+        this.pendingDisplayFiles.add(key);
+        this.scheduleLiveTitleRefresh();
       }),
       this.view.onDidChangeVisibility(event => {
         if (!event.visible) {
           if (this.liveTimer) { clearTimeout(this.liveTimer); this.liveTimer = undefined; }
-        } else { this.refreshLiveDisplay(); }
+        } else { this.refreshLiveTitles(); }
       }),
       vscode.workspace.onDidChangeConfiguration(event => {
         if (event.affectsConfiguration('vscode-fortex.outline')) {
@@ -121,9 +121,9 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
       })
     );
     this.rebuild();
-    void service.current().then(snapshot => {
+    void service.current().then(structureSnapshot => {
       if (!this.disposed) {
-        this.snapshot = snapshot;
+        this.structureSnapshot = structureSnapshot;
         this.settings = this.readSettings();
         this.rebuild();
       }
@@ -141,57 +141,57 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
     const epoch = this.fileEpochs.get(key) ?? 0;
     const previous = this.itemCache.get(element);
     if (previous?.epoch === epoch) { return previous.item; }
-    const title = this.displayTitle(element);
+    const nodeTitle = this.displayNodeTitle(element);
     if (previous) {
       previous.epoch = epoch;
-      if (previous.title === title) { return previous.item; }
+      if (previous.nodeTitle === nodeTitle) { return previous.item; }
     }
     // Line numbers are display snapshots. Offset-only edits need no redraw;
     // navigation independently resolves the latest position when clicked.
     const suffix = previous?.suffix ?? this.lineSuffix(this.elementLocation(element));
-    const source = previous?.source ?? `${this.fileName(this.elementLocation(element).uri)}${suffix}`;
-    const item = this.makeTreeItem(element, title, source, suffix);
-    this.itemCache.set(element, { item, title, source, suffix, epoch });
+    const sourceDescription = previous?.sourceDescription ?? `${this.fileName(this.elementLocation(element).uri)}${suffix}`;
+    const item = this.makeTreeItem(element, nodeTitle, sourceDescription, suffix);
+    this.itemCache.set(element, { item, nodeTitle, sourceDescription, suffix, epoch });
     return item;
   }
 
   private elementLocation(element: TreeElement): StructureLocation {
-    return element.type === 'label' ? element.entry.label.location : element.node.location;
+    return element.type === 'label' ? element.entry.label.location : element.node.declarationRange;
   }
 
-  private displayTitle(element: TreeElement): string {
+  private displayNodeTitle(element: TreeElement): string {
     const node = element.type === 'label' ? element.entry.node : element.node;
-    if (element.type === 'label' && uriKey(node.location.uri) !== uriKey(element.entry.label.location.uri)) {
+    if (element.type === 'label' && uriKey(node.declarationRange.uri) !== uriKey(element.entry.label.location.uri)) {
       return node.title; // Cross-file label descriptions advance only on full rebuilds.
     }
     // Reading a title must not project a section end in another included file.
     return node.kind === 'section' ? this.service.projectNode(node, false).title : node.title;
   }
 
-  private makeTreeItem(element: TreeElement, title: string, source: string, suffix: string): vscode.TreeItem {
+  private makeTreeItem(element: TreeElement, nodeTitle: string, sourceDescription: string, suffix: string): vscode.TreeItem {
     if (element.type === 'label') {
       const { entry } = element;
       const item = new vscode.TreeItem(entry.label.key, vscode.TreeItemCollapsibleState.None);
       item.id = `label:${entry.label.location.uri.toString()}:${entry.label.location.start}:${entry.label.key}`;
-      item.description = [entry.duplicate ? 'Duplicate key' : '', entry.node.kind === 'label' ? '' : title, source,
-        entry.occurrences > 1 ? `${entry.occurrences} inclusions` : ''].filter(Boolean).join(' · ');
-      item.tooltip = `${entry.label.key}\n${entry.node.kind === 'label' ? 'Standalone label' : title}\n${entry.label.location.uri.fsPath || entry.label.location.uri.toString()}${suffix}${entry.duplicate ? '\nThis key is declared at more than one source location.' : ''}`;
+      item.description = [entry.duplicate ? 'Duplicate key' : '', entry.node.kind === 'label' ? '' : nodeTitle, sourceDescription,
+        entry.inclusionCount > 1 ? `${entry.inclusionCount} inclusions` : ''].filter(Boolean).join(' · ');
+      item.tooltip = `${entry.label.key}\n${entry.node.kind === 'label' ? 'Standalone label' : nodeTitle}\n${entry.label.location.uri.fsPath || entry.label.location.uri.toString()}${suffix}${entry.duplicate ? '\nThis key is declared at more than one source location.' : ''}`;
       item.iconPath = new vscode.ThemeIcon(entry.duplicate ? 'warning' : 'tag');
       item.contextValue = 'fortex.structure.label';
       item.command = { command: 'vscode-fortex.outline.open', title: 'Go to Label', arguments: [element] };
       return item;
     }
     const node = element.node;
-    const item = new vscode.TreeItem(title || `\\${node.command}`,
+    const item = new vscode.TreeItem(nodeTitle || `\\${node.constructName}`,
       element.children.length > 0 ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None);
     item.id = `node:${node.id}`;
     item.description = [
       this.settings.showLabels && node.kind !== 'label' ? node.labels.map(label => label.key).join(', ') : '',
-      source
+      sourceDescription
     ].filter(Boolean).join(' · ');
-    item.tooltip = [title, node.command ? `\\${node.command}` : '',
+    item.tooltip = [nodeTitle, node.constructName ? `\\${node.constructName}` : '',
       ...node.labels.map(label => `Label: ${label.key}`),
-      `${node.location.uri.fsPath || node.location.uri.toString()}${suffix}`].filter(Boolean).join('\n');
+      `${node.declarationRange.uri.fsPath || node.declarationRange.uri.toString()}${suffix}`].filter(Boolean).join('\n');
     const icons: Record<StructureKind, string> = {
       section: 'symbol-namespace', theorem: 'symbol-class', equation: 'symbol-operator',
       figure: 'file-media', table: 'table', label: 'tag', issue: 'warning'
@@ -208,14 +208,14 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
       return;
     }
     if (this.liveTimer) { clearTimeout(this.liveTimer); this.liveTimer = undefined; }
-    this.dirtyFiles.clear();
+    this.pendingDisplayFiles.clear();
     this.elementsByFile.clear();
     this.fileEpochs.clear();
     this.itemCache = new WeakMap();
     this.elementFiles = new WeakMap();
     this.parents = new WeakMap();
     if (this.settings.viewMode === 'labels') {
-      this.roots = [...(this.snapshot?.labels ?? [])]
+      this.roots = [...(this.structureSnapshot?.labels ?? [])]
         .sort((left, right) => left.label.key.localeCompare(right.label.key)
           || left.label.location.uri.toString().localeCompare(right.label.location.uri.toString())
           || left.label.location.start - right.label.location.start)
@@ -227,7 +227,7 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
         element.children = node.children.map(child => wrap(child, element));
         return element;
       };
-      this.roots = filterStructure(this.snapshot?.roots ?? [], this.settings).map(node => wrap(node));
+      this.roots = filterStructure(this.structureSnapshot?.roots ?? [], this.settings).map(node => wrap(node));
     }
     this.view.title = this.settings.viewMode === 'labels' ? 'LaTeX Structure: Labels' : 'LaTeX Structure';
     this.updateStatus();
@@ -247,10 +247,10 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
     return element;
   }
 
-  private refreshLiveDisplay(): void {
+  private refreshLiveTitles(): void {
     if (this.disposed || !this.view.visible) { return; }
-    const files = [...this.dirtyFiles];
-    this.dirtyFiles.clear();
+    const files = [...this.pendingDisplayFiles];
+    this.pendingDisplayFiles.clear();
     const changed = new Set<TreeElement>();
     for (const key of files) {
       for (const element of this.elementsByFile.get(key) ?? []) {
@@ -269,25 +269,25 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
   }
 
   /** Coalesce redraws while typing without delaying them until typing stops. */
-  private scheduleLiveDisplay(): void {
+  private scheduleLiveTitleRefresh(): void {
     if (this.disposed || !this.view.visible || this.liveTimer) { return; }
     this.liveTimer = setTimeout(() => {
       this.liveTimer = undefined;
-      this.refreshLiveDisplay();
+      this.refreshLiveTitles();
     }, 100);
   }
 
   private updateStatus(): void {
-    this.view.description = this.snapshot
-      ? `${this.fileName(this.snapshot.main)}${this.snapshot.followIncludes ? '' : ' · Current file only'}`
+    this.view.description = this.structureSnapshot
+      ? `${this.fileName(this.structureSnapshot.main)}${this.structureSnapshot.followIncludes ? '' : ' · Current file only'}`
       : undefined;
-    this.view.message = this.snapshot?.message
-      || (!this.snapshot ? 'Open a LaTeX document to see its structure.'
+    this.view.message = this.structureSnapshot?.message
+      || (!this.structureSnapshot ? 'Open a LaTeX document to see its structure.'
         : this.roots.length > 0 ? undefined : this.settings.viewMode === 'labels' ? 'No labels found.' : 'No structure items match the current filter.');
   }
 
   private readSettings(): StructureViewSettings {
-    const config = vscode.workspace.getConfiguration('vscode-fortex', this.snapshot?.main);
+    const config = vscode.workspace.getConfiguration('vscode-fortex', this.structureSnapshot?.main);
     const read = <T>(name: string, fallback: T): T => {
       const value = config.get<T>(`outline.${name}`, fallback);
       return vscode.workspace.workspaceFolders?.length ? value : this.context.workspaceState.get<T>(`outline.${name}`, value);
@@ -339,16 +339,16 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
   }
 
   private async searchLabels(): Promise<void> {
-    const snapshot = await this.service.current();
-    if (!snapshot || snapshot.labels.length === 0) {
+    const structureSnapshot = await this.service.current();
+    if (!structureSnapshot || structureSnapshot.labels.length === 0) {
       void vscode.window.showInformationMessage('No labels found in the current LaTeX structure.');
       return;
     }
-    const items = await Promise.all([...snapshot.labels].sort((left, right) => left.label.key.localeCompare(right.label.key))
+    const items = await Promise.all([...structureSnapshot.labels].sort((left, right) => left.label.key.localeCompare(right.label.key))
       .map(async (entry): Promise<LabelPick> => ({
         label: entry.label.key,
-        description: [entry.node.kind === 'label' ? '' : this.displayTitle({ type: 'label', entry }), entry.duplicate ? 'Duplicate key' : ''].filter(Boolean).join(' · '),
-        detail: `${await this.sourceDescription(entry.label.location)}${entry.occurrences > 1 ? ` · ${entry.occurrences} inclusions` : ''}`,
+        description: [entry.node.kind === 'label' ? '' : this.displayNodeTitle({ type: 'label', entry }), entry.duplicate ? 'Duplicate key' : ''].filter(Boolean).join(' · '),
+        detail: `${await this.sourceDescription(entry.label.location)}${entry.inclusionCount > 1 ? ` · ${entry.inclusionCount} inclusions` : ''}`,
         labelEntry: entry
       })));
     const selected = await vscode.window.showQuickPick(items, {
@@ -361,7 +361,7 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
 
   private async openElement(element?: TreeElement): Promise<void> {
     if (element) {
-      await this.openLocation(element.type === 'label' ? element.entry.label.location : element.node.location);
+      await this.openLocation(element.type === 'label' ? element.entry.label.location : element.node.declarationRange);
     }
   }
 

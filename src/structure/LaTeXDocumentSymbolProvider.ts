@@ -41,7 +41,7 @@ export default class LaTeXDocumentSymbolProvider implements vscode.DocumentSymbo
       throw new vscode.CancellationError();
     }
     const version = document.version;
-    const nodes = await this.service.local(document);
+    const nodes = await this.service.getDocumentHeadings(document);
     if (token?.isCancellationRequested || document.isClosed || version !== document.version) { throw new vscode.CancellationError(); }
     const cached = this.converted.get(document);
     if (cached?.version === version && cached.nodes === nodes) {
@@ -53,14 +53,14 @@ export default class LaTeXDocumentSymbolProvider implements vscode.DocumentSymbo
       if (node.kind !== 'section') {
         return children;
       }
-      const selectionStart = document.positionAt(node.location.start);
-      const selectionEnd = document.positionAt(node.location.end);
-      const extent = node.end.uri.toString() === document.uri.toString() ? node.end.end : node.location.end;
+      const selectionStart = document.positionAt(node.declarationRange.start);
+      const selectionEnd = document.positionAt(node.declarationRange.end);
+      const extent = node.extentEnd.uri.toString() === document.uri.toString() ? node.extentEnd.end : node.declarationRange.end;
       const symbol = new vscode.DocumentSymbol(
-        node.title || `\\${node.command}`,
-        `\\${node.command}`,
+        node.title || `\\${node.constructName}`,
+        `\\${node.constructName}`,
         vscode.SymbolKind.Namespace,
-        new vscode.Range(selectionStart, document.positionAt(Math.max(node.location.end, extent))),
+        new vscode.Range(selectionStart, document.positionAt(Math.max(node.declarationRange.end, extent))),
         new vscode.Range(selectionStart, selectionEnd)
       );
       symbol.children = children;
