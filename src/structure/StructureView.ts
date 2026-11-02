@@ -33,6 +33,7 @@ export function filterStructure(nodes: readonly StructureNode[], options: Struct
 
 interface NodeElement {
   type: 'node';
+  itemId: string;
   node: StructureNode;
   children: TreeElement[];
 }
@@ -183,8 +184,8 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
     }
     const node = element.node;
     const item = new vscode.TreeItem(nodeTitle || `\\${node.constructName}`,
-      element.children.length > 0 ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None);
-    item.id = `node:${node.id}`;
+      element.children.length > 0 ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None);
+    item.id = element.itemId;
     item.description = [
       this.settings.showLabels && node.kind !== 'label' ? node.labels.map(label => label.key).join(', ') : '',
       sourceDescription
@@ -201,6 +202,26 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
       : node.labels.length > 0 ? 'fortex.structure.node.labeled' : 'fortex.structure.node';
     item.command = { command: 'vscode-fortex.outline.open', title: 'Go to Source', arguments: [element] };
     return item;
+  }
+
+  /** Keep VS Code's expansion identity independent of saved source offsets and display filters. */
+  private nodeItemIds(): Map<string, string> {
+    const itemIds = new Map<string, string>();
+    const structureSnapshot = this.structureSnapshot;
+    if (!structureSnapshot) { return itemIds; }
+    const occurrences = new Map<string, number>();
+    const visit = (nodes: readonly StructureNode[]) => {
+      for (const node of nodes) {
+        const signature = JSON.stringify([uriKey(structureSnapshot.main), structureSnapshot.followIncludes,
+          uriKey(node.declarationRange.uri), node.kind, node.constructName, node.title]);
+        const occurrence = occurrences.get(signature) ?? 0;
+        occurrences.set(signature, occurrence + 1);
+        itemIds.set(node.id, `node:${signature}:${occurrence}`);
+        visit(node.children);
+      }
+    };
+    visit(structureSnapshot.roots);
+    return itemIds;
   }
 
   private rebuild(): void {
@@ -221,8 +242,9 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
           || left.label.location.start - right.label.location.start)
         .map(entry => this.registerElement({ type: 'label', entry }));
     } else {
+      const itemIds = this.nodeItemIds();
       const wrap = (node: StructureNode, parent?: TreeElement): NodeElement => {
-        const element: NodeElement = { type: 'node', node, children: [] };
+        const element: NodeElement = { type: 'node', itemId: itemIds.get(node.id)!, node, children: [] };
         this.registerElement(element, parent);
         element.children = node.children.map(child => wrap(child, element));
         return element;

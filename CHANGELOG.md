@@ -6,6 +6,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+- Start new Structure and LaTeX Outline items collapsed, and keep Structure display IDs stable across source-position changes so VS Code can retain expansion state on save.
 - Separate generic build monitoring from LaTeX discovery, directives and PDF preview orchestration; reduce BuildProtocol to four interfaces, coalesce queued saves only by request URI, and replace keyed Problems snapshots at completion while preserving them on cancellation.
 - Move build notifications to one theme-aware status item, serialize requests from discovery onward, coalesce saved updates, report producer-owned warnings/diagnostics/artifacts, and support stopping tracked tool trees without launching subsequent stages.
 - Keep preview refresh errors separate from build results and ignore stale browser reports; use lowercase fortex for user-facing branding.
