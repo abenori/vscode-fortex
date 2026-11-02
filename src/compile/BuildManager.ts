@@ -230,7 +230,7 @@ export default class BuildManager implements vscode.Disposable {
     }, 5000);
   }
 
-  /** Invalidates display timers whenever a new request or disposal replaces their owner. */
+  /** Invalidates display timers and clears transient hints on build state changes or disposal. */
   private clearTimers(): void {
     this.hintVersion++;
     this.displayVersion++;
@@ -244,11 +244,12 @@ export default class BuildManager implements vscode.Disposable {
     void vscode.commands.executeCommand('setContext', 'fortex.buildRunning', value).then(undefined, () => {});
   }
 
-  /** Cancels active work and queued saves, retaining the lock until the producer returns. */
+  /** Clears transient hints and cancels work, retaining the lock until the producer returns. */
   public async stop(): Promise<void> {
     this.pending.clear();
     const session = this.active;
     if (!session) { return; }
+    this.clearTimers();
     session.cancellation.cancel();
     session.progress = 'Stopping…';
     this.updateStatusBar();

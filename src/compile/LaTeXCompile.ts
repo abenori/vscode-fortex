@@ -226,6 +226,7 @@ export default class LaTeXCompile {
     return [executable, ...args].map((part) => /\s/.test(part) ? JSON.stringify(part) : part).join(' ');
   }
 
+  /** Parses built-in and external actions, accepting whitespace around action separators. */
   private static parse_action(action: string): Action[] {
     // Built-in actions use `$(C:name:option)`. Parenthesis depth is tracked so
     // options can themselves contain parenthesized fragments.
@@ -233,7 +234,7 @@ export default class LaTeXCompile {
     let parse_top = 0;
     let rv : Action[] = [];
     while(true){
-      while(action.substring(parse_top,parse_top + 1) === " "){
+      while(/\s/.test(action.substring(parse_top,parse_top + 1))){
         parse_top = parse_top + 1;
       }
       let c = action.substring(parse_top,parse_top + 1);
@@ -276,7 +277,7 @@ export default class LaTeXCompile {
         } else {
           throw new Error("Invalid action in %#! directive near: " + action.substring(parse_top));
         }
-        while(action.substring(parse_top,parse_top + 1) === " "){
+        while(/\s/.test(action.substring(parse_top,parse_top + 1))){
           parse_top = parse_top + 1;
         }
         if(action.substring(parse_top,parse_top + 1) === ";"){
