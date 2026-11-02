@@ -10,6 +10,8 @@ type ViewerEntry = {
   pdf: vscode.Uri;
   ready: boolean;
   pendingForward?: SyncTeXForwardResult;
+  loadId: number;
+  report?: (message?: string) => void;
 };
 
 /** Hosts PDF.js in one reusable webview per PDF and bridges SyncTeX messages. */
@@ -21,12 +23,14 @@ export default class InternalPDFViewer implements vscode.Disposable {
     this.workerSource = new PDFWorkerSource(context.extensionUri);
   }
 
-  public async open(pdf: vscode.Uri, preserveFocus = false): Promise<void> {
+  /** Opens a viewer and associates automatic refresh failures with the requesting build. */
+  public async open(pdf: vscode.Uri, preserveFocus = false, report?: (message?: string) => void): Promise<void> {
     assertWorkspaceTrusted("Internal PDF preview");
     await vscode.workspace.fs.stat(pdf);
     const key = Workspace.uriKey(pdf);
     const existing = this.viewers.get(key);
     if (existing) {
+      existing.report = report;
       existing.panel.reveal(vscode.ViewColumn.Beside, preserveFocus);
       if (existing.ready) {
         await this.reload(existing);
@@ -47,7 +51,7 @@ export default class InternalPDFViewer implements vscode.Disposable {
     );
     // The script reports readiness asynchronously. Preserve a pending forward
     // search so Ctrl+T T J immediately after opening the panel is not lost.
-    const entry: ViewerEntry = { panel, pdf, ready: false };
+    const entry: ViewerEntry = { panel, pdf, ready: false, loadId: 0, report };
     this.viewers.set(key, entry);
     panel.onDidDispose(() => this.viewers.delete(key), undefined, this.context.subscriptions);
     panel.webview.onDidReceiveMessage(async message => {
@@ -66,12 +70,12 @@ export default class InternalPDFViewer implements vscode.Disposable {
             await entry.panel.webview.postMessage({ type: "forwardSearch", result: entry.pendingForward });
           }
         } catch (error) {
-          void vscode.window.showErrorMessage(`PDF preview: ${String(error)}`);
+          this.reportIssue(entry, String(error));
         }
       } else if (message?.type === "inverseSearch") {
         await this.inverseSearch(entry, Number(message.page), Number(message.x), Number(message.y));
-      } else if (message?.type === "error") {
-        void vscode.window.showErrorMessage(`PDF preview: ${String(message.message)}`);
+      } else if ((message?.type === 'error' || message?.type === 'loaded') && message.requestId === entry.loadId) {
+        this.reportIssue(entry, message.type === 'error' ? String(message.message) : undefined);
       }
     }, undefined, this.context.subscriptions);
     panel.webview.html = this.html(panel.webview, pdfjsRoot);
@@ -101,28 +105,45 @@ export default class InternalPDFViewer implements vscode.Disposable {
     }
   }
 
-  public async refresh(pdf: vscode.Uri): Promise<void> {
+  /** Refreshes an existing panel and replaces the owner of subsequent asynchronous reports. */
+  public async refresh(pdf: vscode.Uri, report?: (message?: string) => void): Promise<void> {
     assertWorkspaceTrusted("Internal PDF preview");
     const entry = this.viewers.get(Workspace.uriKey(pdf));
-    if (entry?.ready) {
-      await this.reload(entry);
+    if (entry) {
+      entry.report = report;
+      if (entry.ready) { await this.reload(entry); }
     }
   }
 
+  /** Tags each load so a delayed browser response cannot describe a newer document. */
   private async reload(entry: ViewerEntry): Promise<void> {
-    const stat = await vscode.workspace.fs.stat(entry.pdf);
-    // Passing local PDFs directly avoids the comparatively slow webview resource
-    // proxy. Keep URL/range loading for large documents to limit IPC memory use.
-    if (stat.size <= 16 * 1024 * 1024) {
-      const bytes = await vscode.workspace.fs.readFile(entry.pdf);
-      await entry.panel.webview.postMessage({
-        type: "load",
-        data: Buffer.from(bytes).toString("base64")
-      });
-    } else {
-      const uri = entry.panel.webview.asWebviewUri(entry.pdf.with({ query: `v=${stat.mtime}` }));
-      await entry.panel.webview.postMessage({ type: "load", url: uri.toString() });
+    const requestId = ++entry.loadId;
+    try {
+      const stat = await vscode.workspace.fs.stat(entry.pdf);
+      // Keep URL/range loading for large documents to limit IPC memory use.
+      if (requestId !== entry.loadId) { return; }
+      if (stat.size <= 16 * 1024 * 1024) {
+        const bytes = await vscode.workspace.fs.readFile(entry.pdf);
+        if (requestId !== entry.loadId) { return; }
+        await entry.panel.webview.postMessage({
+          type: "load", requestId,
+          data: Buffer.from(bytes).toString("base64")
+        });
+      } else {
+        const uri = entry.panel.webview.asWebviewUri(entry.pdf.with({ query: `v=${stat.mtime}` }));
+        await entry.panel.webview.postMessage({ type: "load", requestId, url: uri.toString() });
+      }
+    } catch (error) {
+      if (requestId !== entry.loadId) { return; }
+      if (entry.report) { entry.report(error instanceof Error ? error.message : String(error)); }
+      else { throw error; }
     }
+  }
+
+  /** Routes build-owned reports to the manager and leaves explicit viewer commands independent. */
+  private reportIssue(entry: ViewerEntry, message?: string): void {
+    if (entry.report) { entry.report(message); }
+    else if (message !== undefined) { void vscode.window.showErrorMessage(`PDF preview: ${message}`); }
   }
 
   private async inverseSearch(entry: ViewerEntry, page: number, x: number, y: number): Promise<void> {
@@ -153,6 +174,7 @@ export default class InternalPDFViewer implements vscode.Disposable {
     }
   }
 
+  /** Builds the themed PDF viewer and its request-tagged browser-to-extension messages. */
   private html(webview: vscode.Webview, pdfjsRoot: vscode.Uri): string {
     // Generate markup here so the CSP can authorize only this panel's nonce and
     // the packaged PDF.js resources.
@@ -358,7 +380,10 @@ export default class InternalPDFViewer implements vscode.Disposable {
       return bytes;
     }
 
+    let loadSequence = 0;
+    // Reports load identity and discards work superseded by a newer PDF request.
     async function load(source) {
+      const request = ++loadSequence;
       // Packaged CMaps, fonts, WASM, and ICC data are required for reliable
       // Japanese and other non-Latin PDF rendering.
       try {
@@ -366,7 +391,9 @@ export default class InternalPDFViewer implements vscode.Disposable {
         status.textContent = "Loading…";
         errorBox.style.display = "none";
         const worker = await workerReady.promise;
+        if (request !== loadSequence) return;
         if (documentTask) await documentTask.destroy();
+        if (request !== loadSequence) return;
         documentTask = pdfjsLib.getDocument({
           // Explicit ownership preserves the worker across document reloads.
           worker,
@@ -383,13 +410,18 @@ export default class InternalPDFViewer implements vscode.Disposable {
           useWorkerFetch: false,
           useSystemFonts: true
         });
-        pdf = await documentTask.promise;
+        const loaded = await documentTask.promise;
+        if (request !== loadSequence) return;
+        pdf = loaded;
         await render();
+        if (request !== loadSequence) return;
+        vscode.postMessage({ type: 'loaded', requestId: source.requestId });
       } catch (error) {
+        if (request !== loadSequence) return;
         errorBox.textContent = String(error && error.message ? error.message : error);
         errorBox.style.display = "block";
         status.textContent = "Could not open PDF";
-        vscode.postMessage({ type: "error", message: errorBox.textContent });
+        vscode.postMessage({ type: "error", message: errorBox.textContent, requestId: source.requestId });
       }
     }
 

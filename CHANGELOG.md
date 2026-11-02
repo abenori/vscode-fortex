@@ -6,6 +6,10 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+- Separate generic build monitoring from LaTeX discovery, directives and PDF preview orchestration; reduce BuildProtocol to four interfaces, coalesce queued saves only by request URI, and replace keyed Problems snapshots at completion while preserving them on cancellation.
+- Move build notifications to one theme-aware status item, serialize requests from discovery onward, coalesce saved updates, report producer-owned warnings/diagnostics/artifacts, and support stopping tracked tool trees without launching subsequent stages.
+- Keep preview refresh errors separate from build results and ignore stale browser reports; use lowercase fortex for user-facing branding.
+
 - Added configurable fixed/source LaTeX engine selection, ordered class/option rules with the existing defaults, optional engine overrides, and bibliography/index/DVI-to-PDF program settings inside `TeXToPDF`, retaining `%#` priority and mandatory LaTeX arguments.
 - Commit Greek letter previews when typing punctuation such as `^`, `_`, and `+`, preserving the typed character, editor bracket behavior, and one-step Undo.
 - Reuse a lazily built line-start index for line-number lookups in saved outline sources.
@@ -37,7 +41,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - Disable manual, save-triggered, and programmatic LaTeX builds in untrusted workspaces.
 - Disable PDF previews, SyncTeX, SumatraPDF, and `kpsewhich` execution in untrusted workspaces.
 - Grouped all completion sources under `src/completion` and moved PDF preview sources under `src/compile/preview`.
-- Added author/title citation search through IntelliSense and the **Fortex: Insert Citation** Quick Pick command.
+- Added author/title citation search through IntelliSense and the **fortex: Insert Citation** Quick Pick command.
 - Added the `Ctrl+T [` keybinding for citation Quick Pick.
 - Resolve referenced bibliography files through `kpsewhich` and the Kpathsea search path.
 - Search bibliography commands from the detected main file through recursively loaded `\\input` and `\\include` files.

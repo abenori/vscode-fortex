@@ -34,7 +34,7 @@ export default class GreekCompletionController implements vscode.Disposable {
   private readonly subscriptions: vscode.Disposable[];
 
   public constructor() {
-    this.status.name = 'Fortex Greek completion';
+    this.status.name = 'fortex Greek completion';
     this.subscriptions = [
       vscode.workspace.onDidChangeTextDocument((event) => {
         if (event.document === this.session?.editor.document && event.contentChanges.length > 0) {
@@ -165,7 +165,7 @@ export default class GreekCompletionController implements vscode.Disposable {
       const input = vscode.window.createQuickPick<GreekPickerItem>();
       const subscriptions: vscode.Disposable[] = [];
       this.picker = { input, subscriptions };
-      input.title = 'Fortex: Greek letters';
+      input.title = 'fortex: Greek letters';
       input.placeholder = 'YaTeX abbreviation (case-sensitive)';
       input.value = session.code;
       const update = () => {

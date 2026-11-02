@@ -1,9 +1,12 @@
 import * as path from 'path';
 import Process from './Process';
 import LaTeXProject from '../project/LaTeXProject';
-import TeXToPDF from './TeXToPDF';
+import TeXToPDF, { TeXToPDFResult } from './TeXToPDF';
 import Log from '../log';
-import ErrorManager from './ErrorManager';
+import * as vscode from 'vscode';
+import type { BuildContext, BuildRequest, BuildResult } from './BuildProtocol';
+import type PDFPreview from './preview/PDFPreview';
+import * as Workspace from '../workspace';
 import Config from '../Config';
 import {
   assertProgramAllowed,
@@ -14,7 +17,7 @@ import {
 
 /** Marker base class for parsed `%#!` build actions. */
 class Action{}
-/** Invokes one of Fortex's built-in build stages. */
+/** Invokes one of fortex's built-in build stages. */
 class CommandAction extends Action{
   action = "";
   option = "";
@@ -36,94 +39,136 @@ class ExecuteAction extends Action{
   }
 }
 
-/** Coordinates a complete build and converts TeX log errors into diagnostics. */
+/** Owns LaTeX discovery, directive execution and adaptation to generic build reports. */
 export default class LaTeXCompile {
-  public static working = false;
-  private LaTeXProject: LaTeXProject;
-  
-  constructor(proj: LaTeXProject) {
-    this.LaTeXProject = proj;
-  }
+  /** Keeps one discovered project; reusable requests construct a fresh instance on each run. */
+  constructor(private readonly LaTeXProject: LaTeXProject, private readonly preview?: PDFPreview) {}
 
-
-  public async build() : Promise<boolean>{
-    // Build requests can arrive from both save events and explicit commands. The
-    // shared flag prevents two tool chains from writing the same auxiliary files.
-    if(LaTeXCompile.working){ return false; }
-    try{
-      ErrorManager.clear();
-      LaTeXCompile.working = true;
-      Log.clear_process_message();
-      //Log.debug_log("Current directory: " + path.dirname(this.LaTeXProject.mainfile.fsPath));
-      let actions : Action[] = [];
-      let ps = this.LaTeXProject.percent_sharp("!");
-      actions = [new CommandAction("TeXToPDF", "")];
-      // A `%#!` directive may replace the default pipeline with built-in actions
-      // and arbitrary commands separated by semicolons.
-      if(ps){
-        ps = ps.trim();
-        if(singleProgramFromDirective(ps) === undefined) {
-          actions = LaTeXCompile.parse_action(ps);
-        }
-      }
-      // Validate every executable named by a source directive before starting
-      // even the first process. A later, unused disallowed directive therefore
-      // cannot hide behind an earlier successful TeX pass.
-      this.validate_percent_sharp_programs(actions);
-      for(let i = 0 ; i < actions.length ; ++i){
-        //Log.debug_log("Executing action: " + JSON.stringify(actions[i]));
-        let result = await this.execute_action(actions[i]);
-        if(!result){
-          LaTeXCompile.working = false;
-          return false;
-        }
-        //Log.debug_log("action done");
-      }
-      Log.log("LaTeX compile done");
-      //Log.debug_log("LaTeX compile done");
-      Log.scroll_to_last_process_message();
-    }
-    catch(e){
-      Log.error("Exception during LaTeX compilation: " + e);
-      LaTeXCompile.working = false;
-      return false;
-    }
-    LaTeXCompile.working = false;
-    return true;
-  }
-
-  private async execute_action(action: Action) : Promise<boolean>{
-    if (action instanceof CommandAction) {
-      if(action.action.toLowerCase() === "textopdf"){
-        let textopdf = new TeXToPDF(this.LaTeXProject, action.option);
-        let result = await textopdf.build();
-        if(!result){
-          let errors = await TeXToPDF.analyze_errors(this.LaTeXProject.mainfile);
-          for(let i = 0 ; i < errors.length ; i++){
-            ErrorManager.adderror(errors[i][0], errors[i][1], errors[i][2]);
+  /** Creates an inert request so the manager can reserve execution before source discovery. */
+  public static createBuildRequest(source: vscode.Uri, preview?: PDFPreview): BuildRequest {
+    return {
+      source, label: 'LaTeX',
+      /** Reads saved inputs afresh, including on queued execution and explicit rebuild. */
+      async execute(context) {
+        try {
+          context.reportProgress('Processing saved sources…', source);
+          const project = await LaTeXProject.create(source, {
+            /** Cancels discovery at read boundaries without affecting other project consumers. */
+            readSource: async uri => {
+              if (context.token.isCancellationRequested) { throw new vscode.CancellationError(); }
+              const text = await Workspace.readFileText(uri);
+              if (context.token.isCancellationRequested) { throw new vscode.CancellationError(); }
+              return text;
+            }
+          });
+          if (context.token.isCancellationRequested) { throw new vscode.CancellationError(); }
+          return await new LaTeXCompile(project, preview).build(context);
+        } catch (error) {
+          if (context.token.isCancellationRequested || error instanceof vscode.CancellationError) {
+            return { outcome: 'cancelled', severity: 'info', message: 'Build cancelled.' };
           }
-          return false;
+          const message = error instanceof Error ? error.message : String(error);
+          Log.error(message);
+          return { outcome: 'failed', severity: 'error', message };
         }
-      }else{
-        Log.error("Unknown action command: " + action.action);
-        return false;
       }
-    } else if (action instanceof ExecuteAction){
-      const executable = this.expand_placeholders(action.executable);
-      const args = action.args.map((arg) => this.expand_placeholders(arg));
-      Log.process_message(`Executing command: %s\n`, LaTeXCompile.format_command(executable, args));
-      let process = new Process();
-      const result = await process.execute(
-        executable,
-        args,
-        path.dirname(this.LaTeXProject.mainfile.fsPath),
-        false
-      );
-      if (result !== 0) {
-        return false;
+    };
+  }
+
+  /** Runs directives and returns a complete diagnostic snapshot only after uncancelled execution. */
+  private async build(context?: BuildContext): Promise<BuildResult> {
+    const project = this.LaTeXProject;
+    const directive = project.percent_sharp('!')?.trim();
+    // Every nonempty %#! uses the request source, including engine-only and built-in forms.
+    const key = directive ? project.file ?? project.mainfile : project.mainfile;
+    const entries: [vscode.Uri, vscode.Diagnostic[]][] = [];
+    const warnings: string[] = [];
+    const pdfs = new Map<string, vscode.Uri>();
+    let lastMessage = 'Build succeeded.';
+    try {
+      this.checkCancellation(context);
+      context?.reportProgress('Preparing build…', project.mainfile);
+      const actions = directive && singleProgramFromDirective(directive) === undefined
+        ? LaTeXCompile.parse_action(directive) : [new CommandAction('TeXToPDF', '')];
+      this.validate_percent_sharp_programs(actions);
+      for (const action of actions) {
+        this.checkCancellation(context);
+        const result = await this.execute_action(action, context);
+        this.checkCancellation(context);
+        if (result.outcome === 'cancelled') {
+          return { outcome: 'cancelled', severity: 'info', message: result.message };
+        }
+        entries.push(...result.diagnostics ?? []);
+        for (const pdf of result.pdfs ?? []) { pdfs.set(Workspace.uriKey(pdf), pdf); }
+        if (result.outcome === 'failed') {
+          return { outcome: 'failed', severity: 'error', message: result.message, diagnostics: { key, entries } };
+        }
+        if (result.severity !== 'info') { warnings.push(result.message); }
+        lastMessage = result.message;
       }
+      if (pdfs.size && this.preview) { await this.updatePreview([...pdfs.values()], context); }
+      this.checkCancellation(context);
+      const message = warnings.length ? warnings.join(' ') : lastMessage;
+      Log.log(message);
+      return {
+        outcome: 'succeeded', severity: warnings.length ? 'warning' : 'info', message,
+        diagnostics: { key, entries }
+      };
+    } catch (error) {
+      if (context?.token.isCancellationRequested || error instanceof vscode.CancellationError) {
+        return { outcome: 'cancelled', severity: 'info', message: 'Build cancelled.' };
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      Log.error(message);
+      return { outcome: 'failed', severity: 'error', message, diagnostics: { key, entries } };
     }
-    return true;
+  }
+
+  /** Adapts private pipeline callbacks; TeXToPDF never receives the manager's context. */
+  private async execute_action(action: Action, context?: BuildContext): Promise<TeXToPDFResult> {
+    if (action instanceof CommandAction) {
+      if (action.action.toLowerCase() !== 'textopdf') { throw new Error('Unknown action command: ' + action.action); }
+      return new TeXToPDF(this.LaTeXProject, action.option).build({
+        token: context?.token,
+        onProgress: message => context?.reportProgress(message)
+      });
+    }
+    if (action instanceof ExecuteAction) {
+      const executable = this.expand_placeholders(action.executable);
+      const args = action.args.map(arg => this.expand_placeholders(arg));
+      context?.reportProgress('Running ' + executable + '…');
+      Log.process_message('Executing command: %s\n', LaTeXCompile.format_command(executable, args));
+      const code = await new Process().execute(executable, args,
+        path.dirname(this.LaTeXProject.mainfile.fsPath), false, context?.token);
+      this.checkCancellation(context);
+      if (code !== 0) { throw new Error(executable + ' exited with code ' + code + '.'); }
+    }
+    return { outcome: 'succeeded', severity: 'info', message: 'Command succeeded.' };
+  }
+
+  /** Keeps PDF viewer failures separate from the pipeline result and routes all notices through this owner. */
+  private async updatePreview(pdfs: vscode.Uri[], context?: BuildContext): Promise<void> {
+    /** Converts viewer messages to generic notices without leaking its reporting API. */
+    const report = (message?: string) => {
+      context?.reportNotice(message === undefined ? undefined : {
+        severity: 'warning', message: 'PDF generated, but preview update failed: ' + message
+      });
+    };
+    try {
+      this.checkCancellation(context);
+      await this.preview!.onBuildComplete(pdfs, context?.token,
+        message => context?.reportProgress(message), report);
+    } catch (error) {
+      this.checkCancellation(context);
+      if (error instanceof vscode.CancellationError) { throw error; }
+      report(error instanceof Error ? error.message : String(error));
+    }
+    this.checkCancellation(context);
+  }
+
+  /** Stops between actions and after preview requests, including asynchronous completion. */
+  private checkCancellation(context?: BuildContext): void {
+    if (context?.token.isCancellationRequested) { throw new vscode.CancellationError(); }
   }
 
   private validate_percent_sharp_programs(actions: Action[]): void {

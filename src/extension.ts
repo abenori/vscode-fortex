@@ -1,8 +1,7 @@
 import * as vscode from 'vscode';
 import BuildManager from './compile/BuildManager';
+import LaTeXCompile from './compile/LaTeXCompile';
 import Log from './log';
-import ErrorManager from './compile/ErrorManager';
-import Process from './compile/Process';
 import Config from './Config';
 import PDFPreview, { PDFViewer } from './compile/preview/PDFPreview';
 import CitationService from './completion/citation/CitationService';
@@ -27,19 +26,31 @@ import LaTeXProject from './project/LaTeXProject';
 let buildManager: BuildManager | undefined;
 let preview: PDFPreview | undefined;
 
+/** Connects build lifetime, commands and editor services to the extension context. */
 export function activate(context: vscode.ExtensionContext) {
 	//Log.debug_log("Activate vscode-fortex extension");
 
   context.subscriptions.push(new vscode.Disposable(() => LaTeXProject.dispose()));
 
   preview = new PDFPreview(context);
-  buildManager = new BuildManager(preview);
+  buildManager = new BuildManager();
+  /** Converts eligible editor requests to inert LaTeX jobs before requesting monitored execution. */
+  const requestLaTeXBuild = (document: vscode.TextDocument, origin: 'manual' | 'save' = 'manual') => {
+    if (document.languageId !== 'latex' || vscode.window.activeTextEditor?.document !== document) { return; }
+    return buildManager?.requestBuild(LaTeXCompile.createBuildRequest(document.uri, preview), origin);
+  };
+  context.subscriptions.push(buildManager,
+    vscode.commands.registerCommand('vscode-fortex.buildActions', () => buildManager?.showActions()),
+    vscode.commands.registerCommand('vscode-fortex.stopBuild', () => buildManager?.stop()),
+    vscode.commands.registerCommand('vscode-fortex.showBuildLog', () => Log.show()),
+    vscode.commands.registerCommand('vscode-fortex.showBuildProblems', () => buildManager?.showProblems())
+  );
 
 	context.subscriptions.push(vscode.commands.registerCommand('vscode-fortex.build', async () => {
     let editor = vscode.window.activeTextEditor;
     if(editor){
       if(editor.document.languageId === "latex"){
-        void buildManager?.build(editor.document);
+        return requestLaTeXBuild(editor.document);
       }
     }
   }));
@@ -133,23 +144,20 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  // Save-triggered builds remain opt-in through compileTrigger.
+  // Save-triggered requests share the same manager and can reserve a newer build.
   const disp = vscode.workspace.onDidSaveTextDocument((doc) => {
     if(doc.languageId === 'latex'){
       if(Config.compileTrigger().indexOf("onSave") >= 0){
-        void buildManager?.build(doc);
+        void requestLaTeXBuild(doc, 'save');
       }
     }
   });
   context.subscriptions.push(disp);
 
-  ErrorManager.init(context);
   context.subscriptions.push(preview);
 }
 
-export function deactivate() {
-  // VS Code disposes registered resources automatically; these two objects also
-  // own pending promises and external processes that need explicit cleanup.
-  buildManager?.uninit();
-  Process.killAll();
+/** Allows VS Code to await cancellation and child-process shutdown. */
+export async function deactivate(): Promise<void> {
+  await buildManager?.shutdown();
 }

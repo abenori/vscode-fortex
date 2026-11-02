@@ -40,17 +40,32 @@ export default class PDFPreview implements vscode.Disposable {
     }
   }
 
-  public async onBuildComplete(project: LaTeXProject): Promise<void> {
-    assertWorkspaceTrusted("PDF preview");
-    // Refresh an existing internal panel even when automatic opening is disabled,
-    // so an already visible preview never remains on an older build.
-    if (Config.openPdfAfterBuild()) {
-      await this.open(project.mainfile, Config.pdfViewer());
-    } else {
-      await this.internal.refresh(this.pdfUri(project.mainfile));
+  /** Updates explicit PDFs and reports viewer messages back to LaTeXCompile. */
+  public async onBuildComplete(pdfs: readonly vscode.Uri[], token?: vscode.CancellationToken,
+    onProgress?: (message: string) => void, onNotice?: (message?: string) => void): Promise<void> {
+    assertWorkspaceTrusted('PDF preview');
+    const seen = new Set<string>();
+    for (const pdf of pdfs) {
+      if (seen.has(Workspace.uriKey(pdf))) { continue; }
+      seen.add(Workspace.uriKey(pdf));
+      if (token?.isCancellationRequested) { throw new vscode.CancellationError(); }
+      onProgress?.('Updating PDF preview…');
+      // LaTeXCompile owns the lifetime and interpretation of this update.
+      const report = (message?: string) => {
+        if (!token?.isCancellationRequested) { onNotice?.(message); }
+      };
+      try {
+        if (Config.openPdfAfterBuild()) {
+          await this.openPDF(pdf, Config.pdfViewer(), undefined, undefined, undefined, false, report);
+        } else { await this.internal.refresh(pdf, report); }
+      } catch (error) {
+        if (token?.isCancellationRequested || error instanceof vscode.CancellationError) { throw error; }
+        report(error instanceof Error ? error.message : String(error));
+      }
     }
   }
 
+  /** Resolves the conventional PDF path for an explicit source-based viewer command. */
   private async open(
     main: vscode.Uri,
     viewer: PDFViewer,
@@ -59,11 +74,16 @@ export default class PDFPreview implements vscode.Disposable {
     column?: number,
     preserveFocus = false
   ): Promise<void> {
-    const pdf = this.pdfUri(main);
+    return this.openPDF(this.pdfUri(main), viewer, source, line, column, preserveFocus);
+  }
+
+  /** Opens an explicit output URI, without inferring how it was produced. */
+  private async openPDF(pdf: vscode.Uri, viewer: PDFViewer, source?: vscode.Uri,
+    line?: number, column?: number, preserveFocus = false, report?: (message?: string) => void): Promise<void> {
     if (viewer === "sumatra") {
       await SumatraPDF.open(pdf.fsPath, source?.fsPath, line);
     } else {
-      await this.internal.open(pdf, preserveFocus);
+      await this.internal.open(pdf, preserveFocus, report);
       if (source && line !== undefined && column !== undefined) {
         await this.internal.forwardSearch(pdf, source, line, column);
       }

@@ -12,7 +12,7 @@ interface ConvertedSymbols {
 export function registerDocumentSymbols(service: StructureService): vscode.Disposable {
   const provider = new LaTeXDocumentSymbolProvider(service);
   const register = () => vscode.languages.registerDocumentSymbolProvider(
-    { language: 'latex' }, provider, { label: 'Fortex' }
+    { language: 'latex' }, provider, { label: 'fortex' }
   );
   let registration = register();
   const refresh = () => { registration.dispose(); registration = register(); };

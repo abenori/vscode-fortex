@@ -9,6 +9,21 @@ import { singleProgramFromDirective } from './BuildSecurity';
 import * as Workspace from '../workspace';
 import { SourceScanner, splitclist } from '../latex-parser';
 
+/** Private pipeline inputs supplied by LaTeXCompile, never by the build manager. */
+export interface TeXToPDFOptions {
+  readonly token?: vscode.CancellationToken;
+  onProgress?(message: string): void;
+}
+
+/** Pipeline conclusions and PDFs interpreted only by LaTeXCompile. */
+export interface TeXToPDFResult {
+  readonly outcome: 'succeeded' | 'failed' | 'cancelled';
+  readonly severity: 'info' | 'warning' | 'error';
+  readonly message: string;
+  readonly diagnostics?: [vscode.Uri, vscode.Diagnostic[]][];
+  readonly pdfs?: vscode.Uri[];
+}
+
 interface LaTeXCommand extends CompileProgramSettings {
   output: 'pdf' | 'dvi';
 }
@@ -87,96 +102,120 @@ export default class TeXToPDF {
     return Config.programSettings(key, this.LaTeXProject.percent_sharp(key)?.trim());
   }
 
-  async build(): Promise<boolean> {
-    // The first LaTeX pass creates dependency files. Subsequent passes are driven
-    // by changes in those files, with a finite loop inside this method preventing
-    // permanently unstable documents from compiling forever.
-    let runCount = 1;
-    let LaTeXrunCount = 1;
-    this.read_status();
-    // Resolve all commands once so settings changes take effect on the next build.
-    const latex_cmd = this.make_latex_command();
-    const bibtex_cmd = this.make_program_command('bibtex');
-    const makeindex_cmd = this.make_program_command('makeindex');
-    const dvipdf_cmd = this.make_program_command('dvipdf');
-    let dir = path.dirname(this.LaTeXProject.mainfile.fsPath);
-    let base = path.basename(this.LaTeXProject.mainfile.fsPath);
-    Log.log(`(${runCount}) Executing: ${latex_cmd.command} ${latex_cmd.args.join(" ")} ${TeXToPDF.change_extension(base, ".tex")}${dir ? `\n   in directory ${dir}` : ''}`);
+  /** Owns tool sequencing and interprets failures, warnings, diagnostics and outputs. */
+  async build(options?: TeXToPDFOptions): Promise<TeXToPDFResult> {
+    const warnings: string[] = [];
+    const pdf = vscode.Uri.file(TeXToPDF.change_extension(this.LaTeXProject.mainfile.fsPath, '.pdf'));
+    const previousPDF = this.fileStamp(pdf.fsPath);
+    const logPath = TeXToPDF.change_extension(this.LaTeXProject.mainfile.fsPath, '.log');
+    const previousLog = this.fileStamp(logPath);
+    let started = false;
     try {
-      let process = new Process();
-      let result = await process.execute(latex_cmd.command, [...latex_cmd.args, TeXToPDF.change_extension(base, ".tex")], dir, false);
-      if (result !== 0) {
-        return false;
-      }
-    }
-    catch (e) {
-      Log.error(`Error running ${latex_cmd.command}:`, e);
-      return false;
-    }
-    while (true) {
-      runCount++;
-      if(Config.maxLaTeXRuns() > 0 && LaTeXrunCount > Config.maxLaTeXRuns()){
-        Log.error(`Maximum number of LaTeX runs (${Config.maxLaTeXRuns()}) exceeded. Stopping compilation.`);
-        return false;
-      }
-
-      let cmd: CompileProgramSettings;
-      let target = "";
-      let ignore_error = false;
-
-      if (this.latex_check()) {
-        cmd = latex_cmd;
-        target = TeXToPDF.change_extension(base, ".tex");
-        LaTeXrunCount++;
-      } else if (!this.bibtex && this.bibtex_check()) {
-        cmd = bibtex_cmd;
-        target = TeXToPDF.remove_extension(base);
-        ignore_error = true;
-        this.bibtex = true;
-        this.forcelatex = true;
-      } else if (!this.makeindex && this.makeindex_check()) {
-        cmd = makeindex_cmd;
-        target = TeXToPDF.remove_extension(base);
-        this.makeindex = true;
-        ignore_error = true;
-        this.forcelatex = true;
-      } else { break; }
-      Log.log(`(${runCount}) Executing: ${cmd.command} ${cmd.args.join(" ")}${dir ? `\n   in directory ${dir}` : ''}`);
-      try {
-        let process = new Process();
-        let result = await process.execute(cmd.command, [...cmd.args, target], dir, false);
-        if (result === null || result !== 0) {
-          if (ignore_error) {
-            Log.log(`Warning: ${cmd.command} ${cmd.args.join(" ")} failed with exit code ${result}. Continuing...`);
-          } else {
-            return false;
+      this.checkCancellation(options);
+      options?.onProgress?.('Preparing build…');
+      this.read_status();
+      // Capture settings once; a later change belongs to the next request.
+      const latex = this.make_latex_command();
+      const bibliography = this.make_program_command('bibtex');
+      const index = this.make_program_command('makeindex');
+      const converter = this.make_program_command('dvipdf');
+      const directory = path.dirname(this.LaTeXProject.mainfile.fsPath);
+      const base = path.basename(this.LaTeXProject.mainfile.fsPath);
+      let latexRuns = 1;
+      started = true;
+      await this.runTool(latex, TeXToPDF.change_extension(base, '.tex'), directory,
+        `Running LaTeX (pass ${latexRuns})…`, options);
+      while (true) {
+        this.checkCancellation(options);
+        if (this.latex_check()) {
+          const maximum = Config.maxLaTeXRuns();
+          if (maximum > 0 && latexRuns >= maximum) {
+            throw new Error(`Maximum number of LaTeX runs (${maximum}) exceeded.`);
           }
-        }
+          latexRuns++;
+          await this.runTool(latex, TeXToPDF.change_extension(base, '.tex'), directory,
+            `Running LaTeX (pass ${latexRuns})…`, options);
+        } else if (!this.bibtex && this.bibtex_check()) {
+          this.bibtex = true;
+          this.forcelatex = true;
+          await this.runOptionalTool(bibliography, TeXToPDF.remove_extension(base), directory,
+            'Processing bibliography…', warnings, options);
+        } else if (!this.makeindex && this.makeindex_check()) {
+          this.makeindex = true;
+          this.forcelatex = true;
+          await this.runOptionalTool(index, TeXToPDF.remove_extension(base), directory,
+            'Processing index…', warnings, options);
+        } else { break; }
       }
-      catch (e) {
-        if (ignore_error) {
-          Log.process_message(`Warning: ${cmd.command} ${cmd.args.join(" ")} failed with error ${e}. Continuing...`);
-        } else {
-          return false;
-        }
+      if (latex.output === 'dvi') {
+        await this.runTool(converter, TeXToPDF.change_extension(base, '.dvi'), directory,
+          'Creating PDF…', options);
       }
+      this.checkCancellation(options);
+      const currentPDF = this.fileStamp(pdf.fsPath);
+      const producedPDF = currentPDF !== undefined && currentPDF !== previousPDF;
+      if (!producedPDF) { warnings.push('No new PDF was produced.'); }
+      return {
+        outcome: 'succeeded', severity: warnings.length ? 'warning' : 'info',
+        message: warnings.length ? `Build succeeded with warnings: ${warnings.join(' ')}` : 'Build succeeded.',
+        diagnostics: [], pdfs: producedPDF ? [pdf] : []
+      };
+    } catch (error) {
+      if (options?.token?.isCancellationRequested || error instanceof vscode.CancellationError) {
+        return { outcome: 'cancelled', severity: 'info', message: 'Build cancelled.' };
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      Log.error(message);
+      let diagnostics: [vscode.Uri, vscode.Diagnostic[]][] | undefined;
+      // An unchanged log belongs to an earlier build, not this launch failure.
+      if (started && this.fileStamp(logPath) !== previousLog) {
+        try {
+          diagnostics = (await TeXToPDF.analyze_errors(this.LaTeXProject.mainfile)).map(([uri, range, text]) =>
+            [uri, [new vscode.Diagnostic(range, text, vscode.DiagnosticSeverity.Error)]]);
+        } catch (analysisError) { Log.log(`Unable to read build diagnostics: ${String(analysisError)}`); }
+      }
+      if (options?.token?.isCancellationRequested) {
+        return { outcome: 'cancelled', severity: 'info', message: 'Build cancelled.' };
+      }
+      return { outcome: 'failed', severity: 'error', message, diagnostics };
     }
+  }
 
-    if (latex_cmd.output === 'dvi') {
-      Log.log(`Generating PDF using ${dvipdf_cmd.command} ${dvipdf_cmd.args.join(" ")}`);
-      try {
-        let process = new Process();
-        let result = await process.execute(dvipdf_cmd.command, [...dvipdf_cmd.args, TeXToPDF.change_extension(base, ".dvi")], dir, false);
-        if (result === null || result !== 0) {
-          return false;
-        }
-      }
-      catch (e) {
-        Log.error(`Error generating PDF with ${dvipdf_cmd.command}:`, e);
-        return false;
-      }
+  /** Runs a stage and keeps cancellation distinct from an executable failure. */
+  private async runTool(command: CompileProgramSettings, target: string, directory: string,
+    message: string, options?: TeXToPDFOptions): Promise<void> {
+    this.checkCancellation(options);
+    options?.onProgress?.(message);
+    Log.log(`Executing: ${command.command} ${[...command.args, target].join(' ')}\n   in directory ${directory}`);
+    const code = await new Process().execute(command.command, [...command.args, target], directory, false, options?.token);
+    this.checkCancellation(options);
+    if (code !== 0) { throw new Error(`${command.command} exited with code ${code}.`); }
+  }
+
+  /** Accumulates recoverable helper failures without swallowing cancellation. */
+  private async runOptionalTool(command: CompileProgramSettings, target: string, directory: string,
+    message: string, warnings: string[], options?: TeXToPDFOptions): Promise<void> {
+    try { await this.runTool(command, target, directory, message, options); }
+    catch (error) {
+      this.checkCancellation(options);
+      if (error instanceof vscode.CancellationError) { throw error; }
+      const warning = error instanceof Error ? error.message : String(error);
+      warnings.push(warning);
+      Log.log(`Warning: ${warning} Continuing…`);
     }
-    return true;
+  }
+
+  /** Prevents a cancelled build from entering another stage. */
+  private checkCancellation(options?: TeXToPDFOptions): void {
+    if (options?.token?.isCancellationRequested) { throw new vscode.CancellationError(); }
+  }
+
+  /** Distinguishes newly written outputs from artifacts left by a previous run. */
+  private fileStamp(filename: string): string | undefined {
+    try {
+      const stat = fs.statSync(filename, { bigint: true });
+      return `${stat.mtimeNs}:${stat.ctimeNs}:${stat.size}`;
+    } catch { return undefined; }
   }
 
   private read_status(): void {

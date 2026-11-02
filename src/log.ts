@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 
 const LOG_PANEL = vscode.window.createOutputChannel('fortex-vscode');
 
-/** Writes compiler progress and diagnostics to Fortex's shared output channel. */
+/** Writes compiler progress and diagnostics to fortex's shared output channel. */
 export default class Log {
   static readonly DEBUG = true;
   public static log(message: string, ...args: any[]) {
@@ -31,9 +31,8 @@ export default class Log {
     LOG_PANEL.clear();
   }
 
-  public static scroll_to_last_process_message(){
-    LOG_PANEL.show(true);
-  }
+  /** Reveals recorded output only when the user asks to inspect it. */
+  public static show(){ LOG_PANEL.show(true); }
 
   public static debug_log(message: string, ...args: any[]) {
     if (args.length > 0) {

@@ -117,6 +117,6 @@ export function indentationUnit(uri: vscode.Uri): string {
 }
 
 export function environmentContentIndentation(uri: vscode.Uri): string {
-  // Fortex controls whether a level is added; VS Code controls that level's form.
+  // fortex controls whether a level is added; VS Code controls that level's form.
   return Config.environmentIndentContent() ? indentationUnit(uri) : '';
 }

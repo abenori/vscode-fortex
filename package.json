@@ -65,18 +65,22 @@
       ]
     },
     "commands": [
-      { "command": "vscode-fortex.outline.searchLabels", "title": "Go to LaTeX Label", "category": "Fortex", "icon": "$(search)" },
-      { "command": "vscode-fortex.outline.filter", "title": "Filter LaTeX Structure", "category": "Fortex", "icon": "$(filter)" },
-      { "command": "vscode-fortex.outline.toggleMode", "title": "Show Labels in Name Order", "category": "Fortex", "toggled": "fortex.structure.labelMode" },
-      { "command": "vscode-fortex.outline.toggleLabels", "title": "Show Attached Label Names", "category": "Fortex", "toggled": "fortex.structure.showLabels" },
-      { "command": "vscode-fortex.outline.toggleLabeledOnly", "title": "Show Only Labeled Items", "category": "Fortex", "toggled": "fortex.structure.labeledOnly" },
-      { "command": "vscode-fortex.outline.open", "title": "Go to Structure Source", "category": "Fortex" },
-      { "command": "vscode-fortex.outline.goToLabel", "title": "Go to Attached Label", "category": "Fortex" },
+      { "command": "vscode-fortex.outline.searchLabels", "title": "Go to LaTeX Label", "category": "fortex", "icon": "$(search)" },
+      { "command": "vscode-fortex.outline.filter", "title": "Filter LaTeX Structure", "category": "fortex", "icon": "$(filter)" },
+      { "command": "vscode-fortex.outline.toggleMode", "title": "Show Labels in Name Order", "category": "fortex", "toggled": "fortex.structure.labelMode" },
+      { "command": "vscode-fortex.outline.toggleLabels", "title": "Show Attached Label Names", "category": "fortex", "toggled": "fortex.structure.showLabels" },
+      { "command": "vscode-fortex.outline.toggleLabeledOnly", "title": "Show Only Labeled Items", "category": "fortex", "toggled": "fortex.structure.labeledOnly" },
+      { "command": "vscode-fortex.outline.open", "title": "Go to Structure Source", "category": "fortex" },
+      { "command": "vscode-fortex.outline.goToLabel", "title": "Go to Attached Label", "category": "fortex" },
       {
         "command": "vscode-fortex.build",
         "title": "Build LaTeX Project",
         "enablement": "isWorkspaceTrusted"
       },
+      { "command": "vscode-fortex.buildActions", "title": "LaTeX Build Actions", "category": "fortex" },
+      { "command": "vscode-fortex.stopBuild", "title": "Stop LaTeX Build", "category": "fortex", "enablement": "fortex.buildRunning" },
+      { "command": "vscode-fortex.showBuildLog", "title": "Show LaTeX Build Output", "category": "fortex" },
+      { "command": "vscode-fortex.showBuildProblems", "title": "Show LaTeX Build Problems", "category": "fortex" },
       {
         "command": "vscode-fortex.viewPdf",
         "title": "View LaTeX PDF",
@@ -100,33 +104,33 @@
       {
         "command": "vscode-fortex.openDocumentation",
         "title": "Open Documentation",
-        "category": "Fortex",
+        "category": "fortex",
         "enablement": "isWorkspaceTrusted"
       },
       {
         "command": "vscode-fortex.insertCitation",
         "title": "Insert Citation",
-        "category": "Fortex"
+        "category": "fortex"
       },
       {
         "command": "vscode-fortex.insertOrRenameEnvironment",
         "title": "Insert or Rename LaTeX Environment",
-        "category": "Fortex"
+        "category": "fortex"
       },
       {
         "command": "vscode-fortex.closeEnvironment",
         "title": "Close Unclosed LaTeX Environment",
-        "category": "Fortex"
+        "category": "fortex"
       },
       {
         "command": "vscode-fortex.goToCorresponding",
         "title": "Go to Corresponding LaTeX Command",
-        "category": "Fortex"
+        "category": "fortex"
       },
       {
         "command": "vscode-fortex.greekCompletion.start",
         "title": "Insert Greek Letter",
-        "category": "Fortex",
+        "category": "fortex",
         "enablement": "editorLangId == latex && !editorReadonly"
       }
     ],
@@ -1323,13 +1327,13 @@
           "type": "string",
           "default": "texdoc",
           "scope": "machine",
-          "markdownDescription": "TeX Live `texdoc` executable used by **Fortex: Open Documentation** (`Ctrl+T I C`). Set a full executable path if `texdoc` is not on `PATH`."
+          "markdownDescription": "TeX Live `texdoc` executable used by **fortex: Open Documentation** (`Ctrl+T I C`). Set a full executable path if `texdoc` is not on `PATH`."
         },
         "vscode-fortex.environment.indentContent": {
           "type": "boolean",
           "default": true,
           "order": 50,
-          "markdownDescription": "Indent content by one editor indentation level when Fortex inserts or wraps a LaTeX environment. The indentation width and tabs/spaces follow the standard `editor.tabSize` and `editor.insertSpaces` settings."
+          "markdownDescription": "Indent content by one editor indentation level when fortex inserts or wraps a LaTeX environment. The indentation width and tabs/spaces follow the standard `editor.tabSize` and `editor.insertSpaces` settings."
         },
         "vscode-fortex.outline.followIncludes": {
           "type": "boolean", "default": true, "scope": "window",
