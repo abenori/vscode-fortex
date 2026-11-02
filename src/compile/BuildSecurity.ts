@@ -13,7 +13,7 @@ export const DEFAULT_ALLOWED_PROGRAMS = [
   'platex',
   'uplatex',
   'dvipdfmx',
-  'dvispk',
+  'dvipsk',
   'bibtex',
   'upbibtex',
   'biber',
