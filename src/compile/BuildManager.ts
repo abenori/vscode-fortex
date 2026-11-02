@@ -12,6 +12,8 @@ interface Session {
   progress: string;
   target: vscode.Uri;
   notice?: BuildNotice;
+  stopError?: string;
+  stopping?: Promise<void>;
   done: Promise<BuildResult>;
 }
 interface LastResult {
@@ -20,11 +22,13 @@ interface LastResult {
   readonly target: vscode.Uri;
   readonly time: Date;
   readonly result: BuildResult;
+  transientVisible: boolean;
   notice?: BuildNotice;
 }
 
 /** Owns request lifetime and generic reports, without knowing individual build stages. */
 export default class BuildManager implements vscode.Disposable {
+  private static readonly stopTimeoutMilliseconds = 5000;
   private readonly status: vscode.StatusBarItem;
   private readonly diagnostics: vscode.DiagnosticCollection;
   private readonly snapshots = new Map<string, NonNullable<BuildResult['diagnostics']>>();
@@ -107,6 +111,7 @@ export default class BuildManager implements vscode.Disposable {
       /** Accepts delayed notices only for the latest execution, including after its promise settles. */
       reportNotice: notice => {
         if (this.disposed || this.latestId !== session.id || context.token.isCancellationRequested) { return; }
+        if (session.notice?.severity === notice?.severity && session.notice?.message === notice?.message) { return; }
         session.notice = notice;
         if (this.last?.id === session.id) {
           this.last.notice = notice;
@@ -134,7 +139,8 @@ export default class BuildManager implements vscode.Disposable {
       }
       this.clearTimers();
       this.last = { id: session.id, request: session.request, target: session.target,
-        time: new Date(), result, notice: session.notice };
+        time: new Date(), result, transientVisible: true, notice: session.notice };
+      this.scheduleResultExpiry(this.last);
       this.showResult(this.last);
     }
     return result;
@@ -167,22 +173,22 @@ export default class BuildManager implements vscode.Disposable {
     this.diagnostics.set([...grouped.values()].map(group => [group.uri, group.diagnostics]));
   }
 
-  /** Updates the status bar from the current state, preserving progress while a brief hint is shown. */
+  /** Updates progress or results, giving an unconfirmed stop priority over brief hints. */
   private updateStatusBar(): void {
     if (this.disposed) { return; }
     if (this.active) {
-      this.setStatusBarDisplay('sync~spin', this.hint ?? this.active.progress,
-        this.active.progress + (this.pending.size ? '\nA saved update is waiting to be built.' : ''),
-        this.active.target, undefined, this.pending.size > 0);
+      const stopError = this.active.stopError;
+      this.setStatusBarDisplay(stopError ? 'error' : 'sync~spin', stopError ? 'Stop not confirmed' : this.hint ?? this.active.progress,
+        stopError ? `${stopError}\nUse the stop action to retry. New builds remain disabled until this build finishes.`
+          : this.active.progress + (this.pending.size ? '\nA saved update is waiting to be built.' : ''),
+        this.active.target, stopError ? 'error' : undefined, this.pending.size > 0);
     } else if (this.last) { this.showResult(this.last); }
     else { this.setStatusBarDisplay('file-code', this.hint ?? '', this.hint ?? 'Build saved sources or inspect build actions.'); }
   }
 
-  /** Shows a finished result, with timers detached from the completed build promise. */
+  /** Displays a finished result without restarting its original visibility period. */
   private showResult(last: LastResult): void {
     if (this.disposed || this.last !== last) { return; }
-    if (this.timer) { clearTimeout(this.timer); this.timer = undefined; }
-    const version = ++this.displayVersion;
     const result = last.result;
     const severity = result.severity === 'error' || last.notice?.severity === 'error' ? 'error'
       : result.severity === 'warning' || last.notice?.severity === 'warning' ? 'warning' : 'info';
@@ -191,15 +197,21 @@ export default class BuildManager implements vscode.Disposable {
     const icon = result.outcome === 'cancelled' ? 'debug-stop'
       : severity === 'error' ? 'error' : severity === 'warning' ? 'warning' : 'check';
     const detail = `${result.message}${last.notice ? `\n${last.notice.message}` : ''}\n${last.time.toLocaleString()}\nResult for saved sources.`;
-    this.setStatusBarDisplay(icon, this.hint ?? label, detail, last.target, severity);
-    if (severity === 'info' || result.outcome === 'cancelled') {
-      const id = this.latestId;
-      this.timer = setTimeout(() => {
-        this.timer = undefined;
-        if (this.disposed || this.latestId !== id || this.displayVersion !== version || this.last !== last || this.active) { return; }
-        this.setStatusBarDisplay('file-code', '', detail, last.target);
-      }, 3000);
-    }
+    const visible = last.transientVisible || (severity !== 'info' && result.outcome !== 'cancelled');
+    this.setStatusBarDisplay(visible ? icon : 'file-code', this.hint ?? (visible ? label : ''), detail,
+      last.target, visible ? severity : undefined);
+  }
+
+  /** Starts the completion timer once, allowing later warnings to outlive the underlying success label. */
+  private scheduleResultExpiry(last: LastResult): void {
+    if (last.result.severity !== 'info' && last.result.outcome !== 'cancelled') { return; }
+    const version = this.displayVersion;
+    this.timer = setTimeout(() => {
+      if (this.disposed || this.displayVersion !== version || this.last !== last) { return; }
+      this.timer = undefined;
+      last.transientVisible = false;
+      this.updateStatusBar();
+    }, 3000);
   }
 
   /** Sets status bar text, icons, tooltips and accessible labels using native theme colors. */
@@ -244,16 +256,44 @@ export default class BuildManager implements vscode.Disposable {
     void vscode.commands.executeCommand('setContext', 'fortex.buildRunning', value).then(undefined, () => {});
   }
 
-  /** Clears transient hints and cancels work, retaining the lock until the producer returns. */
+  /** Cancels work and coalesces stop attempts while retaining the build lock until actual completion. */
   public async stop(): Promise<void> {
     this.pending.clear();
     const session = this.active;
-    if (!session) { return; }
+    if (!session || this.disposed) { return; }
+    if (session.stopping) { return session.stopping; }
     this.clearTimers();
+    session.stopError = undefined;
     session.cancellation.cancel();
     session.progress = 'Stopping…';
     this.updateStatusBar();
-    await session.done;
+    session.stopping = this.stopSession(session).finally(() => { session.stopping = undefined; });
+    await session.stopping;
+  }
+
+  /** Reports a failed stop separately from the still-running producer, permitting an explicit retry. */
+  private async stopSession(session: Session): Promise<void> {
+    try { await this.waitForStop(session); }
+    catch (error) {
+      if (this.disposed || this.active !== session) { return; }
+      session.stopError = error instanceof Error ? error.message : String(error);
+      Log.error(`Unable to stop build: ${session.stopError}`);
+      this.updateStatusBar();
+    }
+  }
+
+  /** Bounds the stop operation without settling or releasing ownership of the producer itself. */
+  private async waitForStop(session?: Session): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        Promise.all([Process.killAll(), session?.done]),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('Build termination was not confirmed within 5 seconds.')),
+            BuildManager.stopTimeoutMilliseconds);
+        })
+      ]);
+    } finally { if (timer) { clearTimeout(timer); } }
   }
 
   /** Opens the existing Problems view on explicit user request. */
@@ -267,10 +307,12 @@ export default class BuildManager implements vscode.Disposable {
       { label: '$(list-unordered) Show build problems', action: 'problems' },
       { label: '$(output) Show build output', action: 'output' }
     ];
-    if (this.active) { actions.unshift({ label: '$(debug-stop) Stop build', action: 'stop' }); }
+    if (this.active) {
+      actions.unshift({ label: this.active.stopError ? '$(debug-stop) Retry stopping build' : '$(debug-stop) Stop build', action: 'stop' });
+    }
     else if (this.last) { actions.push({ label: '$(refresh) Rebuild saved sources', action: 'rebuild' }); }
     const choice = await vscode.window.showQuickPick(actions, {
-      placeHolder: this.active?.progress ?? this.last?.result.message ?? 'Build actions'
+      placeHolder: this.active?.stopError ?? this.active?.progress ?? this.last?.result.message ?? 'Build actions'
     });
     if (choice?.action === 'stop') { await this.stop(); }
     else if (choice?.action === 'problems') { await this.showProblems(); }
@@ -295,11 +337,11 @@ export default class BuildManager implements vscode.Disposable {
     this.diagnostics.dispose();
   }
 
-  /** Lets VS Code await process shutdown without keeping any notification promise pending. */
+  /** Attempts bounded process shutdown before waiting on work that may otherwise never return. */
   public async shutdown(): Promise<void> {
-    const done = this.active?.done;
+    const session = this.active;
     this.dispose();
-    await done;
-    await Process.killAll();
+    try { await this.waitForStop(session); }
+    catch (error) { Log.error(`Unable to stop build during shutdown: ${String(error)}`); }
   }
 }

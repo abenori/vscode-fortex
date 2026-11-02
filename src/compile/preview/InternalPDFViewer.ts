@@ -228,6 +228,7 @@ export default class InternalPDFViewer implements vscode.Disposable {
     // worker initialization fails before the first load message arrives.
     void workerReady.promise.catch(() => {});
     let pdf;
+    let pdfRequestId;
     let scale = 1.25;
     let generation = 0;
     let pendingHighlight;
@@ -262,6 +263,7 @@ export default class InternalPDFViewer implements vscode.Disposable {
       document.querySelectorAll(".synctex-highlight").forEach(element => element.remove());
     }
 
+    /** Renders one page and reports failures against the PDF load that owns this rendering. */
     async function renderPage(number, current) {
       // Render lazily. The generation token discards work for a PDF or zoom level
       // that has already been replaced.
@@ -271,6 +273,7 @@ export default class InternalPDFViewer implements vscode.Disposable {
       if (state.renderPromise) return state.renderPromise;
 
       const requestedScale = scale;
+      const requestId = pdfRequestId;
       state.renderPromise = (async () => {
         const page = state.page || await pdf.getPage(number);
         if (current !== generation) return;
@@ -301,7 +304,7 @@ export default class InternalPDFViewer implements vscode.Disposable {
         }
       })().catch(error => {
         if (current === generation && error?.name !== "RenderingCancelledException") {
-          vscode.postMessage({ type: "error", message: String(error?.message || error) });
+          vscode.postMessage({ type: "error", message: String(error?.message || error), requestId });
         }
       }).finally(() => {
         state.renderPromise = undefined;
@@ -381,7 +384,7 @@ export default class InternalPDFViewer implements vscode.Disposable {
     }
 
     let loadSequence = 0;
-    // Reports load identity and discards work superseded by a newer PDF request.
+    /** Associates a successfully loaded PDF with its request and discards superseded loads. */
     async function load(source) {
       const request = ++loadSequence;
       // Packaged CMaps, fonts, WASM, and ICC data are required for reliable
@@ -413,6 +416,7 @@ export default class InternalPDFViewer implements vscode.Disposable {
         const loaded = await documentTask.promise;
         if (request !== loadSequence) return;
         pdf = loaded;
+        pdfRequestId = source.requestId;
         await render();
         if (request !== loadSequence) return;
         vscode.postMessage({ type: 'loaded', requestId: source.requestId });

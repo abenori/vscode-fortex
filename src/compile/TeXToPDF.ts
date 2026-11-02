@@ -187,7 +187,7 @@ export default class TeXToPDF {
     this.checkCancellation(options);
     options?.onProgress?.(message);
     Log.log(`Executing: ${command.command} ${[...command.args, target].join(' ')}\n   in directory ${directory}`);
-    const code = await new Process().execute(command.command, [...command.args, target], directory, false, options?.token);
+    const code = await new Process(command.command, [...command.args, target], directory).execute(options?.token);
     this.checkCancellation(options);
     if (code !== 0) { throw new Error(`${command.command} exited with code ${code}.`); }
   }

@@ -125,6 +125,7 @@ export default class LaTeXCompile {
   }
 
   /** Adapts private pipeline callbacks; TeXToPDF never receives the manager's context. */
+  /** Executes one built-in stage or one separately owned external process. */
   private async execute_action(action: Action, context?: BuildContext): Promise<TeXToPDFResult> {
     if (action instanceof CommandAction) {
       if (action.action.toLowerCase() !== 'textopdf') { throw new Error('Unknown action command: ' + action.action); }
@@ -138,8 +139,8 @@ export default class LaTeXCompile {
       const args = action.args.map(arg => this.expand_placeholders(arg));
       context?.reportProgress('Running ' + executable + '…');
       Log.process_message('Executing command: %s\n', LaTeXCompile.format_command(executable, args));
-      const code = await new Process().execute(executable, args,
-        path.dirname(this.LaTeXProject.mainfile.fsPath), false, context?.token);
+      const code = await new Process(executable, args,
+        path.dirname(this.LaTeXProject.mainfile.fsPath)).execute(context?.token);
       this.checkCancellation(context);
       if (code !== 0) { throw new Error(executable + ' exited with code ' + code + '.'); }
     }
