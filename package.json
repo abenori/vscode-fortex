@@ -1138,10 +1138,10 @@
         "vscode-fortex.compile.maxLaTeXRuns": {
           "type": "number",
           "default": 7,
-          "minimum": 1,
+          "minimum": 0,
           "scope": "machine",
           "order": 11,
-          "markdownDescription": "Maximum number of LaTeX runs allowed for a single build. Set to `0` to allow unlimited runs. This limit is applied to the number of LaTeX runs, not the total number of compilation runs, which may include BibTeX or Biber runs."
+          "markdownDescription": "Maximum number of LaTeX runs allowed for a single build, including passes required after bibliography or index processing. Set to `0` to allow unlimited runs. The limit counts LaTeX passes rather than helper executions and bounds repeated index pagination updates."
         },
         "vscode-fortex.compile.latex.engineSelection": {
           "type": "string",
@@ -1246,7 +1246,7 @@
           "default": { "command": "upmendex", "args": [] },
           "scope": "machine",
           "order": 18,
-          "markdownDescription": "Index program and arguments. Missing fields use `upmendex` and `[]`. `%#makeindex` overrides the executable. The job basename is appended to the arguments."
+          "markdownDescription": "Index program and arguments. Missing fields use `upmendex` and `[]`. `%#makeindex` overrides the executable. The job basename is appended to the arguments. Processing checks IDX content, output presence, and style/dictionary timestamps; successful processing may repeat when subsequent LaTeX passes change IDX page numbers. Failures are reported in Problems and are not retried within the same build."
         },
         "vscode-fortex.compile.dvipdf": {
           "type": "object",

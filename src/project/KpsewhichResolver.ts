@@ -35,8 +35,15 @@ export default class KpsewhichResolver {
     });
   }
 
-  /** Reuses per-name promises and batches all uncached names into a single process. */
-  public static resolve(texUri: vscode.Uri, references: readonly string[], program = 'bibtex'):
+  /**
+   * Reuses per-name promises and batches all uncached names into a single process.
+   * @param texUri File whose parent directory becomes the lookup working directory.
+   * @param references Names to resolve, including their file extensions.
+   * @param program Program context passed to --progname; defaults to bibtex.
+   * @param searchPath Optional Kpathsea search path passed to --path, for example $INDEXDICTIONARY.
+   * @returns One resolved URI or undefined per requested name, preserving order.
+   */
+  public static resolve(texUri: vscode.Uri, references: readonly string[], program = 'bibtex', searchPath?: string):
     Promise<readonly (vscode.Uri | undefined)[]> {
     if (!vscode.workspace.isTrusted || texUri.scheme !== 'file' || references.length === 0) {
       return Promise.resolve(references.map(() => undefined));
@@ -45,13 +52,13 @@ export default class KpsewhichResolver {
     const cwd = path.dirname(texUri.fsPath);
     const executable = Config.kpsewhichPath().trim() || 'kpsewhich';
     const context = programName(program);
-    const keyFor = (name: string) => JSON.stringify([executable, cwd, context, name]);
+    const keyFor = (name: string) => JSON.stringify([executable, cwd, context, searchPath, name]);
     const missing = [...new Set(references)].filter(name => !this.cache.has(keyFor(name)));
     if (missing.length) {
       // Start after registering every promise/watch, so concurrent callers share the batch.
       const generation = this.generation;
       const batch = Promise.resolve().then(() => generation === this.generation
-        ? this.run(executable, cwd, missing, context) : missing.map(() => undefined));
+        ? this.run(executable, cwd, missing, context, searchPath) : missing.map(() => undefined));
       missing.forEach((name, index) => {
         const key = keyFor(name);
         const entry: Lookup = { paths: new Set(), promise: batch.then(results => {
@@ -126,10 +133,10 @@ export default class KpsewhichResolver {
   }
 
   /** Runs suffix-aware searches for both .bib and .bst while retaining positional misses. */
-  private static run(executable: string, cwd: string, references: readonly string[], program: string):
+  private static run(executable: string, cwd: string, references: readonly string[], program: string, searchPath?: string):
     Promise<readonly (vscode.Uri | undefined)[]> {
     return new Promise(resolve => {
-      const child = spawn.spawn(executable, [`--progname=${program}`, ...references], {
+      const child = spawn.spawn(executable, [`--progname=${program}`, ...(searchPath !== undefined ? [`--path=${searchPath}`] : []), ...references], {
         cwd, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore']
       });
       this.processes.add(child);

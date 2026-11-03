@@ -6,6 +6,10 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+- Compare index input within each build request, regenerate after pagination changes, track style/dictionary updates and selected output, and delegate index output updates to the configured helper even for empty input. Determine helper success from its exit code, and keep comparison-baseline updates in the index check.
+- Report bibliography and index helper failures as Problems errors even when PDF generation succeeds, retaining those errors alongside later LaTeX diagnostics and preserving existing cancellation behavior.
+- Document every TeXToPDF method with its parameters and return value.
+
 - Detect BibTeX database/style updates and auxiliary declaration changes; support Biber control files and current logreq requests, keeping bibliography processing to one attempt per build.
 - Share cached Kpathsea lookups between builds and citation completion, with resolver-owned existence/configuration invalidation and extension-wide cleanup.
 
