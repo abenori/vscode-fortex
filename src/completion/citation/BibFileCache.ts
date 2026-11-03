@@ -30,8 +30,7 @@ export default class BibFileCache implements vscode.Disposable {
   private readonly references = new Map<string, Set<string>>();
   private disposed = false;
 
-  constructor(private readonly onFileCreatedOrDeleted: () => void = () => {}) {}
-
+  /** Shares content watches across owners and releases files no longer referenced by any owner. */
   public setReferences(owner: string, uris: readonly vscode.Uri[]): void {
     if (this.disposed) {
       return;
@@ -47,22 +46,20 @@ export default class BibFileCache implements vscode.Disposable {
         const watcher = vscode.workspace.createFileSystemWatcher(
           new vscode.RelativePattern(vscode.Uri.joinPath(uri, '..'), '*')
         );
-        const changed = (eventUri: vscode.Uri, existenceChanged = false) => {
+        /** Invalidates parsed contents for exact-path notifications, including replaced files. */
+        const changed = (eventUri: vscode.Uri) => {
           if (Workspace.uriKey(eventUri) !== key) {
             return;
           }
           this.invalidate(uri);
-          if (existenceChanged) {
-            this.onFileCreatedOrDeleted();
-          }
         };
         this.files.set(key, {
           revision: 0,
           disposable: vscode.Disposable.from(
             watcher,
             watcher.onDidChange((eventUri) => changed(eventUri)),
-            watcher.onDidCreate((eventUri) => changed(eventUri, true)),
-            watcher.onDidDelete((eventUri) => changed(eventUri, true))
+            watcher.onDidCreate(changed),
+            watcher.onDidDelete(changed)
           )
         });
       }

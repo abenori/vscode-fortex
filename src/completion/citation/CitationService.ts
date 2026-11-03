@@ -2,7 +2,8 @@ import * as vscode from 'vscode';
 import { discoverBibReferences, resolveBibUri } from './BibFileDiscovery';
 import { CitationEntry } from './Citation';
 import BibFileCache from './BibFileCache';
-import KpsewhichResolver from './KpsewhichResolver';
+import KpsewhichResolver, { programName } from '../../project/KpsewhichResolver';
+import Config from '../../Config';
 import LaTeXProject from '../../project/LaTeXProject';
 import * as Workspace from '../../workspace';
 
@@ -10,6 +11,8 @@ interface ProjectScope {
   main: vscode.Uri;
   files: vscode.Uri[];
   references: string[];
+  program: string;
+  args: readonly string[];
 }
 
 /**
@@ -18,11 +21,11 @@ interface ProjectScope {
  */
 export default class CitationService implements vscode.Disposable {
   private readonly disposables: vscode.Disposable[] = [];
-  private readonly kpsewhich = new KpsewhichResolver();
-  private readonly bibliography = new BibFileCache(() => this.kpsewhich.clear());
+  private readonly bibliography = new BibFileCache();
   private sourceRevision = 0;
   private disposed = false;
 
+  /** Registers content invalidation while leaving path-cache lifecycle to the shared resolver. */
   public constructor() {
     this.disposables.push(
       vscode.workspace.onDidChangeTextDocument((event) => {
@@ -42,15 +45,11 @@ export default class CitationService implements vscode.Disposable {
           this.bibliography.release(key);
           this.sourceRevision++;
         }
-      }),
-      vscode.workspace.onDidChangeConfiguration((event) => {
-        if (event.affectsConfiguration('vscode-fortex.kpsewhich.path')) {
-          this.kpsewhich.clear();
-        }
       })
     );
   }
 
+  /** Resolves declared bibliography files and merges current entries while rejecting stale requests. */
   public async entriesFor(
     document: vscode.TextDocument,
     token?: vscode.CancellationToken,
@@ -79,7 +78,13 @@ export default class CitationService implements vscode.Disposable {
     if (!current()) {
       return [];
     }
-    const kpsewhichResults = await this.kpsewhich.resolve(scope.main, scope.references);
+    const localBiber = programName(scope.program) === 'biber'
+      ? await this.localBiberFiles(scope) : scope.references.map(() => undefined);
+    if (!current()) { return []; }
+    const unresolved = scope.references.filter((_reference, index) => !localBiber[index]);
+    const kpsewhichResults = await KpsewhichResolver.resolve(scope.main, unresolved,
+      programName(scope.program) === 'biber' ? 'kpsewhich' : scope.program);
+    let resolvedIndex = 0;
     // A closed document or a newer project structure must not register stale
     // watches after asynchronous project/path discovery finishes.
     if (!current()) {
@@ -88,7 +93,7 @@ export default class CitationService implements vscode.Disposable {
     const uris: vscode.Uri[] = [];
     const seen = new Set<string>();
     for (const [index, reference] of scope.references.entries()) {
-      const uri = kpsewhichResults[index] ?? resolveBibUri(scope.main, reference);
+      const uri = localBiber[index] ?? kpsewhichResults[resolvedIndex++] ?? resolveBibUri(scope.main, reference);
       const uriKey = Workspace.uriKey(uri);
       if (!seen.has(uriKey)) {
         seen.add(uriKey);
@@ -111,6 +116,7 @@ export default class CitationService implements vscode.Disposable {
     return Array.from(unique.values());
   }
 
+  /** Releases completion-owned resources without disposing the shared lookup cache. */
   public dispose(): void {
     this.disposed = true;
     for (const disposable of this.disposables) {
@@ -118,9 +124,30 @@ export default class CitationService implements vscode.Disposable {
     }
     this.bibliography.dispose();
     this.sourceRevision++;
-    this.kpsewhich.dispose();
   }
 
+  /** Prefers Biber's configured input/output directory, then project-local datasource candidates. */
+  private async localBiberFiles(scope: ProjectScope): Promise<(vscode.Uri | undefined)[]> {
+    let input: string | undefined;
+    for (const option of ['--input-directory', '--output-directory']) {
+      const index = scope.args.findIndex(arg => arg === option || arg.startsWith(`${option}=`));
+      if (index >= 0) {
+        input = scope.args[index] === option ? scope.args[index + 1] : scope.args[index].slice(option.length + 1);
+        if (input) { break; }
+      }
+    }
+    const bases = input ? [vscode.Uri.joinPath(resolveBibUri(scope.main, input), '_'), scope.main] : [scope.main];
+    return Promise.all(scope.references.map(async reference => {
+      for (const base of bases) {
+        const uri = resolveBibUri(base, reference);
+        try { if ((await vscode.workspace.fs.stat(uri)).type & vscode.FileType.File) { return uri; } }
+        catch { /* The next local candidate or Kpathsea may resolve this name. */ }
+      }
+      return undefined;
+    }));
+  }
+
+  /** Collects both bibliography declarations using one immutable set of source reads. */
   private async projectScope(
     document: vscode.TextDocument, token: vscode.CancellationToken | undefined,
     watch: (uris: readonly vscode.Uri[]) => void,
@@ -139,11 +166,13 @@ export default class CitationService implements vscode.Disposable {
     };
     let main = document.uri;
     let projectFiles = [document.uri];
+    let bibliography = Config.programSettings('bibtex');
     try {
       const project = await LaTeXProject.create(document.uri, {
         readSource, onDependency: uri => watch([uri]), onDirectory: uri => watchDirectories([uri])
       });
       main = project.mainfile;
+      bibliography = Config.programSettings('bibtex', project.percent_sharp?.('bibtex')?.trim());
       const files = project.filelist.filter(entry => entry.exists).map(entry => entry.uri);
       if (files.length > 0) { projectFiles = files; }
     } catch (error) {
@@ -161,7 +190,7 @@ export default class CitationService implements vscode.Disposable {
         }
       }
     }
-    return { main, files: projectFiles, references };
+    return { main, files: projectFiles, references, program: bibliography.command, args: bibliography.args };
   }
 }
 

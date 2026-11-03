@@ -1234,7 +1234,7 @@
           "default": { "command": "upbibtex", "args": [] },
           "scope": "machine",
           "order": 17,
-          "markdownDescription": "Bibliography program and arguments. Missing fields use `upbibtex` and `[]`. `%#bibtex` overrides the executable. The job basename is appended to the arguments. This setting does not change the BibTeX run-detection logic."
+          "markdownDescription": "Bibliography program and arguments. Missing fields use `upbibtex` and `[]`. `%#bibtex` overrides the executable. The job basename is appended to the arguments. Executable names matching biber select BCF-based detection; other names select BibTeX detection using AUX declarations and bibliography/style timestamps."
         },
         "vscode-fortex.compile.makeindex": {
           "type": "object",
@@ -1403,6 +1403,7 @@
     "pdfjs-dist": "^5.4.149"
   },
   "dependencies": {
-    "cross-spawn": "^7.0.6"
+    "cross-spawn": "^7.0.6",
+    "fast-xml-parser": "^5.11.2"
   }
 }

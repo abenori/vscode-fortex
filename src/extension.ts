@@ -22,6 +22,7 @@ import StructureService from './structure/StructureService';
 import StructureView from './structure/StructureView';
 import { registerDocumentSymbols } from './structure/LaTeXDocumentSymbolProvider';
 import LaTeXProject from './project/LaTeXProject';
+import KpsewhichResolver from './project/KpsewhichResolver';
 
 let buildManager: BuildManager | undefined;
 let preview: PDFPreview | undefined;
@@ -31,6 +32,8 @@ export function activate(context: vscode.ExtensionContext) {
 	//Log.debug_log("Activate vscode-fortex extension");
 
   context.subscriptions.push(new vscode.Disposable(() => LaTeXProject.dispose()));
+  KpsewhichResolver.initialize();
+  context.subscriptions.push(new vscode.Disposable(() => KpsewhichResolver.dispose()));
 
   preview = new PDFPreview(context);
   buildManager = new BuildManager();

@@ -8,6 +8,18 @@ import Config, { CompileProgram, CompileProgramSettings } from '../Config';
 import { singleProgramFromDirective } from './BuildSecurity';
 import * as Workspace from '../workspace';
 import { SourceScanner, splitclist } from '../latex-parser';
+import KpsewhichResolver, { programName } from '../project/KpsewhichResolver';
+import { XMLParser } from 'fast-xml-parser';
+
+type XMLValue = string | { [name: string]: XMLValue } | XMLValue[];
+
+interface BibliographyInfo {
+  readonly citations: string[];
+  readonly entries: Set<string>;
+  readonly databases: string[];
+  readonly styles: string[];
+  readonly signature: string;
+}
 
 /** Private pipeline inputs supplied by LaTeXCompile, never by the build manager. */
 export interface TeXToPDFOptions {
@@ -40,15 +52,19 @@ export default class TeXToPDF {
   LaTeXProject: LaTeXProject;
   // 現在状態によらず必ずLaTeXを実行するフラグ
   forcelatex = false;
-  // MakeIndexとBibTeXは一度しか実行しない．
+  // MakeIndexと文献処理は一度しか実行しない．
   // 既に実行されたかのフラグ
   makeindex = false;
-  bibtex = false;
+  bib = false;
   // status["file"][".aux"]に.auxファイルの中身を保存
   status: { [key: string]: { [key: string]: string | null } } = {};
   file_list: string[] = [];
   readonly extensions = [".aux", ".toc", ".lot", ".lof"];
   options: { [key: string]: string } = {};
+  private previousBibliography = '';
+  private previousBCF: string | null = null;
+  private previousBCFStamp?: string;
+  private previousRunXMLStamp?: string;
 
   constructor(proj: LaTeXProject, option: string | undefined) {
     this.LaTeXProject = proj;
@@ -113,12 +129,12 @@ export default class TeXToPDF {
     try {
       this.checkCancellation(options);
       options?.onProgress?.('Preparing build…');
-      this.read_status();
       // Capture settings once; a later change belongs to the next request.
       const latex = this.make_latex_command();
       const bibliography = this.make_program_command('bibtex');
       const index = this.make_program_command('makeindex');
       const converter = this.make_program_command('dvipdf');
+      this.read_status(bibliography);
       const directory = path.dirname(this.LaTeXProject.mainfile.fsPath);
       const base = path.basename(this.LaTeXProject.mainfile.fsPath);
       let latexRuns = 1;
@@ -135,8 +151,8 @@ export default class TeXToPDF {
           latexRuns++;
           await this.runTool(latex, TeXToPDF.change_extension(base, '.tex'), directory,
             `Running LaTeX (pass ${latexRuns})…`, options);
-        } else if (!this.bibtex && this.bibtex_check()) {
-          this.bibtex = true;
+        } else if (!this.bib && await this.bib_check(bibliography, options)) {
+          this.bib = true;
           this.forcelatex = true;
           await this.runOptionalTool(bibliography, TeXToPDF.remove_extension(base), directory,
             'Processing bibliography…', warnings, options);
@@ -218,7 +234,8 @@ export default class TeXToPDF {
     } catch { return undefined; }
   }
 
-  private read_status(): void {
+  /** Captures pass snapshots and independent pre-build bibliography inputs. */
+  private read_status(bibliography: CompileProgramSettings): void {
     // Snapshot auxiliary files before the first pass. Missing files are stored as
     // null so creating or deleting one also counts as a meaningful change.
     //Log.debug_log("Reading current latex file statuses");
@@ -238,6 +255,11 @@ export default class TeXToPDF {
         }
       }
     }
+    this.previousBibliography = this.bibliography_info().signature;
+    const control = this.biber_control_file(bibliography);
+    this.previousBCF = this.read_optional(control);
+    this.previousBCFStamp = this.fileStamp(control);
+    this.previousRunXMLStamp = this.fileStamp(TeXToPDF.change_extension(this.LaTeXProject.mainfile.fsPath, '.run.xml'));
   }
 
   private latex_check(): boolean {
@@ -271,36 +293,147 @@ export default class TeXToPDF {
     return rv;
   }
 
-  //status の.auxは最新と仮定して処理する．
-  private bibtex_check(): boolean {
-    // BibTeX is needed while the citations requested in .aux differ from the
-    // bibliography entries already written there. It runs at most once per build.
-    if (this.makeindex) { return false; }
-    let bibs = new Set<string>();
-    let cits = new Set<string>();
-    const bibdatareg = /\\bibcite\{(.*?)\}/g;
-    const citereg = /\\citation\{(.*?)\}/g;
-    // \bibdata{...} と \citation{...} の中身を集合として一致していなければBibTeXを実行する
+  /** Selects only the detection algorithm; build() owns execution and the once-only flag. */
+  private async bib_check(command: CompileProgramSettings, options?: TeXToPDFOptions): Promise<boolean> {
+    this.checkCancellation(options);
+    const needed = programName(command.command) === 'biber'
+      ? await this.biber_check(command) : await this.bibtex_check(command);
+    this.checkCancellation(options);
+    return needed;
+  }
+
+  /** Reads bibliography directives from current auxiliary snapshots without reading TeX sources. */
+  private bibliography_info(): BibliographyInfo {
+    const citations: string[] = [], databases: string[] = [], styles: string[] = [];
+    const entries = new Set<string>();
+    const directives: string[] = [];
     for (const file of this.file_list) {
-      let txt = this.status[file][".aux"];
-      //Log.debug_log("BibTeX check for file " + file + ": \n" + txt);
-      if (txt) {
-        let ms = txt.matchAll(bibdatareg);
-        for (const m of ms) {
-          bibs.add(m[1]);
-        }
-        ms = txt.matchAll(citereg);
-        for (const m of ms) {
-          cits.add(m[1]);
-        }
+      const text = this.status[file]?.['.aux'] ?? '';
+      for (const match of text.matchAll(/\\(citation|bibdata|bibstyle)\{([^}]*)\}/g)) {
+        const values = match[2].split(',').map(value => value.trim()).filter(Boolean);
+        directives.push(JSON.stringify([file, match[1], values]));
+        if (match[1] === 'citation') { citations.push(...values); }
+        else if (match[1] === 'bibdata') { databases.push(...values); }
+        else { styles.push(...values); }
       }
+      for (const match of text.matchAll(/\\bibcite\{([^}]*)\}/g)) { entries.add(match[1]); }
     }
-    //Log.debug_log("BibTeX check: bibs = " + Array.from(bibs).join(", ") + ", cits = " + Array.from(cits).join(", "));
-    if (TeXToPDF.eqSet(bibs, cits)) {
-      this.forcelatex = true;
-      this.bibtex = true;
-      return false;
-    } else { return true; }
+    return { citations, entries, databases, styles, signature: JSON.stringify(directives) };
+  }
+
+  /** Checks classic bibliography inputs against the BBL and the pre-build auxiliary declarations. */
+  private async bibtex_check(command: CompileProgramSettings): Promise<boolean> {
+    const info = this.bibliography_info();
+    if (!info.databases.length) { return false; }
+    const bbl = TeXToPDF.change_extension(this.LaTeXProject.mainfile.fsPath, '.bbl');
+    if (!fs.existsSync(bbl) || info.signature !== this.previousBibliography) { return true; }
+    if (!info.citations.includes('*') && info.citations.some(key => !info.entries.has(key))) { return true; }
+    const references = [...new Set([
+      ...info.databases.map(name => /\.bib$/i.test(name) ? name : `${name}.bib`),
+      ...info.styles.map(name => /\.bst$/i.test(name) ? name : `${name}.bst`)
+    ])];
+    const resolved = await KpsewhichResolver.resolve(this.LaTeXProject.mainfile, references, command.command);
+    return this.inputs_newer_than_bbl(resolved.map(uri => uri?.fsPath), bbl);
+  }
+
+  /** Reads a helper option in either --name=value or --name value form. */
+  private command_option(command: CompileProgramSettings, name: string): string | undefined {
+    const index = command.args.findIndex(arg => arg === name || arg.startsWith(`${name}=`));
+    if (index < 0) { return undefined; }
+    return command.args[index] === name ? command.args[index + 1] : command.args[index].slice(name.length + 1);
+  }
+
+  /** Locates Biber's control input using the existing job name and configured input/output directory. */
+  private biber_control_file(command: CompileProgramSettings): string {
+    const directory = path.dirname(this.LaTeXProject.mainfile.fsPath);
+    const input = this.command_option(command, '--input-directory') ?? this.command_option(command, '--output-directory');
+    const name = path.basename(TeXToPDF.change_extension(this.LaTeXProject.mainfile.fsPath, '.bcf'));
+    const candidates = [...new Set([path.resolve(directory, input ?? '.', name), path.join(directory, name)])];
+    return candidates.find(filename => fs.existsSync(filename)) ?? candidates[0];
+  }
+
+  /** Returns null for an absent/unreadable optional pipeline input. */
+  private read_optional(filename: string): string | null {
+    try { return fs.readFileSync(filename, 'utf8'); } catch { return null; }
+  }
+
+  /** Parses generated XML with namespace-independent names and preserved attribute/text values. */
+  private parse_xml(text: string): XMLValue {
+    return new XMLParser({ ignoreAttributes: false, removeNSPrefix: true,
+      parseTagValue: false, parseAttributeValue: false }).parse(text, true) as XMLValue;
+  }
+
+  /** Collects named XML elements at any nesting depth, including repeated refsections. */
+  private xml_elements(value: XMLValue, name: string): XMLValue[] {
+    if (typeof value === 'string') { return []; }
+    if (Array.isArray(value)) { return value.flatMap(child => this.xml_elements(child, name)); }
+    return Object.entries(value).flatMap(([key, child]) => key === name
+      ? (Array.isArray(child) ? child : [child]) : this.xml_elements(child, name));
+  }
+
+  /** Extracts element text while allowing attributes on that element. */
+  private xml_text(value: XMLValue | undefined): string {
+    if (typeof value === 'string') { return value.trim(); }
+    return value && !Array.isArray(value) ? this.xml_text(value['#text']) : '';
+  }
+
+  /** Reads only current-build Biber requests, never executing commands described by logreq. */
+  private biber_requested(): boolean {
+    const filename = TeXToPDF.change_extension(this.LaTeXProject.mainfile.fsPath, '.run.xml');
+    if (this.fileStamp(filename) === this.previousRunXMLStamp) { return false; }
+    const text = this.read_optional(filename);
+    if (text === null) { return false; }
+    try {
+      return this.xml_elements(this.parse_xml(text), 'external').some(element => typeof element !== 'string'
+        && !Array.isArray(element) && element['@_active'] === '1' && this.xml_text(element.generic) === 'biber');
+    } catch { return false; }
+  }
+
+  /** Checks Biber control content, explicit requests and datasource timestamps independently of BibTeX. */
+  private async biber_check(command: CompileProgramSettings): Promise<boolean> {
+    const control = this.biber_control_file(command);
+    const requested = this.biber_requested();
+    const text = this.read_optional(control);
+    if (text === null) { return requested; }
+    // Old control files left behind when biblatex is removed are not current inputs.
+    if (!requested && this.fileStamp(control) === this.previousBCFStamp) { return false; }
+    const directory = path.dirname(this.LaTeXProject.mainfile.fsPath);
+    const output = path.resolve(directory, this.command_option(command, '--output-directory') ?? '.');
+    const bbl = path.join(output, path.basename(TeXToPDF.change_extension(this.LaTeXProject.mainfile.fsPath, '.bbl')));
+    if (requested || !fs.existsSync(bbl) || text !== this.previousBCF) { return true; }
+    let xml: XMLValue;
+    try { xml = this.parse_xml(text); } catch { return true; }
+    const names: string[] = [];
+    for (const source of this.xml_elements(xml, 'datasource')) {
+      const name = this.xml_text(source);
+      if (!name || /^[a-z][a-z\d+.-]*:\/\//i.test(name)
+        || (typeof source !== 'string' && !Array.isArray(source)
+          && ['1', 'true'].includes(this.xml_text(source['@_glob'])))) { return true; }
+      names.push(name);
+    }
+    const input = this.command_option(command, '--input-directory') ?? this.command_option(command, '--output-directory');
+    const directories = [...new Set([...(input ? [path.resolve(directory, input)] : []), directory, path.dirname(control)])];
+    const paths = names.map(name => {
+      const candidates = path.isAbsolute(name) ? [name] : directories.map(dir => path.resolve(dir, name));
+      return candidates.find(candidate => { try { return fs.statSync(candidate).isFile(); } catch { return false; } });
+    });
+    const missing = names.filter((_name, index) => !paths[index]);
+    if (missing.length) {
+      const results = await KpsewhichResolver.resolve(this.LaTeXProject.mainfile, missing, 'kpsewhich');
+      let index = 0;
+      paths.forEach((filename, position) => { if (!filename) { paths[position] = results[index++]?.fsPath; } });
+    }
+    const config = this.command_option(command, '--configfile') ?? this.command_option(command, '-g');
+    if (config) { paths.push(path.resolve(directory, config)); }
+    return this.inputs_newer_than_bbl(paths, bbl);
+  }
+
+  /** Treats newer or unresolvable inputs as requiring one helper run. */
+  private inputs_newer_than_bbl(inputs: readonly (string | undefined)[], bbl: string): boolean {
+    try {
+      const outputTime = fs.statSync(bbl, { bigint: true }).mtimeNs;
+      return inputs.some(filename => !filename || fs.statSync(filename, { bigint: true }).mtimeNs > outputTime);
+    } catch { return true; }
   }
 
   private makeindex_check(): boolean {
@@ -492,14 +625,6 @@ export default class TeXToPDF {
       }
     }
     return errors;
-  }
-
-  private static eqSet<T>(a: Set<T>, b: Set<T>): boolean {
-    if (a.size !== b.size) { return false; }
-    for (const i of a) {
-      if (!b.has(i)) { return false; }
-    }
-    return true;
   }
 
 }
