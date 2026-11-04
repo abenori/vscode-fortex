@@ -1,15 +1,16 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import LaTeXProject from '../project/LaTeXProject';
-import Log from '../log';
-import Process from './Process';
-import Config, { CompileProgram, CompileProgramSettings } from '../Config';
-import { singleProgramFromDirective } from './BuildSecurity';
-import * as Workspace from '../workspace';
-import { SourceScanner, splitclist } from '../latex-parser';
-import KpsewhichResolver, { programName } from '../project/KpsewhichResolver';
+import LaTeXProject from '../../project/LaTeXProject';
+import Log from '../../log';
+import Process from '../Process';
+import Config, { CompileProgram, CompileProgramSettings } from '../../Config';
+import { singleProgramFromDirective } from '../BuildSecurity';
+import * as Workspace from '../../workspace';
+import { SourceScanner, splitclist } from '../../latex-parser';
+import KpsewhichResolver, { programName } from '../../project/KpsewhichResolver';
 import { XMLParser } from 'fast-xml-parser';
+import analyzeLaTeXLog from './LaTeXLogAnalyzer';
 
 type XMLValue = string | {
   /** XMLの子要素名から，その内容への対応． */
@@ -246,6 +247,16 @@ export default class TeXToPDF {
       const currentPDF = this.fileStamp(pdf.fsPath);
       const producedPDF = currentPDF !== undefined && currentPDF !== previousPDF;
       if (!producedPDF) { warnings.push('No new PDF was produced.'); }
+      if (this.fileStamp(logPath) !== previousLog) {
+        try {
+          const latexDiagnostics = await TeXToPDF.analyze_errors(this.LaTeXProject.mainfile);
+          helperDiagnostics.push(...latexDiagnostics);
+          if (latexDiagnostics.some(([, entries]) => entries.some(entry => entry.severity === vscode.DiagnosticSeverity.Warning))) {
+            warnings.push('LaTeX reported warnings.');
+          }
+        } catch (analysisError) { Log.log(`Unable to read build diagnostics: ${String(analysisError)}`); }
+      }
+      this.checkCancellation(options);
       return {
         outcome: 'succeeded', severity: warnings.length ? 'warning' : 'info',
         message: warnings.length ? `Build succeeded with warnings: ${warnings.join(' ')}` : 'Build succeeded.',
@@ -261,8 +272,7 @@ export default class TeXToPDF {
       // 内容が変わっていないログは以前のビルドのもので，今回の起動失敗のログではない．
       if (started && this.fileStamp(logPath) !== previousLog) {
         try {
-          const latexDiagnostics: PipelineDiagnostics = (await TeXToPDF.analyze_errors(this.LaTeXProject.mainfile)).map(([uri, range, text]) =>
-            [uri, [new vscode.Diagnostic(range, text, vscode.DiagnosticSeverity.Error)]]);
+          const latexDiagnostics = await TeXToPDF.analyze_errors(this.LaTeXProject.mainfile);
           diagnostics = [...helperDiagnostics, ...latexDiagnostics];
         } catch (analysisError) { Log.log(`Unable to read build diagnostics: ${String(analysisError)}`); }
       }
@@ -727,196 +737,13 @@ export default class TeXToPDF {
   }
 
   /**
-   * 文字列を正規表現のリテラル部分として使用できるようにする．
-   * @param s エスケープする文字列．
-   * @returns 正規表現の特殊文字をエスケープした文字列．
+   * LaTeXログからエラー・警告を解析し，ソースまたはログ上の診断を生成する．
+   * @param main ログの場所とLaTeXの実行ディレクトリを決めるメインTeXファイル．
+   * @returns 対象URIごとの診断一覧を含むPromise．ログを読めない場合は拒否される．
    */
-  private static escapeRegExp(s: string): string {
-    return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  }
-
-  /**
-   * ログのファイルURIに対応する開いた文書を，実パスの別名も含めて探す．
-   * @param uri エラーの対象となるファイルURI．
-   * @returns 対応する開いた文書．見つからなければundefined．
-   */
-  private static findErrorDocument(uri: vscode.Uri): vscode.TextDocument | undefined {
-    const document = Workspace.findOpenDocument(uri);
-    if (document || uri.scheme !== 'file') { return document; }
-    let realPathKey: string;
-    try {
-      realPathKey = Workspace.uriKey(vscode.Uri.file(fs.realpathSync(uri.fsPath)));
-    } catch {
-      return undefined;
-    }
-    const active = vscode.window.activeTextEditor?.document;
-    const candidates = active ? [active, ...vscode.workspace.textDocuments] : vscode.workspace.textDocuments;
-    for (const candidate of candidates) {
-      if (candidate.isClosed || candidate.uri.scheme !== 'file') { continue; }
-      try {
-        if (Workspace.uriKey(vscode.Uri.file(fs.realpathSync(candidate.uri.fsPath))) === realPathKey) {
-          return candidate;
-        }
-      } catch {
-        // 無関係なバッファの作成・削除でログ解析を中断しない．
-      }
-    }
-    return undefined;
-  }
-
-  /**
-   * 未定義命令・二重添字のログ前後の情報から，可能な範囲で原因位置を特定する．
-   * @param logline エラー見出しがあるログ内の0始まりの行位置．
-   * @param lines ログ全体を行ごとに分割した配列．
-   * @param errline ログが示すソース内の1始まりの行番号．
-   * @param errmsg エラーの説明．
-   * @param error_file エラー対象のファイルパス．
-   * @returns ファイルURI，強調範囲，説明からなる診断候補の配列．
-   */
-  private static undef_double_subsup_errors(logline: number, lines: string[], errline: number, errmsg: string, error_file: string): [vscode.Uri, vscode.Range, string][] {
-    const doc = TeXToPDF.findErrorDocument(vscode.Uri.file(error_file));
-    const errorUri = doc?.uri ?? vscode.Uri.file(error_file);
-    const lineIndex = Math.max(0, errline - 1);
-    const next_error_line_reg = /l\.(\d+)\s(.*)/;
-    if (logline + 1 >= lines.length) { return [[
-          errorUri,
-          new vscode.Range(new vscode.Position(lineIndex, 0),
-            new vscode.Position(lineIndex, Number.MAX_SAFE_INTEGER)),
-          errmsg
-        ]];
-    }
-    let mm = next_error_line_reg.exec(lines[logline + 1]);
-    let error_string = mm ? mm[2] : lines[logline + 1];
-    if(error_string.trim().startsWith("<")){
-      let rr = error_string.indexOf(">");
-      if(rr >= 0){ error_string = error_string.slice(rr + 1); }
-    }
-    if (error_string.substring(0, 3) === "...") {
-      error_string = error_string.substring(3);
-    }
-    let next_line = (logline + 2 >= lines.length) ? "" : lines[logline + 2];
-    next_line = next_line.replace(/\u{FFFFF}/u, '').trim();
-    if (next_line.slice(-3) === "...") {
-      next_line = next_line.slice(0, -3);
-    }
-    error_string = error_string.trimEnd();
-    let r = 0;
-    let cs = "";
-    if(errmsg.startsWith("Undefined control sequence")){
-      r = error_string.lastIndexOf("\\");
-      if(r !== -1){
-        cs = error_string.substring(r);
-        error_string = error_string.substring(0, r).trimEnd();
-      }
-    }else{
-      r = error_string.lastIndexOf(" ");
-      if(r !== -1){
-        cs = error_string.substring(r + 1);
-        error_string = error_string.substring(0, r).trimEnd();
-      }
-    }
-    if(r === -1) {
-      cs = error_string.trimEnd();
-      error_string = "";
-    }
-    if(doc && errline >= 1 && errline <= doc.lineCount) {
-      let target_line_txt = doc.lineAt(errline - 1).text;
-      let regstr = TeXToPDF.escapeRegExp(error_string) + `\\s*` + `(` + TeXToPDF.escapeRegExp(cs) + `)\\s*` + TeXToPDF.escapeRegExp(next_line.trim());
-      //デバッグ用: エラー検出の正規表現を確認する．
-      let reg = new RegExp(regstr, 'd');
-      let m = reg.exec(target_line_txt);
-      if (m) {
-        let strat = new vscode.Position(errline - 1,
-          (m.indices && m.indices[1]) ? m.indices[1][0] : 0);
-        let end = new vscode.Position(errline - 1,
-          (m.indices && m.indices[1]) ? m.indices[1][1] : target_line_txt.length);
-        return [[
-          errorUri,
-          new vscode.Range(strat, end),
-          errmsg + (errmsg.startsWith("Undefined control sequence") ? `: \\${cs}` : "")]];
-      }else{
-        if(errmsg.startsWith("Undefined control sequence")){
-          for(let i = errline  ; i > 0 ; --i){
-            m = reg.exec(doc.lineAt(i - 1).text);
-            if(m){
-              let strat = new vscode.Position(i - 1,
-                (m.indices && m.indices[1]) ? m.indices[1][0] : 0);
-              let end = new vscode.Position(i - 1,
-                (m.indices && m.indices[1]) ? m.indices[1][1] : doc.lineAt(i - 1).text.length);
-              return [[
-                errorUri,
-                new vscode.Range(strat, end),
-                errmsg + `: \\${cs}`]];
-            }
-          }
-        }
-
-        return [[
-          errorUri,
-          new vscode.Range(new vscode.Position(errline - 1, 0),
-            new vscode.Position(errline - 1, target_line_txt.length)),
-          errmsg
-        ]];
-      }
-    }else {
-      return [[
-        errorUri,
-        new vscode.Range(new vscode.Position(lineIndex, 0),
-          new vscode.Position(lineIndex, Number.MAX_SAFE_INTEGER)),
-        errmsg
-      ]];
-    }
-  }
-
-  /**
-   * LaTeXのログからファイル・行番号付きのエラーと関連する原因位置を収集する．
-   * @param main ログの場所を決めるメインTeXファイルのURI．
-   * @returns ファイルURI，範囲，エラー説明の組を格納した配列のPromise．
-   */
-  static async analyze_errors(main: vscode.Uri): Promise<[vscode.Uri, vscode.Range, string][]> {
-    // -file-line-errorの出力はファイル名:行番号:メッセージの形式．一部のTeXエラーでは問題のトークンが次のログ行に現れるため，専用の範囲判定が必要になる．
-    let dir = path.dirname(main.fsPath);
-    let logfile = vscode.Uri.file(TeXToPDF.change_extension(main.fsPath, ".log"));
-    let txt = Buffer.from(await vscode.workspace.fs.readFile(logfile)).toString("utf8");
-    let lines = txt.split(/\r?\n/);
-    let errors: [vscode.Uri, vscode.Range, string][] = [];
-    // <ファイル名>:<行番号>: エラーメッセージ
-    const error_line_reg = /^(.*)?:(\d+):\s?(.*)$/;
-    for (let i = 0; i < lines.length; ++i) {
-      let m = error_line_reg.exec(lines[i]);
-      if (m) {
-        let line = Number(m[2]);
-        if (isNaN(line)) { continue; }
-        let error_file = m[1];
-        if (!path.isAbsolute(error_file)) {
-          error_file = path.join(dir, error_file);
-        }
-        let errmsg = m[3];
-        if(lines[i].length >= 79){
-          errmsg = errmsg + lines[i + 1];
-        }
-        if (
-          errmsg.startsWith("Undefined control sequence") ||
-          errmsg.startsWith("Double subscript") ||
-          errmsg.startsWith("Double superscript")
-        ) {
-          errors.push(...TeXToPDF.undef_double_subsup_errors(i, lines, line, errmsg, error_file)); 
-        } else if (errmsg.trimStart().startsWith("==> Fatal error occurred, no output PDF file produced!")) {
-          errors.push([
-            vscode.Uri.file(error_file),
-            new vscode.Range(new vscode.Position(line - 1, Number.MAX_SAFE_INTEGER),
-              new vscode.Position(line - 1, Number.MAX_SAFE_INTEGER)),
-            errmsg]);
-        } else {
-          errors.push([
-            vscode.Uri.file(error_file),
-            new vscode.Range(new vscode.Position(line - 1, 0),
-              new vscode.Position(line - 1, Number.MAX_SAFE_INTEGER)),
-            errmsg]);
-        }
-      }
-    }
-    return errors;
+  static async analyze_errors(main: vscode.Uri): Promise<PipelineDiagnostics> {
+    const logfile = vscode.Uri.file(TeXToPDF.change_extension(main.fsPath, '.log'));
+    return analyzeLaTeXLog(main, logfile);
   }
 
 }

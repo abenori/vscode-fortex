@@ -1,7 +1,7 @@
 import * as path from 'path';
 import Process from './Process';
 import LaTeXProject from '../project/LaTeXProject';
-import TeXToPDF, { TeXToPDFResult } from './TeXToPDF';
+import TeXToPDF, { TeXToPDFResult } from './TeXToPDF/TeXToPDF';
 import Log from '../log';
 import * as vscode from 'vscode';
 import type { BuildContext, BuildRequest, BuildResult } from './BuildProtocol';
