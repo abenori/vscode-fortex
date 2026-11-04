@@ -2,10 +2,13 @@ import type SourceScanner from './SourceScanner';
 import type { SourceRange } from './SourceScanner';
 
 /**
- * Splits a comma list at brace depth zero using an existing lexical scan.
- * Ranges are untrimmed, half-open UTF-16 offsets in the original source; empty
- * items are retained. Comments, literal contents and control symbols cannot
- * supply separators or braces. Invalid bounds return an empty array.
+ * 既存の字句解析結果を使い，波括弧の深さが0のカンマで分割する．範囲は空白を除去せず，元ソースのUTF-16単位の半開区間で返す．空要素も残す．
+ * コメント・リテラル・制御記号内の文字は区切りや波括弧として扱わない．不正な範囲では空配列を返す．
+ *
+ * @param scanner 元のソースに対する共有字句解析結果．
+ * @param start 対象範囲の開始位置．UTF-16単位で，範囲に含む．省略時は0．
+ * @param end 対象範囲の終端位置．UTF-16単位で，範囲に含まない．省略時はscanner.source.length．
+ * @returns 空要素を保持した各項目の半開UTF-16範囲．不正な範囲なら空配列．
  */
 export function splitclist(scanner: SourceScanner, start = 0, end = scanner.source.length): readonly SourceRange[] {
   if (!Number.isInteger(start) || !Number.isInteger(end)

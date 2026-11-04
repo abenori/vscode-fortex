@@ -6,24 +6,43 @@ import PDFWorkerSource from "./PDFWorkerSource";
 import * as Workspace from '../../workspace';
 
 type ViewerEntry = {
+  /** PDFを表示するWebviewパネル． */
   panel: vscode.WebviewPanel;
+  /** 表示しているPDFのURI． */
   pdf: vscode.Uri;
+  /** Webviewから初期化完了の通知を受信した場合はtrue． */
   ready: boolean;
+  /** Webviewの準備が整った後に表示する順検索位置． */
   pendingForward?: SyncTeXForwardResult;
+  /** PDFの読み込みごとに進め，古いブラウザ応答を無視する要求番号． */
   loadId: number;
+  /** ビューアの問題を現在のビルド所有者へ通知する関数． */
   report?: (message?: string) => void;
 };
 
-/** Hosts PDF.js in one reusable webview per PDF and bridges SyncTeX messages. */
+/** PDFごとに再利用できるWebviewでPDF.jsを動かし，SyncTeXのメッセージを仲介する． */
 export default class InternalPDFViewer implements vscode.Disposable {
+  /** PDFの識別キーから開いている内部ビューアへの表． */
   private readonly viewers = new Map<string, ViewerEntry>();
+  /** 同梱PDF.jsのWorker本文を読み取るサービス． */
   private readonly workerSource: PDFWorkerSource;
 
-  public constructor(private readonly context: vscode.ExtensionContext) {
+  /**
+   * InternalPDFViewerの初期状態と所有するリソースを準備する．
+   * @param context リソースの場所と拡張機能の有効期間を持つVS Codeコンテキスト．
+   * @returns 新しいインスタンス．コンストラクタから明示的な値は返さない．
+   */
+  public constructor(/** リソースの場所と拡張機能の有効期間を持つVS Codeコンテキスト． */ private readonly context: vscode.ExtensionContext) {
     this.workerSource = new PDFWorkerSource(context.extensionUri);
   }
 
-  /** Opens a viewer and associates automatic refresh failures with the requesting build. */
+  /**
+   * ビューアを開き，自動更新の失敗を要求元のビルドに関連付ける．
+   * @param pdf 表示または更新するPDFのURI．
+   * @param preserveFocus 現在のエディタにフォーカスを残す場合はtrue．省略時はfalse．
+   * @param report 表示上の問題を所有者へ通知するコールバック．省略可能．
+   * @returns 処理の完了を表すPromise．値は返さない．
+   */
   public async open(pdf: vscode.Uri, preserveFocus = false, report?: (message?: string) => void): Promise<void> {
     assertWorkspaceTrusted("Internal PDF preview");
     await vscode.workspace.fs.stat(pdf);
@@ -49,17 +68,14 @@ export default class InternalPDFViewer implements vscode.Disposable {
         localResourceRoots: [vscode.Uri.file(path.dirname(pdf.fsPath)), pdfjsRoot]
       }
     );
-    // The script reports readiness asynchronously. Preserve a pending forward
-    // search so Ctrl+T T J immediately after opening the panel is not lost.
+    // スクリプトの準備完了は非同期で通知される．パネルを開いた直後のCtrl+T T Jを失わないよう，順検索の要求を保留する．
     const entry: ViewerEntry = { panel, pdf, ready: false, loadId: 0, report };
     this.viewers.set(key, entry);
     panel.onDidDispose(() => this.viewers.delete(key), undefined, this.context.subscriptions);
     panel.webview.onDidReceiveMessage(async message => {
       if (message?.type === "ready") {
         try {
-          // A module worker fetching a webview resource can stall for seconds
-          // before starting. Deliver our packaged code over IPC and start it
-          // from a local Blob URL instead.
+          // Webviewのリソースを取得するモジュールWorkerは起動まで数秒止まることがある．同梱コードをプロセス間通信で渡し，ローカルのBlob URLから起動する．
           const data = await this.workerSource.read();
           if (!await panel.webview.postMessage({ type: "initializeWorker", data })) {
             return;
@@ -81,6 +97,14 @@ export default class InternalPDFViewer implements vscode.Disposable {
     panel.webview.html = this.html(panel.webview, pdfjsRoot);
   }
 
+  /**
+   * ソース位置に対応するPDF上の位置を内部ビューアに表示する．
+   * @param pdf 表示または更新するPDFのURI．
+   * @param source 対象ソースのURI．
+   * @param line 1始まりのソース行番号．
+   * @param column ソース内の列番号．
+   * @returns 処理の完了を表すPromise．値は返さない．
+   */
   public async forwardSearch(pdf: vscode.Uri, source: vscode.Uri, line: number, column: number): Promise<void> {
     assertWorkspaceTrusted("Internal PDF preview");
     const entry = this.viewers.get(Workspace.uriKey(pdf));
@@ -88,8 +112,7 @@ export default class InternalPDFViewer implements vscode.Disposable {
       throw new Error("Open the internal PDF viewer before running forward SyncTeX search.");
     }
     let result: SyncTeXForwardResult;
-    // SyncTeX metadata may store either absolute input paths or paths relative to
-    // the build directory, so try both forms.
+    // SyncTeXの入力パスは絶対パスの場合とビルドディレクトリからの相対パスの場合があるため，両方を試す．
     try {
       result = await SyncTeX.forward(pdf.fsPath, source.fsPath, line, column);
     } catch (absolutePathError) {
@@ -105,7 +128,12 @@ export default class InternalPDFViewer implements vscode.Disposable {
     }
   }
 
-  /** Refreshes an existing panel and replaces the owner of subsequent asynchronous reports. */
+  /**
+   * 既存のパネルを更新し，その後の非同期通知を受け取る所有者を置き換える．
+   * @param pdf 表示または更新するPDFのURI．
+   * @param report 表示上の問題を所有者へ通知するコールバック．省略可能．
+   * @returns 処理の完了を表すPromise．値は返さない．
+   */
   public async refresh(pdf: vscode.Uri, report?: (message?: string) => void): Promise<void> {
     assertWorkspaceTrusted("Internal PDF preview");
     const entry = this.viewers.get(Workspace.uriKey(pdf));
@@ -115,12 +143,16 @@ export default class InternalPDFViewer implements vscode.Disposable {
     }
   }
 
-  /** Tags each load so a delayed browser response cannot describe a newer document. */
+  /**
+   * 読み込みごとに識別番号を付け，遅れて届いたブラウザの応答を新しい文書に適用しないようにする．
+   * @param entry PDFのURI，Webviewパネル，読み込み番号，および表示準備の状態．
+   * @returns 処理の完了を表すPromise．値は返さない．
+   */
   private async reload(entry: ViewerEntry): Promise<void> {
     const requestId = ++entry.loadId;
     try {
       const stat = await vscode.workspace.fs.stat(entry.pdf);
-      // Keep URL/range loading for large documents to limit IPC memory use.
+      // 大きな文書はURLと範囲指定による読み込みを使い，プロセス間通信のメモリ使用量を抑える．
       if (requestId !== entry.loadId) { return; }
       if (stat.size <= 16 * 1024 * 1024) {
         const bytes = await vscode.workspace.fs.readFile(entry.pdf);
@@ -140,12 +172,25 @@ export default class InternalPDFViewer implements vscode.Disposable {
     }
   }
 
-  /** Routes build-owned reports to the manager and leaves explicit viewer commands independent. */
+  /**
+   * ビルドに属する通知は管理側へ渡し，利用者が直接実行したビューア操作とは分けて扱う．
+   * @param entry PDFのURI，Webviewパネル，読み込み番号，および表示準備の状態．
+   * @param message 表示または記録するメッセージ．省略可能．
+   * @returns なし．
+   */
   private reportIssue(entry: ViewerEntry, message?: string): void {
     if (entry.report) { entry.report(message); }
     else if (message !== undefined) { void vscode.window.showErrorMessage(`PDF preview: ${message}`); }
   }
 
+  /**
+   * PDF上のクリック位置をソースファイルの行・列へ変換して開く．
+   * @param entry PDFのURI，Webviewパネル，読み込み番号，および表示準備の状態．
+   * @param page 1始まりのPDFページ番号．
+   * @param x PDFページ上の横座標．
+   * @param y PDFページ上の縦座標．
+   * @returns 処理の完了を表すPromise．値は返さない．
+   */
   private async inverseSearch(entry: ViewerEntry, page: number, x: number, y: number): Promise<void> {
     if (![page, x, y].every(Number.isFinite)) {
       return;
@@ -156,8 +201,7 @@ export default class InternalPDFViewer implements vscode.Disposable {
         ? result.input
         : path.resolve(path.dirname(entry.pdf.fsPath), result.input);
       const document = await vscode.workspace.openTextDocument(vscode.Uri.file(inputPath));
-      // CLI positions are one-based and may point past an edited document. Clamp
-      // them before constructing a VS Code selection.
+      // 外部コマンドの位置は1始まりで，編集後の文書範囲を超える場合がある．VS Codeの選択範囲を作る前に補正する．
       const line = Math.max(0, Math.min(document.lineCount - 1, result.line - 1));
       const maxColumn = document.lineAt(line).text.length;
       const column = result.column < 0 ? 0 : Math.min(maxColumn, result.column);
@@ -174,10 +218,14 @@ export default class InternalPDFViewer implements vscode.Disposable {
     }
   }
 
-  /** Builds the themed PDF viewer and its request-tagged browser-to-extension messages. */
+  /**
+   * テーマに対応するPDFビューアのHTMLと，要求番号付きの拡張機能へのメッセージを作る．
+   * @param webview HTMLの表示先となるVS CodeのWebview．
+   * @param pdfjsRoot 同梱されたPDF.jsリソースの基点URI．
+   * @returns PDF.jsと拡張機能の間でメッセージを交換するビューアのHTML全文．
+   */
   private html(webview: vscode.Webview, pdfjsRoot: vscode.Uri): string {
-    // Generate markup here so the CSP can authorize only this panel's nonce and
-    // the packaged PDF.js resources.
+    // このパネルのnonceと同梱PDF.jsリソースだけをCSPで許可できるよう，ここでHTMLを生成する．
     const nonce = this.nonce();
     const pdfjs = webview.asWebviewUri(vscode.Uri.joinPath(pdfjsRoot, "pdf.min.mjs"));
     const cMapUrl = webview.asWebviewUri(vscode.Uri.joinPath(pdfjsRoot, "cmaps")).toString() + "/";
@@ -224,8 +272,7 @@ export default class InternalPDFViewer implements vscode.Disposable {
     let pdfWorker;
     let workerUrl;
     const workerReady = Promise.withResolvers();
-    // load() reports initialization errors. Attach a handler immediately in case
-    // worker initialization fails before the first load message arrives.
+    // 初期化エラーはload()で通知する．最初の読み込み要求より前にWorkerの初期化が失敗する場合に備え，直ちにエラー処理を登録する．
     void workerReady.promise.catch(() => {});
     let pdf;
     let pdfRequestId;
@@ -236,12 +283,24 @@ export default class InternalPDFViewer implements vscode.Disposable {
     let highlightStartedAt = 0;
     let pageObserver;
     const pageElements = new Map();
+    /**
+     * ページ番号ごとに保持する遅延描画の状態．
+     * wrapper: ページの寸法と位置を持つDOM要素．
+     * page: 取得済みのPDF.jsページ．未取得ならundefined．
+     * canvas: ページを描画するCanvas．描画前は未設定．
+     * renderedScale: 描画を完了した倍率．未描画なら未設定．
+     * renderPromise: 実行中の描画．同じページへの要求で共有し，完了後に解除する．
+     */
     const pageStates = new Map();
     const activeRenderTasks = new Set();
 
+    /**
+     * 現在の倍率で順検索位置の矩形を表示し，その位置へスクロールする．
+     * 引数はない．
+     * @returns なし．
+     */
     function showHighlight() {
-      // Recreating the marker handles zoom changes. A negative delay preserves the
-      // original five-second fade deadline after a rerender.
+      // 倍率の変更に合わせてマーカーを作り直す．負の遅延を設定し，再描画後も最初の表示から5秒で消える期限を保つ．
       document.querySelectorAll(".synctex-highlight").forEach(element => element.remove());
       if (!pendingHighlight) return;
       const wrapper = pageElements.get(pendingHighlight.page);
@@ -258,15 +317,24 @@ export default class InternalPDFViewer implements vscode.Disposable {
       highlight.scrollIntoView({ block: "center", inline: "nearest" });
     }
 
+    /**
+     * 順検索位置と表示中の矩形を解除する．
+     * 引数はない．
+     * @returns なし．
+     */
     function clearHighlight() {
       pendingHighlight = undefined;
       document.querySelectorAll(".synctex-highlight").forEach(element => element.remove());
     }
 
-    /** Renders one page and reports failures against the PDF load that owns this rendering. */
+    /**
+     * 1ページを描画し，この描画に対応するPDF読み込み要求へ失敗を通知する．
+     * @param number 描画する1始まりのPDFページ番号．
+     * @param current この描画を開始した世代番号．PDFや倍率の更新後は結果を破棄する．
+     * @returns 描画または既存の描画待ちが完了するPromise．対象が古い場合は描画しない．
+     */
     async function renderPage(number, current) {
-      // Render lazily. The generation token discards work for a PDF or zoom level
-      // that has already been replaced.
+      // 必要になったページだけを描画する．PDFや倍率がすでに変わっていれば，世代番号で古い処理を破棄する．
       const state = pageStates.get(number);
       if (!state || current !== generation) return;
       if (state.renderedScale === scale) return;
@@ -312,6 +380,11 @@ export default class InternalPDFViewer implements vscode.Disposable {
       return state.renderPromise;
     }
 
+    /**
+     * 現在の倍率に合わせてページ枠と遅延描画の監視を作り直す．
+     * 引数はない．
+     * @returns ページ枠と監視の準備が完了するPromise．各ページの描画完了までは待たない．
+     */
     async function render() {
       if (!pdf) return;
       for (const task of activeRenderTasks) task.cancel();
@@ -329,7 +402,7 @@ export default class InternalPDFViewer implements vscode.Disposable {
       if (current !== generation) return;
       const defaultViewport = firstPage.getViewport({ scale });
       pageObserver = new IntersectionObserver(entries => {
-        // Pre-render pages near the viewport without rendering the whole document.
+        // 文書全体を描画せず，表示範囲の近くのページを先に描画する．
         for (const entry of entries) {
           if (entry.isIntersecting) {
             void renderPage(Number(entry.target.dataset.page), current);
@@ -369,9 +442,13 @@ export default class InternalPDFViewer implements vscode.Disposable {
       });
     }
 
+    /**
+     * 拡張機能から受信したBase64のPDFデータをバイト列へ戻す．
+     * @param data Base64で符号化されたPDFの内容．
+     * @returns 復号したPDFデータを持つUint8Array．
+     */
     function decodeBase64(data) {
-      // Small PDFs arrive over webview messaging for speed. Decode in chunks to
-      // keep temporary work bounded.
+      // 小さなPDFは高速化のためWebviewのメッセージで受け取る．一時的な処理量を抑えるため分割して復号する．
       const binary = atob(data);
       const bytes = new Uint8Array(binary.length);
       for (let offset = 0; offset < binary.length; offset += 65536) {
@@ -384,11 +461,14 @@ export default class InternalPDFViewer implements vscode.Disposable {
     }
 
     let loadSequence = 0;
-    /** Associates a successfully loaded PDF with its request and discards superseded loads. */
+    /**
+     * 読み込みに成功したPDFを要求に関連付け，新しい要求に置き換えられた読み込みを破棄する．
+     * @param source 読み込み要求．requestIdは要求番号，dataは任意のBase64本文，urlは本文がない場合の取得先．
+     * @returns 読み込みと初期表示の準備が完了するPromise．失敗は画面と拡張機能へ通知する．
+     */
     async function load(source) {
       const request = ++loadSequence;
-      // Packaged CMaps, fonts, WASM, and ICC data are required for reliable
-      // Japanese and other non-Latin PDF rendering.
+      // 日本語などの非ラテン文字を含むPDFを正しく描画するため，同梱のCMap・フォント・WASM・ICCデータを使用する．
       try {
         generation++;
         status.textContent = "Loading…";
@@ -398,7 +478,7 @@ export default class InternalPDFViewer implements vscode.Disposable {
         if (documentTask) await documentTask.destroy();
         if (request !== loadSequence) return;
         documentTask = pdfjsLib.getDocument({
-          // Explicit ownership preserves the worker across document reloads.
+          // Workerの所有者を明示し，文書の再読み込み時にもWorkerを保持する．
           worker,
           ...(source.data ? { data: decodeBase64(source.data) } : { url: source.url }),
           cMapUrl: "${cMapUrl}",
@@ -406,10 +486,8 @@ export default class InternalPDFViewer implements vscode.Disposable {
           standardFontDataUrl: "${standardFontDataUrl}",
           wasmUrl: "${wasmUrl}",
           iccUrl: "${iccUrl}",
-          // Blob workers cannot reliably fetch VS Code webview resources. Let
-          // PDF.js request CMaps and font data through its main-thread factories;
-          // failed CMap fetches otherwise silently turn Japanese into ErrorFont.
-          // PDF.js also falls back to non-ICC color conversion in this mode.
+          // BlobのWorkerからはWebviewのリソースを安定して取得できないため，CMapとフォントをPDF.jsのメインスレッド側で取得する．
+          // CMapの取得に失敗すると，日本語が通知なしにErrorFontへ置き換わる．この設定ではICCを使わない色変換にも切り替わる．
           useWorkerFetch: false,
           useSystemFonts: true
         });
@@ -469,11 +547,21 @@ export default class InternalPDFViewer implements vscode.Disposable {
 </html>`;
   }
 
+  /**
+   * Webview内のスクリプト実行を許可するランダムな識別文字列を作る．
+   * 引数はない．
+   * @returns Content Security Policyのnonceに使用する文字列．
+   */
   private nonce(): string {
     const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     return Array.from({ length: 32 }, () => chars.charAt(Math.floor(Math.random() * chars.length))).join("");
   }
 
+  /**
+   * 所有する監視・購読・表示などのリソースを解放する．
+   * 引数はない．
+   * @returns なし．
+   */
   public dispose(): void {
     for (const entry of this.viewers.values()) {
       entry.panel.dispose();

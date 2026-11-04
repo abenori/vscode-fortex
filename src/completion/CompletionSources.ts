@@ -4,9 +4,21 @@ import LaTeXProject from '../project/LaTeXProject';
 import * as Workspace from '../workspace';
 
 export type CompletionKind = 'label' | 'command' | 'environment';
-export interface CompletionSource { uri: vscode.Uri; source: string }
+export interface CompletionSource {
+  /** 対象ファイルのURI． */
+  uri: vscode.Uri;
+  /** 解析対象の元のソース本文． */
+  source: string
+}
 
-/** A fresh request reads current buffers and never retains project/source state. */
+/**
+ * 要求ごとに現在のバッファを読み取り，プロジェクトやソースの状態を要求間で保持しない．
+ * @param document 要求の対象となる編集中の文書．
+ * @param kind 処理対象の種別．
+ * @param token 要求のキャンセルを確認するトークン．
+ * @param watch 読み取った依存ファイルの監視を登録するコールバック．省略時は() => undefined．
+ * @returns 設定された補完範囲に含まれるソースのURIと読み取った本文．Promiseで返す．
+ */
 export async function completionSources(
   document: vscode.TextDocument,
   kind: CompletionKind,
@@ -17,8 +29,7 @@ export async function completionSources(
   if (Config.completionScope(kind, document.uri) === 'document') {
     return [{ uri: document.uri, source: document.getText() }];
   }
-  // The request owns one source snapshot. Query-only edits must not restart
-  // project discovery or copy the active buffer on every keystroke.
+  // 要求ごとにソースの本文を固定する．検索文字列だけの変更では，入力のたびにプロジェクトを再探索したりバッファ全体をコピーしたりしない．
   const sourcesByUri = new Map<string, Promise<string>>();
   const currentSource = document.getText();
   sourcesByUri.set(Workspace.uriKey(document.uri), Promise.resolve(currentSource));
@@ -38,7 +49,7 @@ export async function completionSources(
     });
   } catch (error) {
     if (token.isCancellationRequested || error instanceof vscode.CancellationError) { throw new vscode.CancellationError(); }
-    // Scratch buffers and incomplete projects still have useful local candidates.
+    // 未保存のバッファや不完全なプロジェクトでも，現在文書内の候補は利用できる．
     return [{ uri: document.uri, source: currentSource }];
   }
   if (token.isCancellationRequested) { throw new vscode.CancellationError(); }
@@ -47,7 +58,7 @@ export async function completionSources(
   for (const file of project.filelist) {
     if (file.exists) { files.set(Workspace.uriKey(file.uri), file.uri); }
   }
-  // The current buffer remains useful even if an explicit main omits it.
+  // 指定されたメインファイルから参照されていなくても，現在のバッファの候補は利用する．
   files.set(Workspace.uriKey(document.uri), document.uri);
   watch([project.mainfile, ...project.filelist.map(file => file.uri), document.uri]);
   const sources: CompletionSource[] = [];
@@ -59,8 +70,11 @@ export async function completionSources(
       sources.push({ uri, source });
     } catch (error) {
       if (error instanceof vscode.CancellationError) { throw error; }
-      // A missing include must not prevent candidates from readable sources.
-      if ((error as { code?: string }).code !== 'FileNotFound') { throw error; }
+      // 読み込み先が欠落していても，読めるソースからの候補収集は続ける．
+      if ((error as {
+        /** FileNotFoundなど，失敗の種類を識別するエラーコード． */
+        code?: string
+      }).code !== 'FileNotFound') { throw error; }
     }
   }
   return sources;

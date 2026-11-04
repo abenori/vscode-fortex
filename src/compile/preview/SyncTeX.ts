@@ -4,26 +4,43 @@ import Config from "../../Config";
 import { assertWorkspaceTrusted } from "../../WorkspaceTrust";
 
 export type SyncTeXForwardResult = {
+  /** 1始まりのPDFページ番号． */
   page: number;
+  /** SyncTeXが返す横座標．単位はPDFポイント． */
   x: number;
+  /** SyncTeXが返す縦座標．単位はPDFポイント． */
   y: number;
+  /** SyncTeXが返す対応矩形の水平方向の基準座標．単位はPDFポイント． */
   h: number;
+  /** SyncTeXが返す対応矩形の垂直方向の基準座標．単位はPDFポイント． */
   v: number;
+  /** 対応矩形の幅．単位はPDFポイント． */
   width: number;
+  /** 対応矩形の高さの絶対値．単位はPDFポイント． */
   height: number;
 };
 
 export type SyncTeXEditResult = {
+  /** 元のTeXソースファイルのパス． */
   input: string;
+  /** 1始まりのソース行番号． */
   line: number;
+  /** SyncTeXのソース列番号．不明の場合は-1． */
   column: number;
 };
 
 type RecordValues = Record<string, string>;
 
-/** Executes the synctex CLI and converts text records into typed positions. */
+/** synctexコマンドを実行し，文字列の検索結果を型付きの位置情報へ変換する． */
 export default class SyncTeX {
-  /** Maps a source line and column to a rectangle on a PDF page. */
+  /**
+   * ソースの行と列をPDFページ上の矩形へ対応付ける．
+   * @param pdfPath PDFファイルのファイルシステム上のパス．
+   * @param inputPath 対応するTeXソースのファイルシステム上のパス．
+   * @param line 1始まりのソース行番号．
+   * @param column ソース内の列番号．
+   * @returns 指定したソース位置に対応するPDFのページ番号，座標，および矩形の大きさ．Promiseで返す．
+   */
   public static async forward(
     pdfPath: string,
     inputPath: string,
@@ -53,8 +70,16 @@ export default class SyncTeX {
     };
   }
 
+  /**
+   * PDFのページ座標を元のTeXソースの位置へ変換する．
+   * @param pdfPath PDFファイルのファイルシステム上のパス．
+   * @param page 1始まりのPDFページ番号．
+   * @param x PDFページ上の横座標．
+   * @param y PDFページ上の縦座標．
+   * @returns 入力ファイルのパス，1始まりの行番号，および列番号．不明な列番号は-1．Promiseで返す．
+   */
   public static async edit(pdfPath: string, page: number, x: number, y: number): Promise<SyncTeXEditResult> {
-    // Reverse search maps PDF coordinates back to an input file and source line.
+    // 逆検索でPDF座標を入力ファイルとソース行へ対応付ける．
     const output = await this.execute([
       "edit",
       "-o",
@@ -71,9 +96,14 @@ export default class SyncTeX {
     };
   }
 
+  /**
+   * SyncTeXのkey:value形式の出力を検索結果ごとのレコードへ分割する．
+   * @param output 外部コマンドの標準出力．
+   * @param startKey 新しいSyncTeX検索結果の先頭を識別するキー．
+   * @returns キーを正規化した検索結果の配列．
+   */
   private static records(output: string, startKey: string): RecordValues[] {
-    // Repeated key:value blocks have no machine-readable wrapper. Seeing the first
-    // key again marks the beginning of the next result.
+    // 繰り返されるkey:value形式の結果には外側の区切りがない．最初のキーが再び現れたら，次の検索結果の開始とみなす．
     const records: RecordValues[] = [];
     let current: RecordValues = {};
     for (const line of output.split(/\r?\n/)) {
@@ -95,9 +125,14 @@ export default class SyncTeX {
     return records;
   }
 
+  /**
+   * SyncTeXレコードから候補キーに対応する有限数を取得する．
+   * @param record SyncTeXの1件の検索結果を表すキーと文字列値の表．
+   * @param keys 処理対象のキー．
+   * @returns 最初に見つかった有効な数値．有効な値がなければ例外を送出する．
+   */
   private static number(record: RecordValues, ...keys: string[]): number {
-    // Reject malformed CLI output here rather than propagating NaN coordinates to
-    // the viewer, where they would be much harder to diagnose.
+    // 不正な出力をここで拒否し，原因を調べにくくなるNaNの座標をビューアへ渡さないようにする．
     for (const rawKey of keys) {
       const value = record[rawKey.toLowerCase()];
       if (value !== undefined) {
@@ -110,10 +145,15 @@ export default class SyncTeX {
     throw new Error(`Invalid SyncTeX response: missing ${keys[0]}.`);
   }
 
+  /**
+   * SyncTeXを作業ディレクトリで起動する．
+   * @param args 呼び出し先へ渡す引数．
+   * @param cwd 外部コマンドを実行する作業ディレクトリのパス．
+   * @returns 正常に検索結果を含む標準出力．起動・検索の失敗時は例外．Promiseで返す．
+   */
   private static execute(args: string[], cwd: string): Promise<string> {
     assertWorkspaceTrusted("SyncTeX");
-    // Avoid a shell so paths are passed without another quoting layer. stderr is
-    // retained to produce a useful failure message.
+    // シェルを介さずにパスを渡し，追加の引用処理を避ける．失敗理由の説明に使うため標準エラーも保持する．
     return new Promise<string>((resolve, reject) => {
       const child = spawn.spawn(Config.syncTeXPath(), args, {
         cwd,

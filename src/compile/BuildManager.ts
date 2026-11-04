@@ -6,44 +6,78 @@ import Log from '../log';
 import * as Workspace from '../workspace';
 
 interface Session {
+  /** 同じ所有者の処理または項目を識別する値． */
   readonly id: number;
+  /** 対象ソースと実行処理を持つビルド要求． */
   readonly request: BuildRequest;
+  /** 所有する処理へキャンセルを通知するトークンソース． */
   readonly cancellation: vscode.CancellationTokenSource;
+  /** 現在のビルド段階を表示するメッセージ． */
   progress: string;
+  /** 現在表示している処理対象のURI． */
   target: vscode.Uri;
+  /** ビルドに付随する通知．通知がなければ未設定． */
   notice?: BuildNotice;
+  /** 直前の停止要求が失敗した理由． */
   stopError?: string;
+  /** 現在進行中の停止要求．同時の停止操作はこのPromiseを共有する． */
   stopping?: Promise<void>;
+  /** 実行中のビルドが完了し，結果が確定するPromise． */
   done: Promise<BuildResult>;
 }
 interface LastResult {
+  /** 同じ所有者の処理または項目を識別する値． */
   readonly id: number;
+  /** 対象ソースと実行処理を持つビルド要求． */
   readonly request: BuildRequest;
+  /** 現在表示している処理対象のURI． */
   readonly target: vscode.Uri;
+  /** ビルドが完了した時刻． */
   readonly time: Date;
+  /** 確定したビルドの成否と診断情報． */
   readonly result: BuildResult;
+  /** 完了結果を一時的にステータス表示する期間内ならtrue． */
   transientVisible: boolean;
+  /** ビルドに付随する通知．通知がなければ未設定． */
   notice?: BuildNotice;
 }
 
-/** Owns request lifetime and generic reports, without knowing individual build stages. */
+/** 個々のビルド段階には依存せず，要求の有効期間と共通の通知を管理する． */
 export default class BuildManager implements vscode.Disposable {
+  /** 停止確認を待つ時間の上限．単位はミリ秒． */
   private static readonly stopTimeoutMilliseconds = 5000;
+  /** 実行中の段階や最後の結果を表示するステータスバー項目． */
   private readonly status: vscode.StatusBarItem;
+  /** Problemsへ公開する診断情報． */
   private readonly diagnostics: vscode.DiagnosticCollection;
+  /** ビルドの対象キーごとに保持する診断スナップショット． */
   private readonly snapshots = new Map<string, NonNullable<BuildResult['diagnostics']>>();
+  /** ソースURIの識別キーごとに最後の保存ビルド要求を保持する待機列． */
   private readonly pending = new Map<string, BuildRequest>();
+  /** 現在実行中または共有中のセッション． */
   private active?: Session;
+  /** 最後に完了したビルドの結果と表示状態． */
   private last?: LastResult;
+  /** ビルド要求を順に識別する番号． */
   private latestId = 0;
+  /** 通常の遅延実行または一時表示を終了するタイマー． */
   private timer?: ReturnType<typeof setTimeout>;
+  /** 一時的な案内表示を終了するタイマー． */
   private hintTimer?: ReturnType<typeof setTimeout>;
+  /** 実行を受け付けなかった理由などの一時的な案内． */
   private hint?: string;
+  /** 古い案内タイマーの更新を無視するための世代番号． */
   private hintVersion = 0;
+  /** 古い完了表示タイマーの更新を無視するための世代番号． */
   private displayVersion = 0;
+  /** 所有するリソースを解放し，新しい要求を受け付けない場合はtrue． */
   private disposed = false;
 
-  /** Creates the single themed status entry and the diagnostic collection it owns. */
+  /**
+   * テーマに対応するステータス表示と，所有する診断コレクションを作成する．
+   * 引数はない．
+   * @returns 新しいインスタンス．コンストラクタから明示的な値は返さない．
+   */
   public constructor() {
     this.status = vscode.window.createStatusBarItem('fortex.build', vscode.StatusBarAlignment.Left, 20);
     this.status.name = 'fortex Build';
@@ -52,7 +86,12 @@ export default class BuildManager implements vscode.Disposable {
     this.updateStatusBar();
   }
 
-  /** Accepts build requests, reserving immediate execution or coalescing queued saves by source URI. */
+  /**
+   * ビルド要求を受け付け，直ちに実行するか，ソースURIごとに保存要求をまとめて待機させる．
+   * @param request 起点ソースのURI，表示名，および繰り返し実行可能なビルド処理．
+   * @param origin manualは明示的な実行，saveは保存に伴う実行．省略時は'manual'．
+   * @returns 実行された要求の結果．保存要求が待機列にまとめられた場合などはundefined．Promiseで返す．
+   */
   public async requestBuild(request: BuildRequest, origin: 'manual' | 'save' = 'manual'): Promise<BuildResult | undefined> {
     if (this.disposed) { return; }
     if (!vscode.workspace.isTrusted) {
@@ -74,7 +113,11 @@ export default class BuildManager implements vscode.Disposable {
     return this.start(request);
   }
 
-  /** Starts a session synchronously so asynchronous discovery cannot admit a second build. */
+  /**
+   * 非同期の探索中に別のビルドが始まらないよう，セッションを同期的に開始する．
+   * @param request 起点ソースのURI，表示名，および繰り返し実行可能なビルド処理．
+   * @returns 開始したビルドの完了結果．Promiseで返す．
+   */
   private start(request: BuildRequest): Promise<BuildResult> {
     this.clearTimers();
     const session: Session = {
@@ -97,18 +140,20 @@ export default class BuildManager implements vscode.Disposable {
     return session.done;
   }
 
-  /** Monitors one opaque request and publishes its final snapshot without interpreting its stages. */
+  /**
+   * 要求内の処理段階には立ち入らず，1件の要求を監視して最終結果を公開する．
+   * @param session 処理の状態を保持する現在のセッション．
+   * @returns 実行した要求の成功・失敗・キャンセルの結果．Promiseで返す．
+   */
   private async run(session: Session): Promise<BuildResult> {
     const context: BuildContext = {
       token: session.cancellation.token,
-      /** Shows progress only while this execution is still active. */
       reportProgress: (message, target) => {
         if (this.disposed || this.active !== session || context.token.isCancellationRequested) { return; }
         session.progress = message;
         if (target) { session.target = target; }
         this.updateStatusBar();
       },
-      /** Accepts delayed notices only for the latest execution, including after its promise settles. */
       reportNotice: notice => {
         if (this.disposed || this.latestId !== session.id || context.token.isCancellationRequested) { return; }
         if (session.notice?.severity === notice?.severity && session.notice?.message === notice?.message) { return; }
@@ -146,17 +191,30 @@ export default class BuildManager implements vscode.Disposable {
     return result;
   }
 
-  /** Rejects late completion after stop or disposal, retaining Problems on cancellation. */
+  /**
+   * 停止・破棄後の遅い完了を拒否する．キャンセル時はProblemsの既存の診断を保持する．
+   * @param context キャンセルトークンと，ビルドの進捗・通知を受け取る関数．
+   * @returns なし．
+   */
   private checkCancellation(context: BuildContext): void {
     if (this.disposed || context.token.isCancellationRequested) { throw new vscode.CancellationError(); }
   }
 
-  /** Replaces one opaque diagnostic group while retaining all other groups, including shared error files. */
+  /**
+   * 指定された診断グループだけを置き換え，同じエラーファイルを共有する他のグループも保持する．
+   * @param snapshot 捕捉済みの解析結果または診断情報．
+   * @returns なし．
+   */
   private publishDiagnostics(snapshot: NonNullable<BuildResult['diagnostics']>): void {
     const key = Workspace.uriKey(snapshot.key);
     if (snapshot.entries.some(([, diagnostics]) => diagnostics.length)) { this.snapshots.set(key, snapshot); }
     else { this.snapshots.delete(key); }
-    const grouped = new Map<string, { uri: vscode.Uri; diagnostics: vscode.Diagnostic[] }>();
+    const grouped = new Map<string, {
+      /** 対象ファイルのURI． */
+      uri: vscode.Uri;
+      /** Problemsへ公開する診断情報． */
+      diagnostics: vscode.Diagnostic[]
+    }>();
     for (const saved of this.snapshots.values()) {
       for (const [uri, entries] of saved.entries) {
         const groupKey = Workspace.uriKey(uri);
@@ -173,7 +231,11 @@ export default class BuildManager implements vscode.Disposable {
     this.diagnostics.set([...grouped.values()].map(group => [group.uri, group.diagnostics]));
   }
 
-  /** Updates progress or results, giving an unconfirmed stop priority over brief hints. */
+  /**
+   * 進捗または結果を更新する．停止を確認できていない状態は一時的な案内より優先して表示する．
+   * 引数はない．
+   * @returns なし．
+   */
   private updateStatusBar(): void {
     if (this.disposed) { return; }
     if (this.active) {
@@ -186,7 +248,11 @@ export default class BuildManager implements vscode.Disposable {
     else { this.setStatusBarDisplay('file-code', this.hint ?? '', this.hint ?? 'Build saved sources or inspect build actions.'); }
   }
 
-  /** Displays a finished result without restarting its original visibility period. */
+  /**
+   * 最初に設定した表示期間を延長せず，完了した結果を表示する．
+   * @param last 最後に完了したビルドの結果と表示時刻．
+   * @returns なし．
+   */
   private showResult(last: LastResult): void {
     if (this.disposed || this.last !== last) { return; }
     const result = last.result;
@@ -202,7 +268,11 @@ export default class BuildManager implements vscode.Disposable {
       last.target, visible ? severity : undefined);
   }
 
-  /** Starts the completion timer once, allowing later warnings to outlive the underlying success label. */
+  /**
+   * 完了時のタイマーを一度だけ開始する．後から届いた警告は成功表示の終了後も残せる．
+   * @param last 最後に完了したビルドの結果と表示時刻．
+   * @returns なし．
+   */
   private scheduleResultExpiry(last: LastResult): void {
     if (last.result.severity !== 'info' && last.result.outcome !== 'cancelled') { return; }
     const version = this.displayVersion;
@@ -214,7 +284,16 @@ export default class BuildManager implements vscode.Disposable {
     }, 3000);
   }
 
-  /** Sets status bar text, icons, tooltips and accessible labels using native theme colors. */
+  /**
+   * テーマの色を使い，ステータスバーの文字列・アイコン・ツールチップ・読み上げ用の名前を設定する．
+   * @param icon ステータス表示のアイコン名．
+   * @param label 表示用の短い名前．
+   * @param detail 表示する補足説明．
+   * @param target 処理または表示の対象．省略可能．
+   * @param severity 情報・警告・エラーの通知種別．省略可能．
+   * @param waiting 終了待ち状態として表示する場合はtrue．省略時はfalse．
+   * @returns なし．
+   */
   private setStatusBarDisplay(icon: string, label: string, detail: string, target?: vscode.Uri,
     severity?: BuildNotice['severity'], waiting = false): void {
     const buildLabel = this.active?.request.label ?? this.last?.request.label ?? 'Build';
@@ -228,7 +307,11 @@ export default class BuildManager implements vscode.Disposable {
     this.status.show();
   }
 
-  /** Displays an informational refusal briefly without changing the stored build result. */
+  /**
+   * 保存しているビルド結果を変えずに，実行を受け付けなかった理由を短時間表示する．
+   * @param message 表示または記録するメッセージ．
+   * @returns なし．
+   */
   private showHint(message: string): void {
     if (this.hintTimer) { clearTimeout(this.hintTimer); }
     this.hint = message;
@@ -242,7 +325,11 @@ export default class BuildManager implements vscode.Disposable {
     }, 5000);
   }
 
-  /** Invalidates display timers and clears transient hints on build state changes or disposal. */
+  /**
+   * ビルド状態の変更時や破棄時に表示タイマーを無効化し，一時的な案内を消す．
+   * 引数はない．
+   * @returns なし．
+   */
   private clearTimers(): void {
     this.hintVersion++;
     this.displayVersion++;
@@ -251,12 +338,20 @@ export default class BuildManager implements vscode.Disposable {
     this.hint = undefined;
   }
 
-  /** Mirrors running state to command enablement; runtime checks remain authoritative. */
+  /**
+   * 実行状態をコマンドの有効条件へ反映する．実行時にも状態を検証する．
+   * @param value 変換または検証する値．
+   * @returns なし．
+   */
   private setRunning(value: boolean): void {
     void vscode.commands.executeCommand('setContext', 'fortex.buildRunning', value).then(undefined, () => {});
   }
 
-  /** Cancels work and coalesces stop attempts while retaining the build lock until actual completion. */
+  /**
+   * 処理をキャンセルして同時の停止要求をまとめる．実際の完了まではビルドの実行権を保持する．
+   * 引数はない．
+   * @returns 処理の完了を表すPromise．値は返さない．
+   */
   public async stop(): Promise<void> {
     this.pending.clear();
     const session = this.active;
@@ -271,7 +366,11 @@ export default class BuildManager implements vscode.Disposable {
     await session.stopping;
   }
 
-  /** Reports a failed stop separately from the still-running producer, permitting an explicit retry. */
+  /**
+   * 実行中の処理とは別に停止失敗を通知し，利用者が停止を再試行できるようにする．
+   * @param session 処理の状態を保持する現在のセッション．
+   * @returns 処理の完了を表すPromise．値は返さない．
+   */
   private async stopSession(session: Session): Promise<void> {
     try { await this.waitForStop(session); }
     catch (error) {
@@ -282,7 +381,11 @@ export default class BuildManager implements vscode.Disposable {
     }
   }
 
-  /** Bounds the stop operation without settling or releasing ownership of the producer itself. */
+  /**
+   * 実行中の処理自体を完了扱いにしたり実行権を解放したりせず，停止操作の待機時間を制限する．
+   * @param session 処理の状態を保持する現在のセッション．省略可能．
+   * @returns 処理の完了を表すPromise．値は返さない．
+   */
   private async waitForStop(session?: Session): Promise<void> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -296,12 +399,20 @@ export default class BuildManager implements vscode.Disposable {
     } finally { if (timer) { clearTimeout(timer); } }
   }
 
-  /** Opens the existing Problems view on explicit user request. */
+  /**
+   * 利用者の明示的な操作で既存のProblemsビューを開く．
+   * 引数はない．
+   * @returns 処理の完了を表すPromise．値は返さない．
+   */
   public async showProblems(): Promise<void> {
     await vscode.commands.executeCommand('workbench.actions.view.problems');
   }
 
-  /** Offers the same actions to mouse and keyboard users without persistent popups. */
+  /**
+   * 常駐するポップアップを使わず，マウスとキーボードから同じ操作を選択できるようにする．
+   * 引数はない．
+   * @returns 処理の完了を表すPromise．値は返さない．
+   */
   public async showActions(): Promise<void> {
     const actions = [
       { label: '$(list-unordered) Show build problems', action: 'problems' },
@@ -325,7 +436,11 @@ export default class BuildManager implements vscode.Disposable {
     }
   }
 
-  /** Prevents new work and releases UI resources while cancellation finishes asynchronously. */
+  /**
+   * 新しい処理の受け付けを止め，非同期のキャンセル完了を待つ間にUIリソースを解放する．
+   * 引数はない．
+   * @returns なし．
+   */
   public dispose(): void {
     if (this.disposed) { return; }
     this.disposed = true;
@@ -337,7 +452,11 @@ export default class BuildManager implements vscode.Disposable {
     this.diagnostics.dispose();
   }
 
-  /** Attempts bounded process shutdown before waiting on work that may otherwise never return. */
+  /**
+   * 終了しない可能性のある処理を待つ前に，時間制限付きで子プロセスの終了を試みる．
+   * 引数はない．
+   * @returns 処理の完了を表すPromise．値は返さない．
+   */
   public async shutdown(): Promise<void> {
     const session = this.active;
     this.dispose();

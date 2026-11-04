@@ -1,4 +1,4 @@
-/** Shared declaration names; consumers retain their own parsing rules. */
+/** 共通の宣言コマンド名．具体的な解析規則は利用側で定める． */
 export const CLASSIC_COMMAND_DECLARATIONS = [
   'newcommand', 'renewcommand', 'providecommand', 'DeclareRobustCommand'
 ] as const;

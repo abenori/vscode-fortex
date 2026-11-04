@@ -9,14 +9,23 @@ const searchTimeoutMilliseconds = 15000;
 const maximumOutputBytes = 2 * 1024 * 1024;
 
 export interface TexdocEntry {
+  /** texdocのこの検索結果に対応する検索語． */
   query: string;
+  /** 候補の評価値．値の優先順は，その検索・解析処理の規則に従う． */
   score: number;
+  /** ドキュメントファイルのパス． */
   filePath: string;
+  /** ドキュメントの言語．指定がなければ未設定． */
   language?: string;
+  /** 項目の内容を示す説明． */
   description?: string;
 }
 
-/** Parses texdoc's tab-separated machine format without changing its ranking. */
+/**
+ * texdocのタブ区切り出力を，順位を変えずに解析する．
+ * @param output 外部コマンドの標準出力．
+ * @returns texdocが返した順序を保つ，パス・順位・言語・説明を含む検索結果．
+ */
 export function parseTexdocOutput(output: string): TexdocEntry[] {
   const entries: TexdocEntry[] = [];
   for (const [index, line] of output.split(/\r?\n/).entries()) {
@@ -28,8 +37,7 @@ export function parseTexdocOutput(output: string): TexdocEntry[] {
       !filePath || !path.isAbsolute(filePath) || /[\0\r\n]/.test(filePath)) {
       throw new Error(`texdoc returned an invalid documentation list at line ${index + 1}. Check that vscode-fortex.texdoc.path points to TeX Live's texdoc.`);
     }
-    // Only the first three columns are required. Metadata may be absent, and
-    // later texdoc versions may append further columns.
+    // 先頭の3列だけを必須とする．補足情報は省略される場合があり，将来のtexdocで列が追加される可能性もある．
     entries.push({
       query,
       score: Number(rawScore),
@@ -41,11 +49,19 @@ export function parseTexdocOutput(output: string): TexdocEntry[] {
   return entries;
 }
 
-/** Runs TeX Live's texdoc for lookup and lets its configuration choose a viewer. */
+/** TeX Liveのtexdocで文書を検索し，ビューアの選択はtexdocの設定に従う． */
 export default class TexdocService implements vscode.Disposable {
+  /** 実行中のtexdocプロセスから，その要求を中止する関数への表． */
   private readonly processes = new Map<ChildProcess.ChildProcess, () => void>();
+  /** 所有するリソースを解放し，新しい要求を受け付けない場合はtrue． */
   private disposed = false;
 
+  /**
+   * texdocでインストール済み文書を検索する．
+   * @param query 現在入力されている検索文字列．
+   * @param token 要求のキャンセルを確認するトークン．省略可能．
+   * @returns texdocの順位順のドキュメント候補．Promiseで返す．
+   */
   public async list(query: string, token?: vscode.CancellationToken): Promise<TexdocEntry[]> {
     if (!query.trim() || /[\0\r\n]/.test(query)) {
       throw new Error('Enter a documentation name on a single line.');
@@ -55,6 +71,11 @@ export default class TexdocService implements vscode.Disposable {
     return parseTexdocOutput(output);
   }
 
+  /**
+   * 選択したドキュメントをtexdocのビューアで開く．
+   * @param filePath 操作するファイルのパス．
+   * @returns 処理の完了を表すPromise．値は返さない．
+   */
   public async open(filePath: string): Promise<void> {
     if (!path.isAbsolute(filePath) || /[\0\r\n]/.test(filePath)) {
       throw new Error('texdoc requires an absolute documentation file path.');
@@ -62,6 +83,11 @@ export default class TexdocService implements vscode.Disposable {
     await this.run(['--nointeract', '--just-view', filePath], false);
   }
 
+  /**
+   * 所有する監視・購読・表示などのリソースを解放する．
+   * 引数はない．
+   * @returns なし．
+   */
   public dispose(): void {
     this.disposed = true;
     for (const cancel of this.processes.values()) {
@@ -70,6 +96,13 @@ export default class TexdocService implements vscode.Disposable {
     this.processes.clear();
   }
 
+  /**
+   * texdocを起動し，検索時のキャンセルとタイムアウトを管理する．
+   * @param args 呼び出し先へ渡す引数．
+   * @param searching 文書検索としてタイムアウトとキャンセルを管理する場合はtrue．
+   * @param token 要求のキャンセルを確認するトークン．省略可能．
+   * @returns texdocの標準出力．起動失敗や異常終了では例外．Promiseで返す．
+   */
   private run(args: string[], searching: boolean, token?: vscode.CancellationToken): Promise<string> {
     assertWorkspaceTrusted('TeX documentation');
     if (this.disposed || token?.isCancellationRequested) {
@@ -141,7 +174,7 @@ export default class TexdocService implements vscode.Disposable {
         if (code === 0) {
           finish(undefined, Buffer.concat(stdout).toString('utf8'));
         } else if (searching && code === 3) {
-          // TeX Live reserves exit code 3 for a search with no documentation.
+          // TeX Liveでは，該当する文書がない場合の終了コードに3を使用する．
           finish();
         } else {
           const detail = Buffer.concat(stderr).toString('utf8').trim().slice(0, 2000);
@@ -149,8 +182,7 @@ export default class TexdocService implements vscode.Disposable {
           finish(new Error(`texdoc failed (${reason})${detail ? `: ${detail}` : '.'}`));
         }
       });
-      // Viewing can wait for the external application to close, so only searches
-      // have a deadline. Both operations can still be stopped on deactivation.
+      // 文書表示は外部アプリケーションの終了まで待つ場合があるため，検索にだけ制限時間を設ける．拡張機能の終了時にはどちらも停止できる．
       if (searching) {
         timeout = setTimeout(() => {
           terminate(new Error('texdoc documentation search timed out after 15 seconds.'));
@@ -166,6 +198,12 @@ export default class TexdocService implements vscode.Disposable {
   }
 }
 
+/**
+ * 外部コマンドの起動失敗を表示用のエラーへ変換する．
+ * @param error 失敗の理由を表す例外または値．
+ * @param executable 起動する実行ファイル名またはパス．
+ * @returns 実行ファイル名と起動失敗の理由を含むError．
+ */
 function startError(error: unknown, executable: string): Error {
   if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
     return new Error(`Cannot find texdoc (${executable}). Install TeX Live or set vscode-fortex.texdoc.path to its texdoc executable.`);

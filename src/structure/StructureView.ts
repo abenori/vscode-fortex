@@ -4,19 +4,29 @@ import { StructureKind, StructureLabel, StructureLabelEntry, StructureLocation, 
 import { uriKey } from '../workspace';
 
 export interface StructureFilterOptions {
+  /** 構造ビューへ表示するノード種別の一覧． */
   visibleKinds: readonly StructureKind[];
+  /** 数式をすべて表示，ラベル付きだけ表示，または非表示にする設定． */
   equations: 'all' | 'labeled' | 'hidden';
+  /** ラベルを持つ構造要素だけを表示する場合はtrue． */
   labeledOnly: boolean;
 }
 
 interface StructureViewSettings extends StructureFilterOptions {
+  /** 構造名の横へ付属するラベル名を表示する場合はtrue． */
   showLabels: boolean;
+  /** structureは構造順，labelsはラベル名順の表示． */
   viewMode: 'structure' | 'labels';
 }
 
 const defaultKinds: StructureKind[] = ['section', 'theorem', 'figure', 'table', 'label'];
 
-/** Filters a display projection, preserving source nodes and promoting visible descendants. */
+/**
+ * 元の構造ノードを保持して表示用の階層を絞り込む．表示できる子孫は，非表示の親を省略して上位へ移す．
+ * @param nodes 順序を保つ一覧．各要素は表示名，構造種別，元の宣言位置，ラベル，および子要素を持つノード．
+ * @param options 表示する構造種別，数式の表示条件，およびラベル付きだけを表示するかの設定．
+ * @returns 表示条件に合うノードの階層．親が非表示でも表示可能な子は引き上げる．
+ */
 export function filterStructure(nodes: readonly StructureNode[], options: StructureFilterOptions): StructureNode[] {
   const visibleKinds = new Set(options.visibleKinds);
   const visit = (node: StructureNode): StructureNode[] => {
@@ -32,50 +42,83 @@ export function filterStructure(nodes: readonly StructureNode[], options: Struct
 }
 
 interface NodeElement {
+  /** この項目がnodeであることを表す識別値． */
   type: 'node';
+  /** VS Codeが展開状態を維持するための表示要素の識別子． */
   itemId: string;
+  /** この項目を所有する構造ノード． */
   node: StructureNode;
+  /** ソース順に並ぶ直下の構造要素． */
   children: TreeElement[];
 }
 
 interface LabelElement {
+  /** この項目がlabelであることを表す識別値． */
   type: 'label';
+  /** 表示項目に対応する元の解析データ． */
   entry: StructureLabelEntry;
 }
 
 type TreeElement = NodeElement | LabelElement;
 
 interface DisplayItem {
+  /** 描画済みのVS Codeツリー項目． */
   item: vscode.TreeItem;
+  /** 現在のノード名を反映した表示文字列． */
   nodeTitle: string;
+  /** 参照先のファイルを示す表示文字列． */
   sourceDescription: string;
+  /** 行番号などの表示末尾へ加える文字列． */
   suffix: string;
+  /** このファイルの表示情報を計算した更新世代． */
   epoch: number;
 }
 
 interface LabelPick extends vscode.QuickPickItem {
+  /** 検索項目が対応するラベルと所有ノードの情報． */
   labelEntry: StructureLabelEntry;
 }
 
-/** Owns the native project Structure view and its workspace-local display preferences. */
+/** プロジェクトの構造ビューと，ワークスペースごとの表示設定を管理する． */
 export default class StructureView implements vscode.TreeDataProvider<TreeElement>, vscode.Disposable {
+  /** 構造ビューの表示更新を通知するイベント発火元． */
   private readonly changes = new vscode.EventEmitter<TreeElement | TreeElement[] | undefined>();
+  /** ツリーの再描画を要求するイベント． */
   readonly onDidChangeTreeData = this.changes.event;
+  /** VS Codeへ登録した構造ツリービュー． */
   private readonly view: vscode.TreeView<TreeElement>;
+  /** 終了時にまとめて解除する監視とイベント購読． */
   private readonly disposables: vscode.Disposable[] = [];
+  /** 現在の表示階層の基準となる公開済み構造． */
   private structureSnapshot: StructureSnapshot | undefined;
+  /** 解析または表示に適用した設定． */
   private settings: StructureViewSettings;
+  /** 表示または解析階層のルート要素． */
   private roots: TreeElement[] = [];
+  /** ファイルの識別キーから，そのファイルに属する表示要素への表． */
   private readonly elementsByFile = new Map<string, TreeElement[]>();
+  /** ファイルごとの表示内容の更新世代． */
   private readonly fileEpochs = new Map<string, number>();
+  /** 次の表示更新で再計算するファイルの識別キー． */
   private readonly pendingDisplayFiles = new Set<string>();
+  /** 表示要素から描画済みのツリー項目への弱参照キャッシュ． */
   private itemCache = new WeakMap<TreeElement, DisplayItem>();
+  /** 表示要素から所属ファイルの識別キーへの弱参照の表． */
   private elementFiles = new WeakMap<TreeElement, string>();
+  /** 表示要素から親要素への弱参照の表． */
   private parents = new WeakMap<TreeElement, TreeElement>();
+  /** 編集中の見出し表示の更新をまとめるタイマー． */
   private liveTimer?: ReturnType<typeof setTimeout>;
+  /** 所有するリソースを解放し，新しい要求を受け付けない場合はtrue． */
   private disposed = false;
 
-  constructor(private readonly context: vscode.ExtensionContext, private readonly service: StructureService) {
+  /**
+   * StructureViewの初期状態と所有するリソースを準備する．
+   * @param context リソースの場所と拡張機能の有効期間を持つVS Codeコンテキスト．
+   * @param service 関連情報の取得や更新を担当するサービス．
+   * @returns 新しいインスタンス．コンストラクタから明示的な値は返さない．
+   */
+  constructor(/** リソースの場所と拡張機能の有効期間を持つVS Codeコンテキスト． */ private readonly context: vscode.ExtensionContext, /** 情報の取得と変更通知を担当するサービス． */ private readonly service: StructureService) {
     this.structureSnapshot = service.snapshot;
     this.settings = this.readSettings();
     this.view = vscode.window.createTreeView('fortex.structure', { treeDataProvider: this, showCollapseAll: true });
@@ -129,14 +172,24 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
         this.rebuild();
       }
     }, () => {
-      // The service exposes discovery failures through its snapshot message.
+      // 探索失敗の理由は，サービスが構造スナップショットのメッセージで通知する．
     });
   }
 
+  /**
+   * 構造ビューのルートまたは指定要素の子を取得する．
+   * @param element 構造ビューで操作するツリー要素．省略可能．
+   * @returns 指定要素の直下に表示するツリー要素の配列．
+   */
   getChildren(element?: TreeElement): TreeElement[] {
     return element?.type === 'node' ? element.children : element ? [] : this.roots;
   }
 
+  /**
+   * 構造要素の最新表示をVS Codeのツリー項目へ変換する．
+   * @param element 構造ビューで操作するツリー要素．
+   * @returns 名前，説明，アイコン，および移動コマンドを設定したツリー項目．
+   */
   getTreeItem(element: TreeElement): vscode.TreeItem {
     const key = this.elementFiles.get(element) ?? uriKey(this.elementLocation(element).uri);
     const epoch = this.fileEpochs.get(key) ?? 0;
@@ -147,8 +200,7 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
       previous.epoch = epoch;
       if (previous.nodeTitle === nodeTitle) { return previous.item; }
     }
-    // Line numbers are display snapshots. Offset-only edits need no redraw;
-    // navigation independently resolves the latest position when clicked.
+    // 行番号は表示時点の値を保持する．文字位置だけが変わる編集では描画し直さず，クリック時に最新の移動先を求める．
     const suffix = previous?.suffix ?? this.lineSuffix(this.elementLocation(element));
     const sourceDescription = previous?.sourceDescription ?? `${this.fileName(this.elementLocation(element).uri)}${suffix}`;
     const item = this.makeTreeItem(element, nodeTitle, sourceDescription, suffix);
@@ -156,19 +208,37 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
     return item;
   }
 
+  /**
+   * 構造要素に対応するソース位置を取得する．
+   * @param element 構造ビューで操作するツリー要素．
+   * @returns ラベルの位置または構造ノードの宣言位置．
+   */
   private elementLocation(element: TreeElement): StructureLocation {
     return element.type === 'label' ? element.entry.label.location : element.node.declarationRange;
   }
 
+  /**
+   * 編集中の見出しを考慮して要素の表示名を求める．
+   * @param element 構造ビューで操作するツリー要素．
+   * @returns 現在の編集内容を反映したノード名．
+   */
   private displayNodeTitle(element: TreeElement): string {
     const node = element.type === 'label' ? element.entry.node : element.node;
     if (element.type === 'label' && uriKey(node.declarationRange.uri) !== uriKey(element.entry.label.location.uri)) {
-      return node.title; // Cross-file label descriptions advance only on full rebuilds.
+      return node.title; // 別ファイルのラベル説明は，表示全体を作り直す場合だけ更新する．
     }
-    // Reading a title must not project a section end in another included file.
+    // 題名を読むだけの場合は，別の読み込み先にある見出し終端まで位置投影しない．
     return node.kind === 'section' ? this.service.projectNode(node, false).title : node.title;
   }
 
+  /**
+   * 構造要素の表示文字列と操作をツリー項目へ設定する．
+   * @param element 構造ビューで操作するツリー要素．
+   * @param nodeTitle 現在の見出し名を反映した表示名．
+   * @param sourceDescription ファイルなどの移動先を示す説明．
+   * @param suffix 確定したコマンドの後へ挿入する文字列．
+   * @returns 表示用の名前・説明・状態・コマンドを持つツリー項目．
+   */
   private makeTreeItem(element: TreeElement, nodeTitle: string, sourceDescription: string, suffix: string): vscode.TreeItem {
     if (element.type === 'label') {
       const { entry } = element;
@@ -204,7 +274,11 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
     return item;
   }
 
-  /** Keep VS Code's expansion identity independent of saved source offsets and display filters. */
+  /**
+   * VS Codeの展開状態を識別する値を，保存済みの文字位置や表示フィルタに依存させない．
+   * 引数はない．
+   * @returns 構造ノードの識別子から，展開状態を維持する表示用識別子へのMap．
+   */
   private nodeItemIds(): Map<string, string> {
     const itemIds = new Map<string, string>();
     const structureSnapshot = this.structureSnapshot;
@@ -224,6 +298,11 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
     return itemIds;
   }
 
+  /**
+   * 構造スナップショットと設定から表示ツリーと検索用の索引を作り直す．
+   * 引数はない．
+   * @returns なし．
+   */
   private rebuild(): void {
     if (this.disposed) {
       return;
@@ -259,6 +338,12 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
     this.changes.fire(undefined);
   }
 
+  /**
+   * 表示要素の親と関連ファイルを索引へ登録する．
+   * @param element 構造ビューで操作するツリー要素．
+   * @param parent 表示上の親要素．ルートならundefined．省略可能．
+   * @returns 登録したものと同じツリー要素．
+   */
   private registerElement<T extends TreeElement>(element: T, parent?: TreeElement): T {
     const key = uriKey(this.elementLocation(element).uri);
     const elements = this.elementsByFile.get(key) ?? [];
@@ -269,6 +354,11 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
     return element;
   }
 
+  /**
+   * 編集中の見出し名や行番号を表示中のツリーへ反映する．
+   * 引数はない．
+   * @returns なし．
+   */
   private refreshLiveTitles(): void {
     if (this.disposed || !this.view.visible) { return; }
     const files = [...this.pendingDisplayFiles];
@@ -280,7 +370,7 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
         if (cached && this.getTreeItem(element) !== cached.item) { changed.add(element); }
       }
     }
-    // A changed parent already refreshes its shown descendants in VS Code.
+    // VS Codeでは親の表示を更新すると，その下に表示されている子孫も更新される．
     const roots = [...changed].filter(element => {
       for (let parent = this.parents.get(element); parent; parent = this.parents.get(parent)) {
         if (changed.has(parent)) { return false; }
@@ -290,7 +380,11 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
     if (roots.length) { this.changes.fire(roots.length === 1 ? roots[0] : roots); }
   }
 
-  /** Coalesce redraws while typing without delaying them until typing stops. */
+  /**
+   * 文字入力中の描画要求をまとめる．入力が終わるまで更新を待ち続けない．
+   * 引数はない．
+   * @returns なし．
+   */
   private scheduleLiveTitleRefresh(): void {
     if (this.disposed || !this.view.visible || this.liveTimer) { return; }
     this.liveTimer = setTimeout(() => {
@@ -299,6 +393,11 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
     }, 100);
   }
 
+  /**
+   * 構造ビューの説明とコマンドの有効状態を現在の表示設定に合わせる．
+   * 引数はない．
+   * @returns なし．
+   */
   private updateStatus(): void {
     this.view.description = this.structureSnapshot
       ? `${this.fileName(this.structureSnapshot.main)}${this.structureSnapshot.followIncludes ? '' : ' · Current file only'}`
@@ -308,6 +407,11 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
         : this.roots.length > 0 ? undefined : this.settings.viewMode === 'labels' ? 'No labels found.' : 'No structure items match the current filter.');
   }
 
+  /**
+   * 構造ビューのフィルタと表示モードを読み取る．
+   * 引数はない．
+   * @returns ノード種別，数式・ラベルの表示条件，および表示モード．
+   */
   private readSettings(): StructureViewSettings {
     const config = vscode.workspace.getConfiguration('vscode-fortex', this.structureSnapshot?.main);
     const read = <T>(name: string, fallback: T): T => {
@@ -325,6 +429,12 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
     };
   }
 
+  /**
+   * 構造ビューの設定値を適切な設定範囲へ保存する．
+   * @param name 更新する構造ビュー設定のキー．
+   * @param value 変換または検証する値．
+   * @returns 処理の完了を表すPromise．値は返さない．
+   */
   private async updateSetting<K extends keyof StructureViewSettings>(name: K, value: StructureViewSettings[K]): Promise<void> {
     if (vscode.workspace.workspaceFolders?.length) {
       await vscode.workspace.getConfiguration('vscode-fortex').update(`outline.${name}`, value, vscode.ConfigurationTarget.Workspace);
@@ -335,6 +445,11 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
     this.rebuild();
   }
 
+  /**
+   * 構造ビューに表示する種別と数式の条件を選択する画面を開く．
+   * 引数はない．
+   * @returns 処理の完了を表すPromise．値は返さない．
+   */
   private async chooseFilter(): Promise<void> {
     const labels: Record<string, string> = {
       section: 'Headings', theorem: 'Theorems', figure: 'Figures', table: 'Tables', label: 'Standalone labels'
@@ -345,7 +460,10 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
     if (!categories) {
       return;
     }
-    const equationItems: (vscode.QuickPickItem & { value: StructureViewSettings['equations'] })[] = [
+    const equationItems: (vscode.QuickPickItem & {
+      /** トークンまたは解析項目が保持する値． */
+      value: StructureViewSettings['equations']
+    })[] = [
       { label: 'Labeled equations', value: 'labeled' },
       { label: 'All equations', value: 'all' },
       { label: 'Hide equations', value: 'hidden' }
@@ -360,6 +478,11 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
     await this.updateSetting('equations', equations.value);
   }
 
+  /**
+   * プロジェクトのラベルを検索して選択した宣言へ移動する．
+   * 引数はない．
+   * @returns 処理の完了を表すPromise．値は返さない．
+   */
   private async searchLabels(): Promise<void> {
     const structureSnapshot = await this.service.current();
     if (!structureSnapshot || structureSnapshot.labels.length === 0) {
@@ -381,12 +504,22 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
     }
   }
 
+  /**
+   * 選択した構造要素の宣言位置をエディタで開く．
+   * @param element 構造ビューで操作するツリー要素．省略可能．
+   * @returns 処理の完了を表すPromise．値は返さない．
+   */
   private async openElement(element?: TreeElement): Promise<void> {
     if (element) {
       await this.openLocation(element.type === 'label' ? element.entry.label.location : element.node.declarationRange);
     }
   }
 
+  /**
+   * 選択した要素に付いたラベルの宣言へ移動する．
+   * @param element 構造ビューで操作するツリー要素．省略可能．
+   * @returns 処理の完了を表すPromise．値は返さない．
+   */
   private async goToLabel(element?: TreeElement): Promise<void> {
     if (!element) {
       return;
@@ -408,28 +541,53 @@ export default class StructureView implements vscode.TreeDataProvider<TreeElemen
     }
   }
 
+  /**
+   * 現在の編集位置を考慮してソースの参照先を開く．
+   * @param location ファイルURI，半開UTF-16範囲，および基準となる捕捉ソースの識別子．
+   * @returns 処理の完了を表すPromise．値は返さない．
+   */
   private async openLocation(location: StructureLocation): Promise<void> {
     const document = await vscode.workspace.openTextDocument(location.uri);
-    // Resolve the saved location after opening; edits during I/O may move it.
+    // 文書を開く間の編集で位置が動く場合があるため，開いた後で保存していた参照先を現在の位置へ対応付ける．
     const current = this.service.projectLocation(location);
     const range = new vscode.Range(document.positionAt(current.start), document.positionAt(current.end));
     const editor = await vscode.window.showTextDocument(document, { selection: range, preview: true });
     editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
   }
 
+  /**
+   * 構造ビューに表示するファイル名を求める．
+   * @param uri 対象ファイルのURI．
+   * @returns URIのパスの最後の要素．取得できなければURIの文字列表現．
+   */
   private fileName(uri: vscode.Uri): string {
     return uri.path.split('/').filter(Boolean).at(-1) || uri.toString();
   }
 
+  /**
+   * 構造要素のソースを示す表示文字列を作る．
+   * @param location ファイルURI，半開UTF-16範囲，および基準となる捕捉ソースの識別子．
+   * @returns ファイル名と，取得できる場合はコロンで区切った1始まりの行番号．
+   */
   private sourceDescription(location: StructureLocation): string {
     return `${this.fileName(location.uri)}${this.lineSuffix(location)}`;
   }
 
+  /**
+   * 参照先の行番号を表示用の接尾辞へ変換する．
+   * @param location ファイルURI，半開UTF-16範囲，および基準となる捕捉ソースの識別子．
+   * @returns 行番号を取得できれば「:行番号」，取得できなければ空文字列．
+   */
   private lineSuffix(location: StructureLocation): string {
     const line = this.service.lineNumber(location);
     return line === undefined ? '' : `:${line}`;
   }
 
+  /**
+   * 所有する監視・購読・表示などのリソースを解放する．
+   * 引数はない．
+   * @returns なし．
+   */
   dispose(): void {
     this.disposed = true;
     if (this.liveTimer) { clearTimeout(this.liveTimer); this.liveTimer = undefined; }

@@ -1,6 +1,11 @@
 import * as LaTeXParser from '../latex-parser';
 
-/** Selects a literal package/class name from shared declarations at the cursor. */
+/**
+ * 共有の宣言解析から，カーソル位置の直接記述されたパッケージ名またはクラス名を選ぶ．
+ * @param source 解析または読み取りの対象となるソース本文．
+ * @param offset 対象文字列の先頭を0とするUTF-16位置．
+ * @returns カーソル位置のパッケージ名またはクラス名．対象外ならundefined．
+ */
 export function findDocumentationQuery(source: string, offset: number): string | undefined {
   if (!Number.isInteger(offset) || offset < 0 || offset > source.length) {
     return undefined;
@@ -19,8 +24,7 @@ export function findDocumentationQuery(source: string, offset: number): string |
       || offset < declaration.start || offset > argument.contentEnd) {
       continue;
     }
-    // Locate top-level commas without shifting source offsets. Validate original
-    // content so a masked literal or macro cannot become a plausible filename.
+    // ソース位置を変えずに最上位のカンマを探す．マスクされたリテラルやマクロを有効なファイル名と誤認しないよう，元の本文を検証する．
     const names = LaTeXParser.splitclist(scanner, argument.contentStart, argument.contentEnd);
     const literalName = (start: number, end: number): string | undefined => {
       const name = scanner.textWithoutComments(start, end)?.trim() ?? '';
@@ -30,7 +34,7 @@ export function findDocumentationQuery(source: string, offset: number): string |
       return names.length === 1 ? literalName(argument.contentStart, argument.contentEnd) : undefined;
     }
     for (const name of names) {
-      // Before a comma addresses the preceding name; after it addresses the next.
+      // カンマの直前は前の名前，直後は次の名前を対象とする．
       if (name.start <= offset && offset <= name.end) {
         return literalName(name.start, name.end);
       }

@@ -2,21 +2,50 @@ import LaTeXSource from './LaTeXSource';
 import { readCommand } from './SourceScanner';
 import type { CommandToken, SourceRange } from './SourceScanner';
 
-/** Replacement text is kept in its original immutable source, before expansion. */
+/** 展開前の置換本文を，元の不変ソース内の範囲として保持する． */
 export type MacroBinding =
-  | { readonly kind: 'replacement'; readonly source: LaTeXSource; readonly body: SourceRange }
-  | { readonly kind: 'opaque' };
+  | {
+    /** この項目がreplacementであることを表す識別値． */
+    readonly kind: 'replacement';
+    /** マクロの置換本文を保持する元の不変LaTeXソース． */
+    readonly source: LaTeXSource;
+    /** 元の不変ソース内にある，マクロの置換本文の範囲． */
+    readonly body: SourceRange
+  }
+  | {
+    /** この項目がopaqueであることを表す識別値． */
+    readonly kind: 'opaque'
+  };
 
 export type MacroLookup = (name: string) => MacroBinding | undefined;
 
-export type InputToken = CommandToken & { readonly name: 'input' | 'include' };
+export type InputToken = CommandToken & {
+  /** 対象の名前． */
+  readonly name: 'input' | 'include'
+};
 
 export type FilenameResult =
-  | { readonly status: 'resolved'; readonly filename: string; readonly consumedEnd: number }
-  | { readonly status: 'unresolved'; readonly reason: string; readonly consumedEnd: number };
+  | {
+    /** この項目がresolvedであることを表す識別値． */
+    readonly status: 'resolved';
+    /** マクロ展開と引用符の処理を終えた入力ファイル名． */
+    readonly filename: string;
+    /** 完全に読み取った部分の直後を表すUTF-16位置． */
+    readonly consumedEnd: number
+  }
+  | {
+    /** この項目がunresolvedであることを表す識別値． */
+    readonly status: 'unresolved';
+    /** 入力を解決できなかった理由を識別する文字列． */
+    readonly reason: string;
+    /** 完全に読み取った部分の直後を表すUTF-16位置． */
+    readonly consumedEnd: number
+  };
 
 interface FilenameToken {
+  /** この項目の種別を表す識別値． */
   readonly kind: 'character' | 'space' | 'command' | 'invalid';
+  /** トークンまたは解析項目が保持する値． */
   readonly value: string;
 }
 
@@ -25,8 +54,12 @@ const maxExpansionDepth = 64;
 const replacementTokens = new WeakMap<MacroBinding, readonly FilenameToken[]>();
 
 /**
- * A small TeX mouth for filenames and replacement text. Tokenization precedes
- * expansion: source spaces collapse, but spaces from separate macros do not.
+ * ファイル名と置換本文用の簡易的なTeX字句解析．展開より先にトークン化し，ソース中の連続空白はまとめるが，別のマクロから現れた空白はまとめない．
+ *
+ * @param source 解析または読み取りの対象となるソース本文．
+ * @param start 対象範囲の開始位置．UTF-16単位で，範囲に含む．
+ * @param end 対象範囲の終端位置．UTF-16単位で，範囲に含まない．
+ * @returns 文字・空白・コマンド・不正トークンを元の順序で列挙するGenerator．
  */
 function* tokenize(source: string, start: number, end: number): Generator<FilenameToken> {
   let state: 'mid' | 'skip' | 'new' = 'mid';
@@ -76,7 +109,13 @@ function* tokenize(source: string, start: number, end: number): Generator<Filena
   }
 }
 
-/** Reads a braced filename; filesystem access belongs to resolveInputFile. */
+/**
+ * 波括弧内のファイル名を読み取る．ファイルシステムへのアクセスはresolveInputFileで行う．
+ * @param source 読み取りと範囲の基準となる共有LaTeXソース．
+ * @param command 実行または解析するコマンド．
+ * @param macros 現在位置で有効なマクロ定義を名前から引く関数．省略可能．
+ * @returns 展開したファイル名または解決できない理由と，読み取り済み部分の終端．
+ */
 export function readInputFilename(source: LaTeXSource, command: InputToken, macros?: MacroLookup): FilenameResult {
   const group = source.argumentScanner.readArgument(command.end);
   const consumedEnd = group?.end ?? command.end;
@@ -88,6 +127,12 @@ export function readInputFilename(source: LaTeXSource, command: InputToken, macr
   let filename = '';
   let failure: string | undefined;
   const active = new Set<string>();
+  /**
+   * 引数なしのマクロの置換本文を再帰的に展開する．
+   * @param token 元ソース中の対象トークンとその範囲．
+   * @param depth 現在のマクロ展開の深さ．
+   * @returns 展開後のファイル名トークンを順に列挙するGenerator．
+   */
   function* expand(token: FilenameToken, depth: number): Generator<FilenameToken> {
     if (++count > maxExpandedTokens) { failure = 'expansion-limit'; return; }
     if (token.kind !== 'command' || !macros) { yield token; return; }
@@ -123,7 +168,7 @@ export function readInputFilename(source: LaTeXSource, command: InputToken, macr
   }
   if (quoted) { return fail('unclosed-quote'); }
   filename = filename.replace(/^ +/, '');
-  // LaTeX preserves the final space of an extensionless base name.
+  // LaTeXは，拡張子のないファイル名の末尾の空白を保持する．
   if (/\.[^/]*$/.test(filename)) { filename = filename.replace(/ +$/, ''); }
   if (!filename) { return fail('empty-filename'); }
   return { status: 'resolved', filename, consumedEnd };

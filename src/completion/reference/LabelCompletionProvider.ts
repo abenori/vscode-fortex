@@ -6,17 +6,36 @@ import CompletionSession from '../CompletionSession';
 import { completionSources } from '../CompletionSources';
 import { collectRawLabels } from '../RawCompletionCollector';
 
-interface LabelCandidate { key: string; uri: vscode.Uri }
+interface LabelCandidate {
+  /** 参照または検索に使用する識別キー． */
+  key: string;
+  /** 対象ファイルのURI． */
+  uri: vscode.Uri
+}
 class LabelCompletionItem extends vscode.CompletionItem {
-  constructor(readonly candidate: LabelCandidate) { super(candidate.key, vscode.CompletionItemKind.Reference); }
+  /**
+   * LabelCompletionItemの初期状態と所有するリソースを準備する．
+   * @param candidate 現在評価している補完候補と関連情報．
+   * @returns 新しいインスタンス．コンストラクタから明示的な値は返さない．
+   */
+  constructor(/** この補完項目に対応するラベル名と元ファイル． */ readonly candidate: LabelCandidate) { super(candidate.key, vscode.CompletionItemKind.Reference); }
 }
 
 const maximumCompletionItems = 200;
 
-/** Reads keys on a new input context, retaining them only for that query. */
+/** 新しい入力範囲でラベルを読み取り，その検索文字列を編集中の間だけ保持する． */
 export default class LabelCompletionProvider implements vscode.Disposable {
+  /** 補完候補の読み込みと監視を共有するセッション． */
   private readonly session = new CompletionSession<LabelCandidate[]>();
 
+  /**
+   * カーソル位置の入力に一致する補完候補を作る．
+   * @param document 要求の対象となる編集中の文書．
+   * @param position 文書内の0始まりの行番号とUTF-16列位置．
+   * @param context 入力中のラベル名と，その先頭のUTF-16位置．
+   * @param token 要求のキャンセルを確認するトークン．
+   * @returns 表示する補完候補の一覧．要求がキャンセルされた場合などはundefined．Promiseで返す．
+   */
   public async complete(
     document: vscode.TextDocument,
     position: vscode.Position,
@@ -51,7 +70,12 @@ export default class LabelCompletionProvider implements vscode.Disposable {
     return new vscode.CompletionList(items, true);
   }
 
-  /** Source descriptions are constructed only for the selected suggestion. */
+  /**
+   * ソースの説明は，選択された補完候補についてだけ作成する．
+   * @param item 更新または変換する表示項目．
+   * @param token 要求のキャンセルを確認するトークン．
+   * @returns 説明を追加した補完項目．Promiseで返す．
+   */
   public async resolveCompletionItem(item: vscode.CompletionItem, token: vscode.CancellationToken): Promise<vscode.CompletionItem> {
     if (!(item instanceof LabelCompletionItem) || token.isCancellationRequested) { return item; }
     let source: string;
@@ -71,10 +95,26 @@ export default class LabelCompletionProvider implements vscode.Disposable {
     return item;
   }
 
+  /**
+   * 変更された入力に依存するキャッシュを無効にする．
+   * 引数はない．
+   * @returns なし．
+   */
   public invalidate(): void { this.session.invalidate(); }
+  /**
+   * 所有する監視・購読・表示などのリソースを解放する．
+   * 引数はない．
+   * @returns なし．
+   */
   public dispose(): void { this.session.dispose(); }
 }
 
+/**
+ * 検索文字が対象文字列に順番どおり現れるかを判定する．
+ * @param value 変換または検証する値．
+ * @param query 現在入力されている検索文字列．
+ * @returns 検索文字がすべて順序を保って一致する場合はtrue．
+ */
 function fuzzyMatch(value: string, query: string): boolean {
   let index = 0;
   const normalized = query.toLocaleLowerCase();

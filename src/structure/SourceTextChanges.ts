@@ -1,13 +1,24 @@
 import type { SourceEditDelta } from './SourcePositionTracker';
 
-interface Line { start: number; end: number; text: string }
+interface Line {
+  /** 元ソースにおける範囲の開始位置．0始まりのUTF-16単位で，この位置を含む． */
+  start: number;
+  /** 元ソースにおける範囲の終端．0始まりのUTF-16単位で，この位置を含まない． */
+  end: number;
+  /** この範囲に対応する文字列． */
+  text: string
+}
 
-/** Save/reload-only bridge from persisted text to a captured editor version. */
+/**
+ * 保存・再読み込み時に，保存済み本文と捕捉したエディタの版の位置を対応付ける．
+ * @param before 変更前のソース全文．
+ * @param after 変更後のソース全文．
+ * @returns 変更前の座標系で表した置換範囲と挿入文字数．本文が同一なら空配列．
+ */
 export function sourceTextChanges(before: string, after: string): SourceEditDelta[] {
   if (before === after) { return []; }
   const edits: SourceEditDelta[] = [];
-  // Large rewrites fall back to a conservative replacement. Bound fine-grained
-  // comparison work rather than running an unbounded diff in the extension host.
+  // 大きな書き換えは範囲全体の置換に切り替える．拡張機能の実行環境で比較量が無制限に増えないよう，細かい差分の計算量を制限する．
   let remainingCells = 1000000;
   const append = (offset: number, length: number, insertedLength: number) => {
     if (length || insertedLength) { edits.push({ offset, length, insertedLength }); }
@@ -33,7 +44,14 @@ export function sourceTextChanges(before: string, after: string): SourceEditDelt
       }
       let left = 0;
       let right = 0;
-      let pending: { offset: number; length: number; insertedLength: number } | undefined;
+      let pending: {
+        /** 編集前の本文における0始まりのUTF-16位置． */
+        offset: number;
+        /** 元のソースのUTF-16単位の長さ． */
+        length: number;
+        /** 挿入する文字列のUTF-16単位の長さ． */
+        insertedLength: number
+      } | undefined;
       const flush = () => { if (pending) { edits.push(pending); pending = undefined; } };
       while (left < oldLength || right < newLength) {
         if (left < oldLength && right < newLength && before[oldStart + left] === after[newStart + right]) {
@@ -55,7 +73,12 @@ export function sourceTextChanges(before: string, after: string): SourceEditDelt
       const newLines = lines(after, newStart, newEnd);
       const oldUnique = uniqueLines(oldLines);
       const newUnique = uniqueLines(newLines);
-      const candidates: { old: number; next: number }[] = [];
+      const candidates: {
+        /** 変更前の行配列における0始まりの添字． */
+        old: number;
+        /** 変更後の行配列における0始まりの添字． */
+        next: number
+      }[] = [];
       for (const [text, old] of oldUnique) {
         const next = newUnique.get(text);
         if (old >= 0 && next !== undefined && next >= 0) { candidates.push({ old, next }); }
@@ -81,6 +104,13 @@ export function sourceTextChanges(before: string, after: string): SourceEditDelt
   return edits;
 }
 
+/**
+ * 指定したソース範囲を改行を含む行に分割する．
+ * @param source 解析または読み取りの対象となるソース本文．
+ * @param start 対象範囲の開始位置．UTF-16単位で，範囲に含む．
+ * @param end 対象範囲の終端位置．UTF-16単位で，範囲に含まない．
+ * @returns 行の半開UTF-16範囲と本文の配列．
+ */
 function lines(source: string, start: number, end: number): Line[] {
   const result: Line[] = [];
   let lineStart = start;
@@ -94,14 +124,33 @@ function lines(source: string, start: number, end: number): Line[] {
   return result;
 }
 
+/**
+ * 行本文ごとに唯一の出現位置を索引化する．
+ * @param entries 処理する項目の一覧．
+ * @returns 本文から行の添字へのMap．重複した本文の値は-1．
+ */
 function uniqueLines(entries: readonly Line[]): Map<string, number> {
   const result = new Map<string, number>();
   entries.forEach((entry, index) => result.set(entry.text, result.has(entry.text) ? -1 : index));
   return result;
 }
 
-/** Longest increasing subsequence keeps only unchanged lines in source order. */
-function selectIncreasingAnchors(entries: readonly { old: number; next: number }[]): { old: number; next: number }[] {
+/**
+ * 最長増加部分列を使い，変更のない共通行をソース順を保って残す．
+ * @param entries 処理する項目の一覧．
+ * @returns 変更前・変更後の両方で順序を保つ，共通行の対応の最長部分列．
+ */
+function selectIncreasingAnchors(entries: readonly {
+  /** 変更前の行配列における0始まりの添字． */
+  old: number;
+  /** 変更後の行配列における0始まりの添字． */
+  next: number
+}[]): {
+  /** 変更前の行配列における0始まりの添字． */
+  old: number;
+  /** 変更後の行配列における0始まりの添字． */
+  next: number
+}[] {
   const tails: number[] = [];
   const previous: number[] = [];
   entries.forEach((entry, index) => {
@@ -115,7 +164,12 @@ function selectIncreasingAnchors(entries: readonly { old: number; next: number }
     previous[index] = low ? tails[low - 1] : -1;
     tails[low] = index;
   });
-  const result: { old: number; next: number }[] = [];
+  const result: {
+    /** 変更前の行配列における0始まりの添字． */
+    old: number;
+    /** 変更後の行配列における0始まりの添字． */
+    next: number
+  }[] = [];
   for (let index = tails.at(-1) ?? -1; index >= 0; index = previous[index]) { result.push(entries[index]); }
   return result.reverse();
 }

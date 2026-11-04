@@ -5,32 +5,51 @@ import { CitationEntry } from './Citation';
 import { latexToPlainText } from './CitationSearch';
 
 interface ParsedFile {
+  /** 対象の開いている文書． */
   document: vscode.TextDocument | undefined;
+  /** 読み取り時点のエディタ文書の版番号． */
   documentVersion?: number;
+  /** 解析済みの項目の配列． */
   entries: CitationEntry[];
 }
 
 interface PendingRead {
+  /** キャッシュや位置情報の更新を識別する改訂番号． */
   revision: number;
+  /** 対象の開いている文書． */
   document: vscode.TextDocument | undefined;
+  /** 読み取り時点のエディタ文書の版番号． */
   documentVersion: number | undefined;
+  /** 進行中の非同期処理を共有するPromise． */
   promise: Promise<CitationEntry[]>;
 }
 
 interface WatchedFile {
+  /** イベント購読または監視を解除するためのハンドル． */
   disposable: vscode.Disposable;
+  /** キャッシュや位置情報の更新を識別する改訂番号． */
   revision: number;
+  /** 最後に有効と確認した解析結果． */
   cached?: ParsedFile;
+  /** 現在進行中の処理．未開始または完了後は未設定． */
   pending?: PendingRead;
 }
 
-/** Parsed bibliographies and non-recursive watches, including outside the workspace. */
+/** 解析済みの文献と，ワークスペース外も含む非再帰的なファイル監視． */
 export default class BibFileCache implements vscode.Disposable {
+  /** 文献ファイルの識別キーから監視・改訂・読み取り状態への表． */
   private readonly files = new Map<string, WatchedFile>();
+  /** 所有者の識別キーから，参照する文献ファイルの識別キーの集合への表． */
   private readonly references = new Map<string, Set<string>>();
+  /** 所有するリソースを解放し，新しい要求を受け付けない場合はtrue． */
   private disposed = false;
 
-  /** Shares content watches across owners and releases files no longer referenced by any owner. */
+  /**
+   * 参照元の間で文献ファイルの監視を共有し，どこからも参照されなくなったファイルを解放する．
+   * @param owner 文献ファイルの参照元を識別する文字列．
+   * @param uris 対象ファイルのURIの一覧．
+   * @returns なし．
+   */
   public setReferences(owner: string, uris: readonly vscode.Uri[]): void {
     if (this.disposed) {
       return;
@@ -40,13 +59,11 @@ export default class BibFileCache implements vscode.Disposable {
       const key = Workspace.uriKey(uri);
       keys.add(key);
       if (!this.files.has(key)) {
-        // Watching the parent also handles editors that save by replacing the
-        // file. A simple glob avoids recursive watching and filename escaping
-        // issues (e.g. references[1].bib); only the exact URI is acted upon.
+        // 親ディレクトリを監視することで，ファイルの置き換えによる保存にも対応する．
+        // 単純なパターンで再帰監視とファイル名のエスケープ問題を避け，references[1].bibなども正確なURIで照合する．
         const watcher = vscode.workspace.createFileSystemWatcher(
           new vscode.RelativePattern(vscode.Uri.joinPath(uri, '..'), '*')
         );
-        /** Invalidates parsed contents for exact-path notifications, including replaced files. */
         const changed = (eventUri: vscode.Uri) => {
           if (Workspace.uriKey(eventUri) !== key) {
             return;
@@ -68,11 +85,21 @@ export default class BibFileCache implements vscode.Disposable {
     this.releaseUnused();
   }
 
+  /**
+   * 指定した所有者による文献ファイルの参照を解除する．
+   * @param owner 文献ファイルの参照元を識別する文字列．
+   * @returns なし．
+   */
   public release(owner: string): void {
     this.references.delete(owner);
     this.releaseUnused();
   }
 
+  /**
+   * 変更された入力に依存するキャッシュを無効にする．
+   * @param uri 対象ファイルのURI．
+   * @returns なし．
+   */
   public invalidate(uri: vscode.Uri): void {
     const file = this.files.get(Workspace.uriKey(uri));
     if (file) {
@@ -82,16 +109,19 @@ export default class BibFileCache implements vscode.Disposable {
     }
   }
 
+  /**
+   * 文献ファイルの現在の版に対応する解析結果を取得する．
+   * @param uri 対象ファイルのURI．
+   * @returns 現在の文献項目の配列．同じ版の読み取りは共有する．Promiseで返す．
+   */
   public async read(uri: vscode.Uri): Promise<CitationEntry[]> {
     const key = Workspace.uriKey(uri);
     const file = this.files.get(key);
-    // Registration must precede reading, so an update during the first read
-    // cannot be lost before the cache is populated.
+    // 最初の読み取り中の更新をキャッシュ作成前に取り逃さないよう，読み取りより先に監視を登録する．
     if (!file) {
       return [];
     }
-    // Continuous external writes must not keep a completion request alive
-    // indefinitely. Leave the cache empty and retry on the next request.
+    // 外部からの書き込みが続いても，補完要求を無期限に保持しない．キャッシュを空にして次の要求で再試行する．
     for (let attempt = 0; attempt < 3; attempt++) {
       if (this.disposed || this.files.get(key) !== file) {
         return [];
@@ -116,8 +146,7 @@ export default class BibFileCache implements vscode.Disposable {
       try {
         entries = await pending.promise;
       } catch {
-        // Missing files are not cached; create notifications or the next
-        // completion can pick up a file that becomes available later.
+        // 存在しないファイルはキャッシュしない．作成通知または次の補完要求で，後から利用可能になったファイルを読み取る．
       }
       if (file.pending === pending) {
         file.pending = undefined;
@@ -138,6 +167,11 @@ export default class BibFileCache implements vscode.Disposable {
     return [];
   }
 
+  /**
+   * 所有する監視・購読・表示などのリソースを解放する．
+   * 引数はない．
+   * @returns なし．
+   */
   public dispose(): void {
     this.disposed = true;
     for (const file of this.files.values()) {
@@ -147,6 +181,11 @@ export default class BibFileCache implements vscode.Disposable {
     this.references.clear();
   }
 
+  /**
+   * どの所有者からも参照されない文献ファイルの監視とキャッシュを解放する．
+   * 引数はない．
+   * @returns なし．
+   */
   private releaseUnused(): void {
     const retained = new Set(Array.from(this.references.values()).flatMap((keys) => [...keys]));
     for (const [key, file] of this.files) {
@@ -157,6 +196,11 @@ export default class BibFileCache implements vscode.Disposable {
     }
   }
 
+  /**
+   * 文献ファイルの本文を読み取り，表示と検索に使用する項目へ変換する．
+   * @param uri 対象ファイルのURI．
+   * @returns 引用キー，種別，著者，題名，年，および元ファイルを持つ文献項目の配列を返すPromise．
+   */
   private async parse(uri: vscode.Uri): Promise<CitationEntry[]> {
     const source = await Workspace.readDocumentText(uri);
     return parseBibTeX(source).map((parsed): CitationEntry => ({

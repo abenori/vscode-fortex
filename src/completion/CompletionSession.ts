@@ -3,29 +3,47 @@ import * as path from 'path';
 import * as Workspace from '../workspace';
 
 export interface CompletionQuery {
-  /** The mutable query only: do not include the command or opening delimiter. */
+  /** 変更可能な検索文字列だけの範囲．コマンドや開き区切りは含めない． */
   start: number;
+  /** 検索文字列だけの終端UTF-16位置．この位置は含まない． */
   end: number;
+  /** 同じ候補の読み込みを共有できる補完種別などの識別文字列． */
   scope: string;
 }
 
 interface ActiveSession<T> extends CompletionQuery {
+  /** 対象の開いている文書． */
   document: vscode.TextDocument;
+  /** ソースを読み取った時点または投影を計算した時点の文書版番号． */
   version: number;
+  /** 所有する処理へキャンセルを通知するトークンソース． */
   cancellation: vscode.CancellationTokenSource;
+  /** 処理のキャンセル状態を確認するトークン． */
   token: vscode.CancellationToken;
+  /** 共有結果の完了を待っている要求の数． */
   waiters: number;
+  /** 要求間で共有する補完候補の読み込み結果． */
   value: Promise<T>;
+  /** 依存するファイルやディレクトリの監視ハンドルの対応表． */
   watches: Map<string, vscode.Disposable>;
+  /** この処理が参照したファイルの識別キーの集合． */
   dependencies: Set<string>;
 }
 
-/** Keeps candidates only while one completion query is being edited. */
+/** 1つの補完用の検索文字列を編集中の間だけ，候補を保持する． */
 export default class CompletionSession<T> implements vscode.Disposable {
+  /** 現在実行中または共有中のセッション． */
   private active?: ActiveSession<T>;
+  /** 所有するリソースを解放し，新しい要求を受け付けない場合はtrue． */
   private disposed = false;
+  /** 所有者の終了時に解除するイベント購読． */
   private readonly subscriptions: vscode.Disposable[];
 
+  /**
+   * CompletionSessionの初期状態と所有するリソースを準備する．
+   * 引数はない．
+   * @returns 新しいインスタンス．コンストラクタから明示的な値は返さない．
+   */
   constructor() {
     this.subscriptions = [
       vscode.workspace.onDidChangeTextDocument(event => this.changed(event)),
@@ -49,6 +67,14 @@ export default class CompletionSession<T> implements vscode.Disposable {
     ];
   }
 
+  /**
+   * 検索文字列の範囲が変化する間，同じ入力元に対する候補の読み込みを共有する．
+   * @param document 要求の対象となる編集中の文書．
+   * @param query 入力中の検索文字列の開始・終了位置と，候補を共有できる補完範囲．
+   * @param token 要求のキャンセルを確認するトークン．
+   * @param load キャンセル状態を受け取り，共有する補完候補を読み込む処理．
+   * @returns 読み込んだ候補データ．呼び出し元または共有要求のキャンセル時はundefined．Promiseで返す．
+   */
   async get(
     document: vscode.TextDocument,
     query: CompletionQuery,
@@ -69,7 +95,7 @@ export default class CompletionSession<T> implements vscode.Disposable {
       };
       this.active = active;
       if (query.scope === 'project') {
-        // Candidate files can be added before they belong to the discovered graph.
+        // 新しい候補ファイルは，検出済みの依存関係に加わる前に作成される場合がある．
         const watcher = vscode.workspace.createFileSystemWatcher('**/*.tex');
         const invalidate = () => { if (this.active === active) { this.invalidate(); } };
         active.watches.set('workspace', vscode.Disposable.from(watcher,
@@ -81,7 +107,10 @@ export default class CompletionSession<T> implements vscode.Disposable {
     try {
       const result = await Promise.race([
         active.value.then(value => ({ value })),
-        new Promise<{ cancelled: true }>(resolve => {
+        new Promise<{
+          /** 要求がキャンセルされたことを表す値． */
+          cancelled: true
+        }>(resolve => {
           subscription = token.onCancellationRequested(() => resolve({ cancelled: true }));
           if (token.isCancellationRequested) { resolve({ cancelled: true }); }
         })
@@ -95,15 +124,18 @@ export default class CompletionSession<T> implements vscode.Disposable {
     } finally {
       subscription?.dispose();
       active.waiters--;
-      // VS Code cancels an older completion request when another query character
-      // arrives, potentially before registering its successor. Preserve that
-      // context's shared load when the allowed edit already advanced its version.
+      // VS Codeは次の検索文字が入力されると，後続の要求を登録する前に以前の要求をキャンセルする場合がある．許可された編集ですでに文書版が進んでいれば，共有中の読み込みを保持する．
       if (token.isCancellationRequested && active.waiters === 0 && this.active === active
         && active.version === requestedVersion) { this.invalidate(); }
     }
   }
 
-  /** Temporary watches also cover project sources outside workspace folders. */
+  /**
+   * 一時的な監視は，ワークスペースフォルダ外のプロジェクトソースも対象とする．
+   * @param uris 対象ファイルのURIの一覧．
+   * @param token 要求のキャンセルを確認するトークン．省略可能．
+   * @returns なし．
+   */
   watch(uris: readonly vscode.Uri[], token?: vscode.CancellationToken): void {
     const active = this.active;
     if (!active || active.scope !== 'project' || (token && (active.token !== token || token.isCancellationRequested))) { return; }
@@ -111,6 +143,12 @@ export default class CompletionSession<T> implements vscode.Disposable {
     this.watchDirectories(uris.filter(uri => uri.scheme === 'file').map(uri => vscode.Uri.file(path.dirname(uri.fsPath))), token);
   }
 
+  /**
+   * 補完に影響するファイルの作成・削除をディレクトリ単位で監視する．
+   * @param directories 監視するディレクトリのURIの一覧．
+   * @param token 要求のキャンセルを確認するトークン．省略可能．
+   * @returns なし．
+   */
   watchDirectories(directories: readonly vscode.Uri[], token?: vscode.CancellationToken): void {
     const active = this.active;
     if (!active || active.scope !== 'project' || (token && (active.token !== token || token.isCancellationRequested))) { return; }
@@ -127,6 +165,11 @@ export default class CompletionSession<T> implements vscode.Disposable {
     }
   }
 
+  /**
+   * 変更された入力に依存するキャッシュを無効にする．
+   * 引数はない．
+   * @returns なし．
+   */
   invalidate(): void {
     const active = this.active;
     this.active = undefined;
@@ -136,12 +179,22 @@ export default class CompletionSession<T> implements vscode.Disposable {
     for (const watch of active.watches.values()) { watch.dispose(); }
   }
 
+  /**
+   * 所有する監視・購読・表示などのリソースを解放する．
+   * 引数はない．
+   * @returns なし．
+   */
   dispose(): void {
     this.disposed = true;
     this.invalidate();
     for (const subscription of this.subscriptions) { subscription.dispose(); }
   }
 
+  /**
+   * 文書変更が補完の検索文字列だけに収まるかを確認し，必要ならセッションを破棄する．
+   * @param event 状態変更の内容を伝えるイベント．
+   * @returns なし．
+   */
   private changed(event: vscode.TextDocumentChangeEvent): void {
     const active = this.active;
     if (!active || event.contentChanges.length === 0) { return; }

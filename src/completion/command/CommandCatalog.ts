@@ -1,14 +1,16 @@
 export interface CommandCatalogEntry {
+  /** 対象の名前． */
   name: string;
+  /** 挿入する本文と入力位置を表すスニペット文字列． */
   snippet: string;
+  /** 候補の用途や内容を示す短い説明． */
   detail: string;
+  /** 挿入後に次の補完候補を再表示する場合はtrue． */
   retriggerSuggestions?: boolean;
 }
 
 /**
- * Common LaTeX commands that are useful without inspecting installed packages.
- * Snippets include only stable, widely supported arguments; package-specific
- * options can still be typed after accepting a completion.
+ * インストール済みパッケージを調べずに利用できる，一般的なLaTeXコマンド．スニペットには広く対応する安定した引数だけを含め，パッケージ固有のオプションは補完後に入力できる．
  */
 export const COMMAND_CATALOG: readonly CommandCatalogEntry[] = [
   { name: 'documentclass', snippet: '\\documentclass{${1:class}}$0', detail: 'Document class' },

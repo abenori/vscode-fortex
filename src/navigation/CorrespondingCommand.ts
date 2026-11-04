@@ -2,10 +2,15 @@ import * as vscode from 'vscode';
 import * as LaTeXParser from '../latex-parser';
 
 interface NavigationQuickPickItem extends vscode.QuickPickItem {
+  /** 移動先のラベルまたは参照のキーと元ソースの範囲． */
   token: LaTeXParser.ReferenceToken;
 }
 
-/** Moves from an environment, label, or reference command to its counterpart. */
+/**
+ * 環境・ラベル・参照コマンドから，対応する宣言または参照先へ移動する．
+ * 引数はない．
+ * @returns 処理の完了を表すPromise．値は返さない．
+ */
 export async function goToCorresponding(): Promise<void> {
   const editor = vscode.window.activeTextEditor;
   if (!editor || editor.document.languageId !== 'latex') {
@@ -62,6 +67,12 @@ export async function goToCorresponding(): Promise<void> {
   moveCursor(editor, target.keyStart);
 }
 
+/**
+ * 参照の出現位置を移動先の選択項目へ変換する．
+ * @param document 要求の対象となる編集中の文書．
+ * @param token 元ソース中の対象トークンとその範囲．
+ * @returns 表示用の行番号・周辺行と，元の参照トークンを含む項目．
+ */
 function createQuickPickItem(
   document: vscode.TextDocument,
   token: LaTeXParser.ReferenceToken
@@ -79,12 +90,24 @@ function createQuickPickItem(
   };
 }
 
+/**
+ * 文書内の指定位置へカーソルを移して表示範囲を合わせる．
+ * @param editor 編集または移動の対象となるエディタ．
+ * @param offset 対象文字列の先頭を0とするUTF-16位置．
+ * @returns なし．
+ */
 function moveCursor(editor: vscode.TextEditor, offset: number): void {
   const position = editor.document.positionAt(offset);
   editor.selection = new vscode.Selection(position, position);
   editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenterIfOutsideViewport);
 }
 
+/**
+ * 指定位置が環境宣言の範囲内にあるかを判定する．
+ * @param token 元ソース中の対象トークンとその範囲．
+ * @param offset 対象文字列の先頭を0とするUTF-16位置．
+ * @returns 開始位置以上かつ終了位置以下であればtrue．
+ */
 function isWithin(token: LaTeXParser.EnvironmentToken, offset: number): boolean {
   return token.start <= offset && offset <= token.end;
 }

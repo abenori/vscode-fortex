@@ -2,7 +2,11 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import * as LaTeXParser from '../../latex-parser';
 
-/** Finds literal bibliography paths declared by classic BibTeX or biblatex. */
+/**
+ * 従来のBibTeXまたはbiblatexの宣言から，直接記述された文献ファイル名を抽出する．
+ * @param texSource 文献宣言を検索するLaTeXソース全文．
+ * @returns LaTeXソース中で宣言された文献ファイル名の配列．
+ */
 export function discoverBibReferences(texSource: string): string[] {
   const syntax = new LaTeXParser.LaTeXSource(texSource);
   const scanner = syntax.sourceScanner;
@@ -12,8 +16,7 @@ export function discoverBibReferences(texSource: string): string[] {
 
   const add = (reference: string, appendExtension: boolean) => {
     let normalized = reference.trim();
-    // Macro-expanded filenames cannot be resolved statically; defer them rather
-    // than presenting a misleading path to kpsewhich.
+    // マクロ展開を要するファイル名は静的に解決できないため，誤ったパスをkpsewhichへ渡さず保留する．
     if (!normalized || /[\\#${}]/.test(normalized)) {
       return;
     }
@@ -42,9 +45,14 @@ export function discoverBibReferences(texSource: string): string[] {
   return references;
 }
 
+/**
+ * TeXファイルの場所を基準に文献ファイル名をURIへ変換する．
+ * @param texUri 文献パスの基準となるTeXファイルのURI．
+ * @param reference 宣言に書かれた参照名．
+ * @returns 絶対パスまたはTeXファイルからの相対パスを解決した文献URI．
+ */
 export function resolveBibUri(texUri: vscode.Uri, reference: string): vscode.Uri {
-  // Preserve non-file URI schemes (remote workspaces, virtual documents) by using
-  // URI path operations unless the reference is a native absolute path.
+  // 参照がOS固有の絶対パスでなければURIのパス操作を使い，リモートや仮想文書のスキームを保つ．
   const normalized = reference.replace(/\\/g, '/');
   if (texUri.scheme === 'file' && path.isAbsolute(reference)) {
     return vscode.Uri.file(reference);

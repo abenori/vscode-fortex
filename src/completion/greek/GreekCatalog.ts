@@ -1,13 +1,13 @@
 export interface GreekEntry {
+  /** 大文字小文字を区別するギリシャ文字の略記． */
   readonly code: string;
+  /** 挿入するLaTeXコマンド．先頭のバックスラッシュを含む． */
   readonly command: string;
 }
 
 /**
- * YaTeX's standard Greek abbreviations, in their original order.
- * Package-dependent uppercase variants and the upstream `f`/`foo` placeholder
- * are deliberately excluded.
- * https://github.com/hiroseyuuji/yatex/blob/master/yatexmth.el
+ * YaTeX標準のギリシャ文字の略記を元の順序で保持する．パッケージに依存する大文字の別形式と，元データのf・fooの仮項目は除外する．
+ * 参照元: https://github.com/hiroseyuuji/yatex/blob/master/yatexmth.el
  */
 export const GREEK_ENTRIES: readonly GreekEntry[] = [
   { code: 'a', command: '\\alpha' },
@@ -56,12 +56,20 @@ export const GREEK_ENTRIES: readonly GreekEntry[] = [
   { code: 'W', command: '\\Omega' }
 ];
 
-/** Return case-sensitive prefix matches, retaining YaTeX's candidate order. */
+/**
+ * 大文字小文字を区別して前方一致する候補を，YaTeXの候補順で返す．
+ * @param code 大文字小文字を区別するギリシャ文字の略記．
+ * @returns 大文字小文字を区別して略記の前方が一致する，カタログ順の候補．
+ */
 export function findGreekCandidates(code: string): readonly GreekEntry[] {
   return GREEK_ENTRIES.filter(entry => entry.code.startsWith(code));
 }
 
-/** Prefer a complete abbreviation; otherwise preview its first continuation. */
+/**
+ * 完全一致する略記を優先し，なければ最初の前方一致候補をプレビューする．
+ * @param code 大文字小文字を区別するギリシャ文字の略記．
+ * @returns 完全一致する略記，または最初の前方一致候補．候補がなければundefined．
+ */
 export function findGreekPreview(code: string): GreekEntry | undefined {
   if (!code) {
     return undefined;

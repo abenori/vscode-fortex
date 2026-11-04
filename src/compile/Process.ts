@@ -3,32 +3,56 @@ import * as vscode from 'vscode';
 import type { ChildProcess } from 'child_process';
 import Log from '../log';
 
-/** Owns one external-tool execution, including cancellation, termination retries and close confirmation. */
+/** 外部プログラムの1回の実行と，キャンセル・停止の再試行・終了確認を管理する． */
 export default class Process {
+  /** 停止確認を待つ時間の上限．単位はミリ秒． */
   private static readonly stopTimeoutMilliseconds = 5000;
+  /** 起動後，closeイベントをまだ受信していない外部プロセスの集合． */
   private static readonly running = new Set<Process>();
+  /** 実行ファイルへ個別に渡す追加引数．シェル用の引用符は加えない． */
   private readonly args: readonly string[];
+  /** 起動した子プロセス．未起動なら未設定． */
   private child?: ChildProcess;
+  /** 起動処理を一度でも開始した場合はtrue． */
   private started = false;
+  /** 子プロセスのcloseイベントを受信した場合はtrue． */
   private finished = false;
+  /** 要求がキャンセルされたことを表す値． */
   private cancelled = false;
+  /** 現在進行中の停止要求．同時の停止操作はこのPromiseを共有する． */
   private stopping?: Promise<void>;
+  /** 起動した子プロセスのclose通知後に完了するPromise． */
   private readonly closed: Promise<void>;
+  /** 子プロセスのcloseイベントで終了確認Promiseを完了させる関数． */
   private resolveClosed!: () => void;
 
-  /** Stores an immutable command snapshot without starting or registering a process. */
-  public constructor(private readonly command: string, args: readonly string[], private readonly directory: string | null) {
+  /**
+   * プロセスを起動・登録せず，変更されない実行コマンドを保存する．
+   * @param command 起動する実行ファイル名またはパス．
+   * @param args 呼び出し先へ渡す引数．
+   * @param directory 外部コマンドの作業ディレクトリのパス．nullなら現在の作業場所を使う．
+   * @returns 新しいインスタンス．コンストラクタから明示的な値は返さない．
+   */
+  public constructor(/** 対象のコマンド名または実行ファイル名． */ private readonly command: string, args: readonly string[], /** 外部プログラムの作業ディレクトリ．nullなら既定の作業場所を使用する． */ private readonly directory: string | null) {
     this.args = [...args];
     this.closed = new Promise<void>(resolve => { this.resolveClosed = resolve; });
   }
 
-  /** Requests tracked tools to stop, reporting failure while retaining any tools that have not closed. */
+  /**
+   * 管理中のプログラムへ停止を要求する．まだ終了していないものは保持し，停止失敗を報告する．
+   * 引数はない．
+   * @returns 処理の完了を表すPromise．値は返さない．
+   */
   public static async killAll(): Promise<void> {
     const running = [...Process.running];
     await Promise.all(running.map(entry => entry.kill()));
   }
 
-  /** Prevents an unstarted launch, shares an active stop and permits retries until the child has closed. */
+  /**
+   * 未起動なら起動を禁止する．停止中の要求を共有し，子プロセスが終了するまでは停止を再試行できる．
+   * 引数はない．
+   * @returns 処理の完了を表すPromise．値は返さない．
+   */
   public kill(): Promise<void> {
     if (this.finished) { return Promise.resolve(); }
     this.cancelled = true;
@@ -38,7 +62,11 @@ export default class Process {
     return this.stopping;
   }
 
-  /** Starts exactly once; launched executions settle only after close, even when a stop attempt fails. */
+  /**
+   * 一度だけ起動し，停止要求が失敗してもclose通知を受けるまでは実行結果を確定しない．
+   * @param token 要求のキャンセルを確認するトークン．省略可能．
+   * @returns 終了コード．シグナル終了などでコードが得られない場合はnull．Promiseで返す．
+   */
   public async execute(token?: vscode.CancellationToken): Promise<number | null> {
     if (this.started) { throw new Error('A Process instance can only be executed once.'); }
     this.started = true;
@@ -70,7 +98,6 @@ export default class Process {
         else if (error) { reject(error); }
         else { resolve(code); }
       });
-      /** Handles cancellation-listener failures without rejecting the execution before actual close. */
       const requestStop = () => {
         void this.kill().catch(error => {
           if (!this.finished) { Process.writeOutput(`Unable to stop process: ${String(error)}\n`); }
@@ -81,12 +108,21 @@ export default class Process {
     });
   }
 
-  /** Keeps output-channel disposal from interrupting process cleanup during shutdown. */
+  /**
+   * 終了処理中に出力チャンネルが破棄されても，プロセスの後始末を続けられるようにする．
+   * @param message 表示または記録するメッセージ．
+   * @returns なし．
+   */
   private static writeOutput(message: string): void {
     try { Log.process_message(message); } catch {}
   }
 
-  /** Bounds termination and close confirmation, cleaning up the taskkill helper after each attempt. */
+  /**
+   * 停止と終了確認の待機時間を制限し，試行ごとにtaskkillの補助プロセスを片付ける．
+   * @param child 停止または監視する子プロセス．
+   * @param closed 子プロセスのclose通知後に完了するPromise．
+   * @returns 処理の完了を表すPromise．値は返さない．
+   */
   private static async stopAndWait(child: ChildProcess, closed: Promise<void>): Promise<void> {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -104,34 +140,40 @@ export default class Process {
     }
   }
 
-  /** Sends a direct fallback signal and reports a refused request instead of silently waiting forever. */
+  /**
+   * 代替として子プロセスへ直接停止シグナルを送り，要求が拒否された場合は無期限に待たず失敗を報告する．
+   * @param child 停止または監視する子プロセス．
+   * @returns なし．
+   */
   private static killChild(child: ChildProcess): void {
     if (!child.kill() && typeof child.exitCode !== 'number' && typeof child.signalCode !== 'string') {
       throw new Error('The process rejected the termination request.');
     }
   }
 
-  /** Terminates the launched tree, returning OS errors and observing abort only for the helper process. */
+  /**
+   * 起動したプロセスツリーを終了する．OSのエラーを返し，中断シグナルは補助プロセスだけに適用する．
+   * @param child 停止または監視する子プロセス．
+   * @param signal 終了要求を中断するためのAbortSignal．
+   * @returns 処理の完了を表すPromise．値は返さない．
+   */
   private static async terminateTree(child: ChildProcess, signal: AbortSignal): Promise<void> {
     if (child.pid && process.platform === 'win32') {
       await new Promise<void>((resolve, reject) => {
         let killer: ChildProcess | undefined;
         let settled = false;
         let detail = '';
-        /** Settles the helper once; later error/close events must not launch another fallback. */
         const finish = (error?: Error) => {
           if (settled) { return; }
           settled = true;
           signal.removeEventListener('abort', abort);
           if (error) { reject(error); } else { resolve(); }
         };
-        /** Stops only the taskkill helper when the enclosing stop attempt has already finished. */
         const abort = () => {
           if (settled) { return; }
           finish();
           try { killer?.kill(); } catch {}
         };
-        /** Tries the existing direct-child fallback and preserves both failure explanations. */
         const fallback = (error: unknown) => {
           if (settled) { return; }
           Process.writeOutput(`Process tree termination failed; trying direct-child termination: ${String(error)}\n`);

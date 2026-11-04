@@ -1,14 +1,17 @@
 import { ParsedBibEntry } from './Citation';
 
 interface ParsedValue {
+  /** 引用符や外側の波括弧を除き，文字列定義を展開したフィールド値． */
   value: string;
+  /** 値の読み取り後，次に解析を開始するUTF-16位置． */
   next: number;
 }
 
 /**
- * Parses the parts of BibTeX needed by citation completion. The scanner keeps
- * track of nested braces and quoted strings, so commas in titles do not split
- * fields accidentally.
+ * 引用補完に必要なBibTeXの情報を解析する．括弧の入れ子と引用符を追跡し，題名中のカンマでフィールドを誤って分割しないようにする．
+ *
+ * @param text 処理対象の文字列．
+ * @returns 引用キー，エントリ種別，および展開済みフィールドを持つ文献の配列．
  */
 export function parseBibTeX(text: string): ParsedBibEntry[] {
   const entries: ParsedBibEntry[] = [];
@@ -54,6 +57,12 @@ export function parseBibTeX(text: string): ParsedBibEntry[] {
   return entries;
 }
 
+/**
+ * コメントを読み飛ばして次のBibTeXエントリの開始を探す．
+ * @param text 処理対象の文字列．
+ * @param start 対象範囲の開始位置．UTF-16単位で，範囲に含む．
+ * @returns 次の@のUTF-16位置．見つからなければ-1．
+ */
 function findNextEntryStart(text: string, start: number): number {
   let inComment = false;
   for (let cursor = start; cursor < text.length; cursor++) {
@@ -71,6 +80,13 @@ function findNextEntryStart(text: string, start: number): number {
   return -1;
 }
 
+/**
+ * 入れ子の括弧と引用符を考慮してBibTeXエントリの終端を探す．
+ * @param text 処理対象の文字列．
+ * @param openOffset 開き区切りのUTF-16位置．
+ * @param close 対応する閉じ区切り文字．
+ * @returns 閉じ区切りのUTF-16位置．見つからなければ-1．
+ */
 function findEntryEnd(text: string, openOffset: number, close: string): number {
   const open = text[openOffset];
   let outerDepth = 1;
@@ -114,6 +130,12 @@ function findEntryEnd(text: string, openOffset: number, close: string): number {
   return -1;
 }
 
+/**
+ * BibTeXの文字列定義を読み取り，後続のフィールド値の展開に使用する表へ登録する．
+ * @param body BibTeXエントリの外側の区切りを除いた本文．
+ * @param strings BibTeXの文字列名から展開済みの値への対応表．
+ * @returns なし．
+ */
 function parseStringDefinition(body: string, strings: Map<string, string>): void {
   let cursor = skipSeparators(body, 0);
   const nameStart = cursor;
@@ -129,6 +151,13 @@ function parseStringDefinition(body: string, strings: Map<string, string>): void
   strings.set(name, parsed.value);
 }
 
+/**
+ * 通常のBibTeXエントリから引用キーとフィールドを抽出する．
+ * @param type 項目の種別．
+ * @param body BibTeXエントリの外側の区切りを除いた本文．
+ * @param strings BibTeXの文字列名から展開済みの値への対応表．
+ * @returns 引用キー，エントリ種別，フィールドの対応表．キーを読めなければundefined．
+ */
 function parseRegularEntry(type: string, body: string, strings: ReadonlyMap<string, string>): ParsedBibEntry | undefined {
   const comma = findTopLevelComma(body, 0);
   if (comma < 0) {
@@ -170,6 +199,13 @@ function parseRegularEntry(type: string, body: string, strings: ReadonlyMap<stri
   return { key, type, fields };
 }
 
+/**
+ * BibTeXの値を読み取り，#で連結された文字列を展開する．
+ * @param text 処理対象の文字列．
+ * @param start 対象範囲の開始位置．UTF-16単位で，範囲に含む．
+ * @param strings BibTeXの文字列名から展開済みの値への対応表．
+ * @returns 展開後の文字列と，次に読み取るUTF-16位置．
+ */
 function parseValue(text: string, start: number, strings: ReadonlyMap<string, string>): ParsedValue {
   const parts: string[] = [];
   let cursor = start;
@@ -196,6 +232,12 @@ function parseValue(text: string, start: number, strings: ReadonlyMap<string, st
   return { value: parts.join(''), next: cursor };
 }
 
+/**
+ * 波括弧で囲まれたBibTeXの値を，入れ子を保ちながら読み取る．
+ * @param text 処理対象の文字列．
+ * @param start 対象範囲の開始位置．UTF-16単位で，範囲に含む．
+ * @returns 外側の括弧を除いた値と，読み取り後のUTF-16位置．
+ */
 function parseBracedValue(text: string, start: number): ParsedValue {
   let depth = 1;
   for (let cursor = start + 1; cursor < text.length; cursor++) {
@@ -212,6 +254,12 @@ function parseBracedValue(text: string, start: number): ParsedValue {
   return { value: text.slice(start + 1), next: text.length };
 }
 
+/**
+ * 二重引用符で囲まれたBibTeXの値を読み取る．
+ * @param text 処理対象の文字列．
+ * @param start 対象範囲の開始位置．UTF-16単位で，範囲に含む．
+ * @returns 外側の引用符を除いた値と，読み取り後のUTF-16位置．
+ */
 function parseQuotedValue(text: string, start: number): ParsedValue {
   let braceDepth = 0;
   for (let cursor = start + 1; cursor < text.length; cursor++) {
@@ -227,6 +275,13 @@ function parseQuotedValue(text: string, start: number): ParsedValue {
   return { value: text.slice(start + 1), next: text.length };
 }
 
+/**
+ * 括弧や引用符のないBibTeXの値を読み取り，文字列定義を展開する．
+ * @param text 処理対象の文字列．
+ * @param start 対象範囲の開始位置．UTF-16単位で，範囲に含む．
+ * @param strings BibTeXの文字列名から展開済みの値への対応表．
+ * @returns 展開した値と，読み取り後のUTF-16位置．
+ */
 function parseBareValue(text: string, start: number, strings: ReadonlyMap<string, string>): ParsedValue {
   let cursor = start;
   while (cursor < text.length && text[cursor] !== ',' && text[cursor] !== '#') {
@@ -236,6 +291,12 @@ function parseBareValue(text: string, start: number, strings: ReadonlyMap<string
   return { value: strings.get(token.toLowerCase()) ?? token, next: cursor };
 }
 
+/**
+ * 括弧の入れ子と引用符の外にあるカンマを探す．
+ * @param text 処理対象の文字列．
+ * @param start 対象範囲の開始位置．UTF-16単位で，範囲に含む．
+ * @returns 区切りカンマのUTF-16位置．見つからなければ-1．
+ */
 function findTopLevelComma(text: string, start: number): number {
   let braceDepth = 0;
   let quoted = false;
@@ -254,6 +315,12 @@ function findTopLevelComma(text: string, start: number): number {
   return -1;
 }
 
+/**
+ * BibTeXフィールド間の空白とカンマを読み飛ばす．
+ * @param text 処理対象の文字列．
+ * @param start 対象範囲の開始位置．UTF-16単位で，範囲に含む．
+ * @returns 区切りを読み飛ばした後のUTF-16位置．
+ */
 function skipSeparators(text: string, start: number): number {
   let cursor = start;
   while (cursor < text.length) {
@@ -266,6 +333,12 @@ function skipSeparators(text: string, start: number): number {
   return cursor;
 }
 
+/**
+ * 空白文字を読み飛ばす．
+ * @param text 処理対象の文字列．
+ * @param start 対象範囲の開始位置．UTF-16単位で，範囲に含む．
+ * @returns 次の空白以外の文字または入力末尾のUTF-16位置．
+ */
 function skipWhitespace(text: string, start: number): number {
   let cursor = start;
   while (cursor < text.length && /\s/.test(text[cursor])) {
@@ -274,6 +347,12 @@ function skipWhitespace(text: string, start: number): number {
   return cursor;
 }
 
+/**
+ * 空白とBibTeXコメントを読み飛ばす．
+ * @param text 処理対象の文字列．
+ * @param start 対象範囲の開始位置．UTF-16単位で，範囲に含む．
+ * @returns 次の有効な文字または入力末尾のUTF-16位置．
+ */
 function skipWhitespaceAndComments(text: string, start: number): number {
   let cursor = skipWhitespace(text, start);
   while (text[cursor] === '%') {
@@ -283,6 +362,12 @@ function skipWhitespaceAndComments(text: string, start: number): number {
   return cursor;
 }
 
+/**
+ * 位置の直前に連続するバックスラッシュが奇数個かを調べる．
+ * @param text 処理対象の文字列．
+ * @param offset 対象文字列の先頭を0とするUTF-16位置．
+ * @returns 位置の直前に奇数個のバックスラッシュが連続している場合はtrue．
+ */
 function isEscaped(text: string, offset: number): boolean {
   let slashCount = 0;
   for (let cursor = offset - 1; cursor >= 0 && text[cursor] === '\\'; cursor--) {

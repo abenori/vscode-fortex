@@ -1,10 +1,18 @@
 import * as LaTeXParser from '../../latex-parser';
 
 export interface ReferenceContext {
+  /** 入力中の検索文字列． */
   query: string;
+  /** 検索文字列の先頭のUTF-16位置． */
   queryStart: number;
 }
 
+/**
+ * カーソル直前の参照コマンドから入力中のラベル名を求める．
+ * @param input 解析する文字列または共有するLaTeX構文解析結果．
+ * @param offset 対象文字列の先頭を0とするUTF-16位置．省略可能．
+ * @returns 入力中のラベル名と開始位置．参照引数内でなければundefined．
+ */
 export function findReferenceContext(input: string | LaTeXParser.LaTeXSource, offset?: number): ReferenceContext | undefined {
   const source = typeof input === 'string' ? input : input.source;
   offset ??= source.length;
@@ -12,8 +20,7 @@ export function findReferenceContext(input: string | LaTeXParser.LaTeXSource, of
     return undefined;
   }
 
-  // As with citation completion, a bounded look-behind avoids rescanning an entire
-  // large document on every keystroke.
+  // 引用補完と同様に後方を調べる範囲を制限し，キー入力のたびに大きな文書全体を走査しないようにする．
   const start = Math.max(0, offset - 20000);
   const prefix = source.slice(start, offset);
   const syntax = input instanceof LaTeXParser.LaTeXSource && start === 0 && offset === source.length
@@ -44,8 +51,7 @@ export function findReferenceContext(input: string | LaTeXParser.LaTeXSource, of
         continue;
       }
       const character = scanner.maskedSource[cursor];
-      // A nested argument is not a reference-key fragment. The dispatch layer
-      // can still offer command completion within it.
+      // 入れ子の引数は参照キーの一部として扱わない．その内部では振り分け側がコマンド補完を提供できる．
       if (character === '{' || character === '}') {
         return undefined;
       }

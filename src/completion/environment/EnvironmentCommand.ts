@@ -5,10 +5,15 @@ import EnvironmentRenameProvider, { normalizeNewName } from './EnvironmentRename
 import { collectEnvironmentNames } from './EnvironmentParser';
 
 interface EnvironmentQuickPickItem extends vscode.QuickPickItem {
+  /** 対象の名前． */
   name: string;
 }
 
-/** Context-sensitive `Ctrl+T B`: rename, insert, or wrap an environment. */
+/**
+ * Ctrl+T Bで，現在位置に応じて環境の名前変更・挿入・囲み込みを行う．
+ * 引数はない．
+ * @returns 処理の完了を表すPromise．値は返さない．
+ */
 export async function insertOrRenameEnvironment(): Promise<void> {
   const editor = vscode.window.activeTextEditor;
   if (!editor || editor.document.languageId !== 'latex') {
@@ -21,8 +26,7 @@ export async function insertOrRenameEnvironment(): Promise<void> {
   const selection = editor.selection;
   const version = editor.document.version;
   const offset = editor.document.offsetAt(selection.active);
-  // A non-empty selection always means "wrap". Rename applies only to an empty
-  // cursor positioned on an existing environment command.
+  // 空でない選択範囲は常に囲み込みとして扱う．名前変更は，既存の環境コマンド上の空の選択範囲だけに適用する．
   const parser = syntax.createEnvironmentParser([], ['named', 'display']);
   const currentToken = selection.isEmpty ? parser.tokenAt(offset) : undefined;
   const token = currentToken?.style === 'named' || currentToken?.style === 'display' ? currentToken : undefined;
@@ -68,7 +72,7 @@ export async function insertOrRenameEnvironment(): Promise<void> {
     return;
   }
 
-  // TM_SELECTED_TEXT preserves multiline selections through one snippet edit.
+  // TM_SELECTED_TEXTを使い，複数行の選択範囲を1回のスニペット編集で保持する．
   const snippet = new vscode.SnippetString();
   snippet.appendText(`${opening}${eol}${environmentContentIndentation(editor.document.uri)}`);
   snippet.appendVariable('TM_SELECTED_TEXT', '');
@@ -76,7 +80,12 @@ export async function insertOrRenameEnvironment(): Promise<void> {
   await editor.insertSnippet(snippet, selection);
 }
 
-/** Keep suggestions visible while retaining F2's ability to enter a new name. */
+/**
+ * 候補を表示しながら，F2と同様に新しい名前も入力できるようにする．
+ * @param items 選択または変換する項目の一覧．
+ * @param currentName 現在の環境名．
+ * @returns 選択または新規入力された環境名を持つ項目．取り消した場合はundefined．Promiseで返す．
+ */
 function pickReplacementEnvironment(
   items: EnvironmentQuickPickItem[],
   currentName: string
@@ -100,14 +109,13 @@ function pickReplacementEnvironment(
           return;
         }
         if (name === LaTeXParser.DISPLAY_MATH_ENVIRONMENT) {
-          // The old closing-delimiter alias also needs to match the display item.
+          // 従来の閉じ区切りの別名でも，ディスプレイ数式の項目に一致する必要がある．
           quickPick.items = items.filter((item) => item.name === name).map((item) => ({ ...item, alwaysShow: true }));
         } else {
           quickPick.items = items.some((item) => item.name === name)
             ? items
             : [...items, { label: `Use "${name}"`, description: 'New environment name', name, alwaysShow: true }];
-          // Prefer completing an existing name over accepting its typed prefix
-          // as a new name. The custom item remains available for explicit choice.
+          // 入力途中の名前を新しい名前として採用するより，既存の環境名への補完を優先する．新規入力の項目は明示的に選べるよう残す．
           const suggestion = items.find((item) => item.name === name)
             ?? items.find((item) => item.name.toLowerCase().startsWith(name.toLowerCase()));
           if (suggestion) {

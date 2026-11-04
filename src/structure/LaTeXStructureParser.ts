@@ -1,15 +1,86 @@
 import * as LaTeXParser from '../latex-parser';
 import { readInputFilename } from '../latex-parser/InputFilename';
 
-/** Source offsets are UTF-16 offsets, matching VS Code's document offsets. */
+/** ソース位置はVS Codeの文書位置と同じUTF-16単位で表す． */
 export type StructureEvent =
-  | { type: 'heading'; command: string; title: string; level: number; start: number; end: number }
-  | { type: 'begin'; name: string; title?: string; start: number; end: number }
-  | { type: 'end'; name: string; start: number; end: number }
-  | { type: 'label'; key: string; start: number; end: number }
-  | { type: 'caption'; title: string; start: number; end: number }
-  | { type: 'include'; path: string; start: number; end: number }
-  | { type: 'theoremDefinition'; name: string; title: string; start: number; end: number };
+  | {
+    /** この項目がheadingであることを表す識別値． */
+    type: 'heading';
+    /** 対象のコマンド名または実行ファイル名． */
+    command: string;
+    /** 表示する題名． */
+    title: string;
+    /** 見出しの階層の深さ．値が小さい見出しほど上位に置く． */
+    level: number;
+    /** 元ソースにおける範囲の開始位置．0始まりのUTF-16単位で，この位置を含む． */
+    start: number;
+    /** 元ソースにおける範囲の終端．0始まりのUTF-16単位で，この位置を含まない． */
+    end: number
+  }
+  | {
+    /** この項目がbeginであることを表す識別値． */
+    type: 'begin';
+    /** 対象の名前． */
+    name: string;
+    /** 表示する題名． */
+    title?: string;
+    /** 元ソースにおける範囲の開始位置．0始まりのUTF-16単位で，この位置を含む． */
+    start: number;
+    /** 元ソースにおける範囲の終端．0始まりのUTF-16単位で，この位置を含まない． */
+    end: number
+  }
+  | {
+    /** この項目がendであることを表す識別値． */
+    type: 'end';
+    /** 対象の名前． */
+    name: string;
+    /** 元ソースにおける範囲の開始位置．0始まりのUTF-16単位で，この位置を含む． */
+    start: number;
+    /** 元ソースにおける範囲の終端．0始まりのUTF-16単位で，この位置を含まない． */
+    end: number
+  }
+  | {
+    /** この項目がlabelであることを表す識別値． */
+    type: 'label';
+    /** 参照または検索に使用する識別キー． */
+    key: string;
+    /** 元ソースにおける範囲の開始位置．0始まりのUTF-16単位で，この位置を含む． */
+    start: number;
+    /** 元ソースにおける範囲の終端．0始まりのUTF-16単位で，この位置を含まない． */
+    end: number
+  }
+  | {
+    /** この項目がcaptionであることを表す識別値． */
+    type: 'caption';
+    /** 表示する題名． */
+    title: string;
+    /** 元ソースにおける範囲の開始位置．0始まりのUTF-16単位で，この位置を含む． */
+    start: number;
+    /** 元ソースにおける範囲の終端．0始まりのUTF-16単位で，この位置を含まない． */
+    end: number
+  }
+  | {
+    /** この項目がincludeであることを表す識別値． */
+    type: 'include';
+    /** 読み込み宣言に書かれたファイル名． */
+    path: string;
+    /** 元ソースにおける範囲の開始位置．0始まりのUTF-16単位で，この位置を含む． */
+    start: number;
+    /** 元ソースにおける範囲の終端．0始まりのUTF-16単位で，この位置を含まない． */
+    end: number
+  }
+  | {
+    /** この項目がtheoremDefinitionであることを表す識別値． */
+    type: 'theoremDefinition';
+    /** 対象の名前． */
+    name: string;
+    /** 表示する題名． */
+    title: string;
+    /** 元ソースにおける範囲の開始位置．0始まりのUTF-16単位で，この位置を含む． */
+    start: number;
+    /** 元ソースにおける範囲の終端．0始まりのUTF-16単位で，この位置を含まない． */
+    end: number
+  };
 
 const headingLevels = new Map([
   ['part', 0], ['chapter', 1], ['section', 2], ['subsection', 3],
@@ -19,7 +90,11 @@ const displayEquationEnvironments = new Set([
   'equation', 'align', 'alignat', 'gather', 'multline', 'flalign', 'displaymath'
 ]);
 
-/** Builds outline events from shared syntax, without expanding user macros. */
+/**
+ * 利用者定義のマクロを展開せず，共有構文からアウトライン用のイベントを作る．
+ * @param input 解析する文字列または共有するLaTeX構文解析結果．
+ * @returns 出現順の見出し・環境・ラベル・入力宣言などの構造イベント．
+ */
 export function parseStructureEvents(input: string | LaTeXParser.LaTeXSource): StructureEvent[] {
   const syntax = typeof input === 'string' ? new LaTeXParser.LaTeXSource(input) : input;
   const source = syntax.source;
@@ -27,7 +102,7 @@ export function parseStructureEvents(input: string | LaTeXParser.LaTeXSource): S
   const argumentsScanner = syntax.argumentScanner;
   const definitionParser = syntax.definitionParser;
   const definitions = definitionParser.definitions;
-  // Completed definitions are hidden; partial bodies permit later recovery.
+  // 完了した定義の内部は表示対象から除外する．不完全な本文では後続の構文から復帰できるようにする．
   const hidden = mergeRanges(definitionParser.consumedRanges);
   const commands = new Map(scanner.commands.map(command => [command.start, command]));
   const labels = new Map(syntax.referenceParser.tokens
@@ -39,9 +114,8 @@ export function parseStructureEvents(input: string | LaTeXParser.LaTeXSource): S
   for (const command of scanner.commands) {
     if (rangeEndAt(hidden, command.start) !== undefined) { continue; }
     if (command.name === 'input' || command.name === 'include') {
-      // Read literal names through the same filename rules as project discovery.
-      // Macro filenames stay unresolved in the outline, including definitions
-      // whose bodies would execute an input when their wrapper is invoked.
+      // 直接記述された名前はプロジェクト探索と同じファイル名規則で読む．アウトラインではマクロによるファイル名を未解決のままにする．
+      // 呼び出し時に本文内でinputを実行するようなマクロ定義も展開しない．
       const group = argumentsScanner.readArgument(command.end);
       if (group?.complete) {
         const result = readInputFilename(syntax, { ...command, name: command.name });
@@ -67,7 +141,7 @@ export function parseStructureEvents(input: string | LaTeXParser.LaTeXSource): S
       }
     }
   }
-  // Skipped argument contents must not affect later dollar-delimiter state.
+  // 読み飛ばした引数の本文によって，後続のドル記号の対応状態が変わらないようにする．
   const environments = new Map(syntax.createEnvironmentParser(excludedEnvironmentRanges).tokens
     .map(token => [token.start, token]));
   const events: StructureEvent[] = definitions
@@ -171,11 +245,16 @@ export function parseStructureEvents(input: string | LaTeXParser.LaTeXSource): S
 }
 
 export interface StructurePlainTextOptions {
-  /** Omit real named begin/end declarations when formatting equation summaries. */
+  /** 数式の要約を整形する際，実際の名前付き環境の開始・終了宣言を除く． */
   readonly omitEnvironmentCommands?: boolean;
 }
 
-/** Normalizes display text without erasing unknown commands such as math macros. */
+/**
+ * 数式マクロなどの未知のコマンドを残し，表示用の文字列を正規化する．
+ * @param source 解析または読み取りの対象となるソース本文．
+ * @param options 処理の動作を指定するオプション．省略時は{}．
+ * @returns 既知の装飾を整理し，未知のコマンドを保持した表示用文字列．
+ */
 export function structurePlainText(source: string, options: StructurePlainTextOptions = {}): string {
   const syntax = new LaTeXParser.LaTeXSource(source);
   const scanner = syntax.sourceScanner;
@@ -203,8 +282,7 @@ export function structurePlainText(source: string, options: StructurePlainTextOp
     }
     const environment = environmentCommands?.get(cursor);
     if (environment) {
-      // Keep the original scan and literal ranges; a removed declaration must
-      // neither reinterpret literal contents nor join neighboring commands.
+      // 元の走査結果とリテラル範囲を保持する．宣言を除去しても，リテラルの再解釈や隣のコマンドとの結合が起きないようにする．
       result += ' ';
       cursor = environment.end;
       preserveNextGroup = false;
@@ -294,11 +372,21 @@ export function structurePlainText(source: string, options: StructurePlainTextOp
   return result.replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * 文字列が構造要素間の空白・コメントだけからなるかを調べる．
+ * @param source 解析または読み取りの対象となるソース本文．
+ * @returns 表示すべき内容を含まない場合はtrue．
+ */
 export function isStructureTrivia(source: string): boolean {
   return new LaTeXParser.LaTeXSource(source).sourceScanner.skipTrivia(0) === source.length;
 }
 
-/** Read one isolated heading declaration without parsing the document's structure. */
+/**
+ * 文書全体の構造を解析せず，単独の見出し宣言を読む．
+ * @param source 解析または読み取りの対象となるソース本文．
+ * @param expectedCommand 読み取り対象とする見出しコマンド名．
+ * @returns 指定コマンドの見出し名．宣言が不完全または別のコマンドならundefined．
+ */
 export function readHeadingTitle(source: string, expectedCommand: string): string | undefined {
   if (!headingLevels.has(expectedCommand)) { return undefined; }
   const syntax = new LaTeXParser.LaTeXSource(source);
@@ -309,6 +397,12 @@ export function readHeadingTitle(source: string, expectedCommand: string): strin
   return structurePlainText(source.slice(title.contentStart, title.contentEnd));
 }
 
+/**
+ * 星と省略可能引数を読み飛ばして見出し本文の引数を読む．
+ * @param scanner 元のソースに対する共有字句解析結果．
+ * @param offset 対象文字列の先頭を0とするUTF-16位置．
+ * @returns 見出し本文の引数．読めなければundefined．
+ */
 function readTitle(scanner: LaTeXParser.ArgumentScanner, offset: number): LaTeXParser.ScannedArgument | undefined {
   let cursor = scanner.readStar(offset)?.end ?? offset;
   const optional = scanner.readArgument(cursor, '[');
@@ -320,8 +414,18 @@ function readTitle(scanner: LaTeXParser.ArgumentScanner, offset: number): LaTeXP
   return title?.complete ? title : undefined;
 }
 
+/**
+ * 重なり合うソース範囲を結合して開始位置順に並べる．
+ * @param ranges 開始位置と終端位置で表した半開範囲の一覧．
+ * @returns 重複走査を避けるための，互いに重ならない半開範囲の配列．
+ */
 function mergeRanges(ranges: readonly LaTeXParser.SourceRange[]): LaTeXParser.SourceRange[] {
-  const merged: { start: number; end: number }[] = [];
+  const merged: {
+    /** 元ソースにおける範囲の開始位置．0始まりのUTF-16単位で，この位置を含む． */
+    start: number;
+    /** 元ソースにおける範囲の終端．0始まりのUTF-16単位で，この位置を含まない． */
+    end: number
+  }[] = [];
   for (const range of [...ranges].sort((left, right) => left.start - right.start)) {
     const previous = merged.at(-1);
     if (previous && range.start <= previous.end) {
@@ -333,6 +437,12 @@ function mergeRanges(ranges: readonly LaTeXParser.SourceRange[]): LaTeXParser.So
   return merged;
 }
 
+/**
+ * 位置がいずれかの除外範囲に含まれるかを調べる．
+ * @param ranges 開始位置と終端位置で表した半開範囲の一覧．
+ * @param offset 対象文字列の先頭を0とするUTF-16位置．
+ * @returns 含まれる範囲の終端．範囲外ならundefined．
+ */
 function rangeEndAt(ranges: readonly LaTeXParser.SourceRange[], offset: number): number | undefined {
   let low = 0;
   let high = ranges.length;

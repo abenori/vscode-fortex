@@ -5,10 +5,15 @@ import { findDocumentationQuery } from './DocumentationContext';
 import TexdocService, { TexdocEntry } from './TexdocService';
 
 interface DocumentationItem extends vscode.QuickPickItem {
+  /** 表示項目に対応する元の解析データ． */
   entry: TexdocEntry;
 }
 
-/** Searches installed TeX documentation and opens only the explicitly chosen result. */
+/**
+ * インストール済みのTeX文書を検索し，利用者が明示的に選んだ結果を開く．
+ * @param service 関連情報の取得や更新を担当するサービス．
+ * @returns 処理の完了を表すPromise．値は返さない．
+ */
 export async function openDocumentation(service: Pick<TexdocService, 'list' | 'open'>): Promise<void> {
   assertWorkspaceTrusted('TeX documentation');
   const query = await vscode.window.showInputBox({
@@ -41,7 +46,7 @@ export async function openDocumentation(service: Pick<TexdocService, 'list' | 'o
     return;
   }
 
-  // Preserve texdoc's relevance order, including when there is only one result.
+  // 結果が1件でも，texdocが返した関連度の順序を保つ．
   const selected = await vscode.window.showQuickPick<DocumentationItem>(entries.map(entry => ({
     label: entry.description || path.basename(entry.filePath),
     description: [entry.language, entry.description ? path.basename(entry.filePath) : undefined].filter(Boolean).join(' · '),
@@ -58,6 +63,11 @@ export async function openDocumentation(service: Pick<TexdocService, 'list' | 'o
   }
 }
 
+/**
+ * 選択範囲またはカーソル位置からドキュメント検索の初期文字列を求める．
+ * @param editor 編集または移動の対象となるエディタ．
+ * @returns 検索対象のパッケージ・クラス名．取得できなければ空文字列．
+ */
 function initialQuery(editor: vscode.TextEditor | undefined): string {
   if (!editor) {
     return '';

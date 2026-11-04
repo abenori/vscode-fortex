@@ -8,32 +8,43 @@ import LaTeXProject from '../../project/LaTeXProject';
 import * as Workspace from '../../workspace';
 
 interface ProjectScope {
+  /** プロジェクトのメインTeXファイルのURI． */
   main: vscode.Uri;
+  /** 文献宣言の探索対象とするプロジェクトのソースURI． */
   files: vscode.Uri[];
+  /** 探索対象のソースで宣言された文献ファイル名． */
   references: string[];
+  /** 文献処理に使用する実行プログラム． */
   program: string;
+  /** 実行ファイルへ個別に渡す追加引数．シェル用の引用符は加えない． */
   args: readonly string[];
 }
 
 /**
- * Discovers bibliography sources for each request. Only bibliography contents
- * and bibliography path lookups are retained between requests.
+ * 要求ごとに文献の入力元を探索する．要求間で保持するのは文献の本文と文献パスの検索結果だけ．
  */
 export default class CitationService implements vscode.Disposable {
+  /** 終了時にまとめて解除する監視とイベント購読． */
   private readonly disposables: vscode.Disposable[] = [];
+  /** 文献ファイルの内容と共有監視を保持するキャッシュ． */
   private readonly bibliography = new BibFileCache();
+  /** ソース変更の前後で古い要求を識別する改訂番号． */
   private sourceRevision = 0;
+  /** 所有するリソースを解放し，新しい要求を受け付けない場合はtrue． */
   private disposed = false;
 
-  /** Registers content invalidation while leaving path-cache lifecycle to the shared resolver. */
+  /**
+   * 内容の無効化を登録する．パスキャッシュの有効期間は共有の検索サービスに任せる．
+   * 引数はない．
+   * @returns 新しいインスタンス．コンストラクタから明示的な値は返さない．
+   */
   public constructor() {
     this.disposables.push(
       vscode.workspace.onDidChangeTextDocument((event) => {
         if (isBibDocument(event.document)) {
           this.bibliography.invalidate(event.document.uri);
         } else if (event.contentChanges.length > 0) {
-          // No source reads or parsing on editor input. This only prevents an
-          // older pending request from publishing after a source edit.
+          // 文字入力時にはソースの読み取りや解析を行わない．ソース変更前に始まった古い要求の結果が公開されることだけを防ぐ．
           this.sourceRevision++;
         }
       }),
@@ -49,7 +60,14 @@ export default class CitationService implements vscode.Disposable {
     );
   }
 
-  /** Resolves declared bibliography files and merges current entries while rejecting stale requests. */
+  /**
+   * 宣言された文献ファイルを解決し，古い要求を除外しながら現在の文献一覧をまとめる．
+   * @param document 要求の対象となる編集中の文書．
+   * @param token 要求のキャンセルを確認するトークン．省略可能．
+   * @param watch 読み取った依存ファイルの監視を登録するコールバック．省略時は() => undefined．
+   * @param watchDirectories 探索したディレクトリの監視を登録するコールバック．省略時は() => undefined．
+   * @returns 対象文書のプロジェクトで利用できる文献の配列．Promiseで返す．
+   */
   public async entriesFor(
     document: vscode.TextDocument,
     token?: vscode.CancellationToken,
@@ -62,8 +80,7 @@ export default class CitationService implements vscode.Disposable {
     const key = Workspace.uriKey(document.uri);
     const revision = this.sourceRevision;
     const version = document.version;
-    // A completion session permits edits within its query. Its token owns that
-    // validity check; standalone callers conservatively reject any source edit.
+    // 補完セッションは検索文字列内の編集を許容し，その有効性をトークンで管理する．単独の呼び出しでは，ソースが編集された時点で要求を無効にする．
     const current = () => !this.disposed && !document.isClosed && !token?.isCancellationRequested
       && (token !== undefined || (this.sourceRevision === revision && document.version === version));
     let scope: ProjectScope;
@@ -85,8 +102,7 @@ export default class CitationService implements vscode.Disposable {
     const kpsewhichResults = await KpsewhichResolver.resolve(scope.main, unresolved,
       programName(scope.program) === 'biber' ? 'kpsewhich' : scope.program);
     let resolvedIndex = 0;
-    // A closed document or a newer project structure must not register stale
-    // watches after asynchronous project/path discovery finishes.
+    // 非同期のプロジェクト・パス探索が終わった後，閉じた文書や新しい構造に対して古い監視を登録しない．
     if (!current()) {
       return [];
     }
@@ -106,7 +122,7 @@ export default class CitationService implements vscode.Disposable {
     if (!current()) {
       return [];
     }
-    // Keep the first occurrence of a duplicate key, matching bibliography order.
+    // 引用キーが重複した場合は，文献ファイルの順序に従って最初の項目を保持する．
     const unique = new Map<string, CitationEntry>();
     for (const entry of groups.flat()) {
       if (!unique.has(entry.key)) {
@@ -116,7 +132,11 @@ export default class CitationService implements vscode.Disposable {
     return Array.from(unique.values());
   }
 
-  /** Releases completion-owned resources without disposing the shared lookup cache. */
+  /**
+   * 共有の検索キャッシュは破棄せず，補完が所有するリソースを解放する．
+   * 引数はない．
+   * @returns なし．
+   */
   public dispose(): void {
     this.disposed = true;
     for (const disposable of this.disposables) {
@@ -126,7 +146,11 @@ export default class CitationService implements vscode.Disposable {
     this.sourceRevision++;
   }
 
-  /** Prefers Biber's configured input/output directory, then project-local datasource candidates. */
+  /**
+   * Biberで設定された入出力ディレクトリを優先し，その後でプロジェクト内の文献候補を探す．
+   * @param scope 文献探索対象のメインファイルと関連ソース・実行設定．
+   * @returns 宣言された順序のローカル文献URI．候補が見つからない要素はundefined．Promiseで返す．
+   */
   private async localBiberFiles(scope: ProjectScope): Promise<(vscode.Uri | undefined)[]> {
     let input: string | undefined;
     for (const option of ['--input-directory', '--output-directory']) {
@@ -141,21 +165,27 @@ export default class CitationService implements vscode.Disposable {
       for (const base of bases) {
         const uri = resolveBibUri(base, reference);
         try { if ((await vscode.workspace.fs.stat(uri)).type & vscode.FileType.File) { return uri; } }
-        catch { /* The next local candidate or Kpathsea may resolve this name. */ }
+        catch { /* 次のローカル候補，またはKpathseaでこの名前を解決できる可能性がある． */ }
       }
       return undefined;
     }));
   }
 
-  /** Collects both bibliography declarations using one immutable set of source reads. */
+  /**
+   * 要求内で固定したソースの読み取り結果を使い，両方の形式の文献宣言を収集する．
+   * @param document 要求の対象となる編集中の文書．
+   * @param token 要求のキャンセルを確認するトークン．
+   * @param watch 読み取った依存ファイルの監視を登録するコールバック．
+   * @param watchDirectories 探索したディレクトリの監視を登録するコールバック．
+   * @returns メインファイル，関連ソース，文献参照，および文献処理コマンドの設定．Promiseで返す．
+   */
   private async projectScope(
     document: vscode.TextDocument, token: vscode.CancellationToken | undefined,
     watch: (uris: readonly vscode.Uri[]) => void,
     watchDirectories: (uris: readonly vscode.Uri[]) => void
   ): Promise<ProjectScope> {
     const key = Workspace.uriKey(document.uri);
-    // One request owns immutable reads, including the current query. Continuing
-    // that query must not repeatedly restart main-file/project discovery.
+    // 1件の要求では検索中の文書も含めて読み取り結果を固定する．検索文字列の続きの入力でメインファイルやプロジェクトの探索を繰り返さない．
     const sources = new Map<string, Promise<string>>([[key, Promise.resolve(document.getText())]]);
     const readSource = (uri: vscode.Uri): Promise<string> => {
       if (token?.isCancellationRequested) { return Promise.reject(new vscode.CancellationError()); }
@@ -177,7 +207,7 @@ export default class CitationService implements vscode.Disposable {
       if (files.length > 0) { projectFiles = files; }
     } catch (error) {
       if (error instanceof vscode.CancellationError) { throw error; }
-      // A standalone or unsaved document remains its own project root.
+      // 単独の文書や未保存の文書は，その文書自体をプロジェクトの起点とする．
     }
     const texts = await Promise.all(projectFiles.map(uri => readSource(uri).catch(() => '')));
     const references: string[] = [];
@@ -194,6 +224,11 @@ export default class CitationService implements vscode.Disposable {
   }
 }
 
+/**
+ * 文書が文献情報の更新対象であるかを判定する．
+ * @param document 要求の対象となる編集中の文書．
+ * @returns BibTeX文書または.bibファイルであればtrue．
+ */
 function isBibDocument(document: vscode.TextDocument): boolean {
   return document.uri.path.toLocaleLowerCase().endsWith('.bib');
 }

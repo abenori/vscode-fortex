@@ -4,11 +4,15 @@ import * as spawn from "cross-spawn";
 import Config from "../../Config";
 import { assertWorkspaceTrusted } from "../../WorkspaceTrust";
 
-/** Starts SumatraPDF with forward and inverse SyncTeX arguments on Windows. */
+/** WindowsでSyncTeXの順検索・逆検索引数を付けてSumatraPDFを起動する． */
 export default class SumatraPDF {
+  /**
+   * SumatraPDFからVS Codeへ戻るための逆検索コマンドを作る．
+   * 引数はない．
+   * @returns VS Codeの起動先とファイル・行番号の置換記号を含むコマンド文字列．
+   */
   private static inverseSearchCommand(): string {
-    // Sumatra substitutes %f and %l when it invokes this command. Quotes remain in
-    // the argument because Sumatra parses the inverse-search command line itself.
+    // SumatraPDFがこのコマンドを呼ぶ際に%fと%lを置き換える．逆検索のコマンド行はSumatraPDF自身が解析するため，引数の引用符を残す．
     const configured = Config.sumatraPDFInverseSearchVSCodePath().trim();
     if (configured && !fs.existsSync(configured)) {
       throw new Error(`VS Code was not found at the configured inverse-search path: ${configured}`);
@@ -17,9 +21,13 @@ export default class SumatraPDF {
     return `"${vscodePath.replace(/"/g, '\\"')}" -r -g "%f:%l"`;
   }
 
+  /**
+   * 設定または既定のインストール先からSumatraPDFの実行ファイルを探す．
+   * 引数はない．
+   * @returns 起動に使用する実行ファイルのパス．
+   */
   private static executable(): string {
-    // An explicit setting wins; otherwise check normal installation locations
-    // before falling back to PATH lookup.
+    // 明示的な設定を優先する．未設定なら標準のインストール先を確認し，最後にPATHで探索する．
     const configured = Config.sumatraPDFPath().trim();
     if (configured) {
       if (!fs.existsSync(configured)) {
@@ -37,6 +45,13 @@ export default class SumatraPDF {
     return candidates.find(candidate => fs.existsSync(candidate)) ?? "SumatraPDF.exe";
   }
 
+  /**
+   * SumatraPDFでPDFを開き，指定時はソース位置へ順検索する．
+   * @param pdfPath PDFファイルのファイルシステム上のパス．
+   * @param sourcePath 順検索元のTeXソースのパス．省略可能．
+   * @param line 1始まりのソース行番号．省略可能．
+   * @returns 処理の完了を表すPromise．値は返さない．
+   */
   public static open(pdfPath: string, sourcePath?: string, line?: number): Promise<void> {
     try {
       assertWorkspaceTrusted("SumatraPDF preview");
@@ -57,8 +72,7 @@ export default class SumatraPDF {
       return Promise.reject(error);
     }
     const args = [...Config.sumatraPDFArgs()];
-    // Forward search should not resend inverse-search configuration. A reused
-    // Sumatra instance retains it from a normal preview launch.
+    // 順検索では逆検索の設定を再送しない．既存のSumatraPDFは通常のプレビュー起動時に渡した設定を保持する．
     if (sourcePath === undefined &&
         Config.sumatraPDFInverseSearchEnabled() &&
         !args.some(arg => arg.toLowerCase() === "-inverse-search")) {
@@ -75,7 +89,7 @@ export default class SumatraPDF {
 
     return new Promise<void>((resolve, reject) => {
       const child = spawn.spawn(executable, args, {
-        // Let inverse search launch VS Code as an editor, not as a Node.js process.
+        // 逆検索ではVS CodeをNode.jsプロセスとしてではなく，エディタとして起動する．
         env: { ...process.env, ELECTRON_RUN_AS_NODE: undefined },
         detached: true,
         stdio: "ignore",

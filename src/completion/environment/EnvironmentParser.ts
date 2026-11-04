@@ -1,13 +1,17 @@
 import * as LaTeXParser from '../../latex-parser';
 
-/** Completion and environment editing retain the named and display forms. */
+/** 補完と環境編集では，名前付き環境とディスプレイ数式の形式を扱う． */
 export type EnvironmentTokenStyle = 'named' | 'display';
 
-/** Replacement range for environment IntelliSense at the cursor. */
+/** カーソル位置で環境を補完する際の置換範囲． */
 export interface EnvironmentCompletionContext {
+  /** namedは名前付き環境，displayは角括弧のディスプレイ数式の補完． */
   style: EnvironmentTokenStyle;
+  /** 入力中の検索文字列． */
   query: string;
+  /** 検索文字列の先頭のUTF-16位置． */
   queryStart: number;
+  /** 補完で置換する範囲の終端．このUTF-16位置は含まない． */
   replaceEnd: number;
 }
 
@@ -51,7 +55,12 @@ export const STANDARD_ENVIRONMENTS = [
   'verse'
 ] as const;
 
-/** Recognizes a partially typed argument; it is deliberately completion-specific. */
+/**
+ * 入力途中の引数を認識する，補完専用の解析．
+ * @param input 解析する文字列または共有するLaTeX構文解析結果．
+ * @param offset 対象文字列の先頭を0とするUTF-16位置．
+ * @returns 環境の記法，入力中の名前，および置換範囲．環境補完の対象外ならundefined．
+ */
 export function findEnvironmentCompletionContext(input: string | LaTeXParser.LaTeXSource, offset: number): EnvironmentCompletionContext | undefined {
   const source = typeof input === 'string' ? input : input.source;
   if (!Number.isInteger(offset) || offset < 0 || offset > source.length) {
@@ -72,7 +81,7 @@ export function findEnvironmentCompletionContext(input: string | LaTeXParser.LaT
     if (/[{}\r\n]/.test(query) || scanner.maskedSource.slice(argument.contentStart, offset) !== query) {
       continue;
     }
-    // Consume an auto-inserted brace only on the current line and at this depth.
+    // 自動挿入された閉じ波括弧は，同じ行かつ現在の入れ子の深さにある場合だけ置換に含める．
     const suffix = source.slice(offset, argument.contentEnd);
     return {
       style: 'named', query, queryStart: argument.contentStart,
@@ -90,6 +99,11 @@ export function findEnvironmentCompletionContext(input: string | LaTeXParser.LaT
   return undefined;
 }
 
+/**
+ * ソース中の環境使用・定義から補完に使用する名前を集める．
+ * @param source 読み取りと範囲の基準となる共有LaTeXソース．
+ * @returns 重複を除いた環境名の配列．
+ */
 export function collectEnvironmentNames(source: string | LaTeXParser.LaTeXSource): string[] {
   const names = new Set<string>(STANDARD_ENVIRONMENTS);
   const syntax = typeof source === 'string' ? new LaTeXParser.LaTeXSource(source) : source;

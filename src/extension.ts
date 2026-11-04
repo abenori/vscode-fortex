@@ -27,9 +27,13 @@ import KpsewhichResolver from './project/KpsewhichResolver';
 let buildManager: BuildManager | undefined;
 let preview: PDFPreview | undefined;
 
-/** Connects build lifetime, commands and editor services to the extension context. */
+/**
+ * ビルドの有効期間，コマンド，編集支援サービスを拡張機能のコンテキストへ関連付ける．
+ * @param context 要求の状態と通知先をまとめた実行コンテキスト．
+ * @returns なし．
+ */
 export function activate(context: vscode.ExtensionContext) {
-	//Log.debug_log("Activate vscode-fortex extension");
+	//デバッグ用: vscode-fortex拡張機能の有効化を確認する．
 
   context.subscriptions.push(new vscode.Disposable(() => LaTeXProject.dispose()));
   KpsewhichResolver.initialize();
@@ -37,7 +41,6 @@ export function activate(context: vscode.ExtensionContext) {
 
   preview = new PDFPreview(context);
   buildManager = new BuildManager();
-  /** Converts eligible editor requests to inert LaTeX jobs before requesting monitored execution. */
   const requestLaTeXBuild = (document: vscode.TextDocument, origin: 'manual' | 'save' = 'manual') => {
     if (document.languageId !== 'latex' || vscode.window.activeTextEditor?.document !== document) { return; }
     return buildManager?.requestBuild(LaTeXCompile.createBuildRequest(document.uri, preview), origin);
@@ -57,8 +60,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }
   }));
-  // All preview commands share error handling; optional arguments select a viewer
-  // for one call or turn the request into forward SyncTeX search.
+  // すべてのプレビュー操作でエラー処理を共有する．省略可能な引数で今回のビューアを選ぶか，SyncTeXの順検索を指定する．
   const registerPreview = (command: string, viewer?: PDFViewer, sync = false) => {
     context.subscriptions.push(vscode.commands.registerCommand(command, async () => {
       try {
@@ -91,8 +93,7 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  // Providers and commands are registered together so every disposable follows
-  // the extension context lifetime.
+  // プロバイダとコマンドをまとめて登録し，すべての登録を拡張機能の有効期間に合わせて解除する．
   const citations = new CitationService();
   const citationCompletion = new CitationCompletionProvider(citations);
   const labels = new LabelCompletionProvider();
@@ -147,7 +148,7 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  // Save-triggered requests share the same manager and can reserve a newer build.
+  // 保存時の要求も同じ管理サービスを使い，次のビルドを予約できる．
   const disp = vscode.workspace.onDidSaveTextDocument((doc) => {
     if(doc.languageId === 'latex'){
       if(Config.compileTrigger().indexOf("onSave") >= 0){
@@ -160,7 +161,11 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(preview);
 }
 
-/** Allows VS Code to await cancellation and child-process shutdown. */
+/**
+ * VS Codeがキャンセルと子プロセスの終了を待てるようにする．
+ * 引数はない．
+ * @returns 処理の完了を表すPromise．値は返さない．
+ */
 export async function deactivate(): Promise<void> {
   await buildManager?.shutdown();
 }

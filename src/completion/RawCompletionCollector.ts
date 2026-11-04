@@ -3,15 +3,46 @@ import {
   DOCUMENT_COMMAND_DECLARATIONS, DOCUMENT_ENVIRONMENT_DECLARATIONS, PRIMITIVE_COMMAND_DECLARATIONS
 } from '../latex-parser/DefinitionCommands';
 
-/** Completion-only text collection. Outer comments/literals/definitions are searchable. */
-export interface RawLabel { key: string; offset: number; end: number }
-export interface RawCommand { name: string; argumentCount: number; optionalFirstArgument: boolean }
-interface Argument { start: number; end: number; text: string }
+/** 補完専用の文字列収集．外側のコメント・リテラル・定義の内部も検索対象にする． */
+export interface RawLabel {
+  /** 参照または検索に使用する識別キー． */
+  key: string;
+  /** labelコマンドのバックスラッシュの位置．元ソースのUTF-16単位． */
+  offset: number;
+  /** ラベル宣言の閉じ括弧の直後のUTF-16位置． */
+  end: number
+}
+export interface RawCommand {
+  /** 対象の名前． */
+  name: string;
+  /** スニペットで挿入する引数の個数．解析対象外の定義形式では0． */
+  argumentCount: number;
+  /** 先頭の引数に省略可能な既定値がある場合はtrue． */
+  optionalFirstArgument: boolean
+}
+interface Argument {
+  /** 元ソースにおける範囲の開始位置．0始まりのUTF-16単位で，この位置を含む． */
+  start: number;
+  /** 元ソースにおける範囲の終端．0始まりのUTF-16単位で，この位置を含まない． */
+  end: number;
+  /** 外側の区切りを除いた引数の本文． */
+  text: string
+}
 
-/** Balances arguments while honoring comments and escaped delimiters inside them. */
+/** 引数内のコメントとエスケープされた区切りを考慮し，括弧の対応を取る． */
 class ArgumentReader {
-  constructor(readonly source: string) {}
+  /**
+   * ArgumentReaderの初期状態と所有するリソースを準備する．
+   * @param source 解析または読み取りの対象となるソース本文．
+   * @returns 新しいインスタンス．コンストラクタから明示的な値は返さない．
+   */
+  constructor(/** 解析対象の元のソース本文． */ readonly source: string) {}
 
+  /**
+   * コメントと空白を読み飛ばして次の入力位置を求める．
+   * @param offset 対象文字列の先頭を0とするUTF-16位置．
+   * @returns 次の有効な文字または入力末尾のUTF-16位置．
+   */
   trivia(offset: number): number {
     while (offset < this.source.length) {
       if (/\s/.test(this.source[offset])) { offset++; }
@@ -21,6 +52,12 @@ class ArgumentReader {
     return offset;
   }
 
+  /**
+   * コメントも候補源に含める読み取り規則で引数を読む．
+   * @param offset 対象文字列の先頭を0とするUTF-16位置．
+   * @param opening 読み取る引数の開き区切り．{は必須引数，[は省略可能引数．省略時は'{'．
+   * @returns 引数の範囲と本文．開き区切りがない場合はundefined．
+   */
   argument(offset: number, opening: '{' | '[' = '{'): Argument | undefined {
     const start = this.trivia(offset);
     if (this.source[start] !== opening) { return undefined; }
@@ -49,6 +86,11 @@ class ArgumentReader {
     return undefined;
   }
 
+  /**
+   * コメントとそれに続く改行の直後へ進む．
+   * @param offset 対象文字列の先頭を0とするUTF-16位置．
+   * @returns 読み飛ばした後のUTF-16位置．
+   */
   private afterComment(offset: number): number {
     while (offset < this.source.length && this.source[offset] !== '\r' && this.source[offset] !== '\n') { offset++; }
     if (this.source[offset] === '\r') { offset++; }
@@ -57,6 +99,11 @@ class ArgumentReader {
   }
 }
 
+/**
+ * コメントや例中の記述も含めてラベル宣言を収集する．
+ * @param source 解析または読み取りの対象となるソース本文．
+ * @returns ラベル名と元のソース中のUTF-16範囲の配列．
+ */
 export function collectRawLabels(source: string): RawLabel[] {
   const reader = new ArgumentReader(source);
   const pattern = /\\label(?![A-Za-z@])/g;
@@ -77,7 +124,11 @@ const environmentCommands = new Set([
   ...CLASSIC_ENVIRONMENT_DECLARATIONS, ...DOCUMENT_ENVIRONMENT_DECLARATIONS, 'newtheorem'
 ]);
 
-/** Last textual declaration wins; xparse signatures remain name-only. */
+/**
+ * 文字列上で最後に現れた定義を採用する．xparse形式では名前だけを補完する．
+ * @param source 解析または読み取りの対象となるソース本文．
+ * @returns ソースで宣言されたコマンド名と，取得できた引数の情報．
+ */
 export function collectRawCommands(source: string): RawCommand[] {
   const reader = new ArgumentReader(source);
   const pattern = /\\([A-Za-z@]+)/g;
@@ -120,7 +171,11 @@ export function collectRawCommands(source: string): RawCommand[] {
   return [...commands.values()];
 }
 
-/** Includes named uses and supported declarations even in examples/comments. */
+/**
+ * 例やコメント内も含め，名前付き環境の使用箇所と対応する定義を収集する．
+ * @param source 解析または読み取りの対象となるソース本文．
+ * @returns ソースに使用または宣言されている環境名の配列．
+ */
 export function collectRawEnvironments(source: string): string[] {
   const reader = new ArgumentReader(source);
   const names = new Set<string>();

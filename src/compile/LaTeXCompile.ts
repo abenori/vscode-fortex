@@ -15,22 +15,37 @@ import {
   singleProgramFromDirective
 } from './BuildSecurity';
 
-/** Marker base class for parsed `%#!` build actions. */
+/** 解析済みの%#!ビルド処理を分類するための基底クラス． */
 class Action{}
-/** Invokes one of fortex's built-in build stages. */
+/** fortexに組み込まれたビルド処理を呼び出す． */
 class CommandAction extends Action{
+  /** 組み込みビルド処理の名前． */
   action = "";
+  /** 組み込みビルド処理へ渡すオプション文字列． */
   option = "";
+  /**
+   * CommandActionの初期状態と所有するリソースを準備する．
+   * @param cmd 解析するコマンド文字列．
+   * @param option 処理名に付随するオプション文字列．
+   * @returns 新しいインスタンス．コンストラクタから明示的な値は返さない．
+   */
   public constructor(cmd: string, option: string){
     super();
     this.action = cmd;
     this.option = option;
   }
 }
-/** Executes one parsed `%#!` command directly, without a shell. */
+/** 解析済みの%#!コマンドを，シェルを使わず直接実行する． */
 class ExecuteAction extends Action{
+  /** 起動する実行ファイル名またはパス． */
   executable: string;
+  /** 実行ファイルへ個別に渡す追加引数．シェル用の引用符は加えない． */
   args: string[];
+  /**
+   * ExecuteActionの初期状態と所有するリソースを準備する．
+   * @param cmd 解析するコマンド文字列．
+   * @returns 新しいインスタンス．コンストラクタから明示的な値は返さない．
+   */
   public constructor(cmd : string){
     super();
     const parsed = parseCommandLine(cmd.trim());
@@ -39,21 +54,34 @@ class ExecuteAction extends Action{
   }
 }
 
-/** Owns LaTeX discovery, directive execution and adaptation to generic build reports. */
+/** LaTeXプロジェクトの探索，ソース指示の実行，共通のビルド通知への変換を担当する． */
 export default class LaTeXCompile {
-  /** Keeps one discovered project; reusable requests construct a fresh instance on each run. */
-  constructor(private readonly LaTeXProject: LaTeXProject, private readonly preview?: PDFPreview) {}
+  /**
+   * 探索済みのプロジェクトを保持する．再実行可能な要求は実行のたびに新しいインスタンスを作る．
+   * @param LaTeXProject ビルド対象のメインファイルと関連ファイルを含むプロジェクト．
+   * @param preview ビルド後のPDF表示を担当するサービス．省略可能．
+   * @returns 新しいインスタンス．コンストラクタから明示的な値は返さない．
+   */
+  constructor(/** ビルド対象のメインファイルと関連ファイルの情報． */ private readonly LaTeXProject: LaTeXProject, /** ビルド後のPDF表示サービス． */ private readonly preview?: PDFPreview) {}
 
-  /** Creates an inert request so the manager can reserve execution before source discovery. */
+  /**
+   * ソース探索の前に管理側が実行権を確保できるよう，まだ処理を開始しない要求を作る．
+   * @param source 対象ソースのURI．
+   * @param preview ビルド後のPDF表示を担当するサービス．省略可能．
+   * @returns ソースURIと実行処理を保持する，まだ開始していないビルド要求．
+   */
   public static createBuildRequest(source: vscode.Uri, preview?: PDFPreview): BuildRequest {
     return {
       source, label: 'LaTeX',
-      /** Reads saved inputs afresh, including on queued execution and explicit rebuild. */
+      /**
+       * 待機列からの実行や明示的な再ビルドでも，保存済みの入力を読み直す．
+       * @param context キャンセルトークンと，ビルドの進捗・通知を受け取る関数．
+       * @returns 対象プロジェクトのビルド結果．Promiseで返す．
+       */
       async execute(context) {
         try {
           context.reportProgress('Processing saved sources…', source);
           const project = await LaTeXProject.create(source, {
-            /** Cancels discovery at read boundaries without affecting other project consumers. */
             readSource: async uri => {
               if (context.token.isCancellationRequested) { throw new vscode.CancellationError(); }
               const text = await Workspace.readFileText(uri);
@@ -75,11 +103,15 @@ export default class LaTeXCompile {
     };
   }
 
-  /** Runs directives and returns a complete diagnostic snapshot only after uncancelled execution. */
+  /**
+   * ソース指示を実行し，キャンセルされずに終了した場合だけ診断全体のスナップショットを返す．
+   * @param context キャンセルトークンと，ビルドの進捗・通知を受け取る関数．省略可能．
+   * @returns ビルドの成否と，未キャンセル時の診断スナップショット．Promiseで返す．
+   */
   private async build(context?: BuildContext): Promise<BuildResult> {
     const project = this.LaTeXProject;
     const directive = project.percent_sharp('!')?.trim();
-    // Every nonempty %#! uses the request source, including engine-only and built-in forms.
+    // 空でない%#!指示では，エンジン名だけの指定や組み込み処理の指定も含めて要求元のソースを使用する．
     const key = directive ? project.file ?? project.mainfile : project.mainfile;
     const entries: [vscode.Uri, vscode.Diagnostic[]][] = [];
     const warnings: string[] = [];
@@ -124,8 +156,13 @@ export default class LaTeXCompile {
     }
   }
 
-  /** Adapts private pipeline callbacks; TeXToPDF never receives the manager's context. */
-  /** Executes one built-in stage or one separately owned external process. */
+  /** ビルド処理専用のコールバックへ変換する．TeXToPDFには管理側のコンテキストを渡さない． */
+  /**
+   * 1つの組み込み処理，または独立して管理する外部プロセスを実行する．
+   * @param action 実行する処理．
+   * @param context キャンセルトークンと，ビルドの進捗・通知を受け取る関数．省略可能．
+   * @returns 処理の成否，通知の重要度，メッセージ，および生成したPDFや診断情報．Promiseで返す．
+   */
   private async execute_action(action: Action, context?: BuildContext): Promise<TeXToPDFResult> {
     if (action instanceof CommandAction) {
       if (action.action.toLowerCase() !== 'textopdf') { throw new Error('Unknown action command: ' + action.action); }
@@ -147,9 +184,13 @@ export default class LaTeXCompile {
     return { outcome: 'succeeded', severity: 'info', message: 'Command succeeded.' };
   }
 
-  /** Keeps PDF viewer failures separate from the pipeline result and routes all notices through this owner. */
+  /**
+   * PDFビューアの失敗をビルド処理の結果と分け，この所有者を通してすべての通知を伝える．
+   * @param pdfs 今回のビルドで生成したPDFのURIの一覧．
+   * @param context キャンセルトークンと，ビルドの進捗・通知を受け取る関数．省略可能．
+   * @returns 処理の完了を表すPromise．値は返さない．
+   */
   private async updatePreview(pdfs: vscode.Uri[], context?: BuildContext): Promise<void> {
-    /** Converts viewer messages to generic notices without leaking its reporting API. */
     const report = (message?: string) => {
       context?.reportNotice(message === undefined ? undefined : {
         severity: 'warning', message: 'PDF generated, but preview update failed: ' + message
@@ -167,11 +208,20 @@ export default class LaTeXCompile {
     this.checkCancellation(context);
   }
 
-  /** Stops between actions and after preview requests, including asynchronous completion. */
+  /**
+   * 処理段階の間とプレビュー要求の後でキャンセルを確認する．非同期処理の完了後も確認する．
+   * @param context キャンセルトークンと，ビルドの進捗・通知を受け取る関数．省略可能．
+   * @returns なし．
+   */
   private checkCancellation(context?: BuildContext): void {
     if (context?.token.isCancellationRequested) { throw new vscode.CancellationError(); }
   }
 
+  /**
+   * ソース指示で起動するプログラムが許可リストに含まれることを確認する．
+   * @param actions 実行順に並んだビルド処理．
+   * @returns なし．
+   */
   private validate_percent_sharp_programs(actions: Action[]): void {
     const allowedPrograms = Config.allowedPrograms();
     const buildDirective = this.LaTeXProject.percent_sharp('!')?.trim();
@@ -182,9 +232,7 @@ export default class LaTeXCompile {
       }
     }
 
-    // These directives select helper executables inside the standard pipeline.
-    // Validate all of them now, even if this particular build would not need the
-    // corresponding bibliography, index, or DVI conversion stage.
+    // これらの指示は標準のビルド手順で使う補助プログラムを選ぶ．今回のビルドで文献・索引・DVI変換が不要でも，すべての指定をこの時点で検証する．
     for (const [key, label] of [
       ['bibtex', '%#bibtex'],
       ['makeindex', '%#makeindex'],
@@ -207,10 +255,13 @@ export default class LaTeXCompile {
     }
   }
 
+  /**
+   * ビルドコマンド中のファイル名プレースホルダをプロジェクトのパスへ置き換える．
+   * @param value 変換または検証する値．
+   * @returns プレースホルダを展開した文字列．
+   */
   private expand_placeholders(value: string): string {
-    // Lowercase placeholders describe the active source file; uppercase ones
-    // always describe the detected project main file. Expansion happens after
-    // tokenization, so a path containing spaces remains a single argument.
+    // 小文字の置換記号は現在のソース，大文字は検出したメインファイルを表す．引数の分割後に展開するため，空白を含むパスも1つの引数として保持する．
     if(this.LaTeXProject.file){
       value = value.replaceAll("%f", this.LaTeXProject.file.fsPath)
         .replaceAll("%d", path.dirname(this.LaTeXProject.file.fsPath))
@@ -223,14 +274,23 @@ export default class LaTeXCompile {
       .replaceAll("%K", path.extname(this.LaTeXProject.mainfile.fsPath));
   }
 
+  /**
+   * 実行ファイルと引数をログ表示用のコマンド文字列にまとめる．
+   * @param executable 起動する実行ファイル名またはパス．
+   * @param args 呼び出し先へ渡す引数．
+   * @returns 空白を含む要素を引用符で囲んだ表示用文字列．
+   */
   private static format_command(executable: string, args: string[]): string {
     return [executable, ...args].map((part) => /\s/.test(part) ? JSON.stringify(part) : part).join(' ');
   }
 
-  /** Parses built-in and external actions, accepting whitespace around action separators. */
+  /**
+   * 区切りの前後の空白を許容し，組み込み処理と外部コマンドを解析する．
+   * @param action 実行する処理．
+   * @returns 指示に記載された順序の組み込み処理・外部コマンド．
+   */
   private static parse_action(action: string): Action[] {
-    // Built-in actions use `$(C:name:option)`. Parenthesis depth is tracked so
-    // options can themselves contain parenthesized fragments.
+    // 組み込み処理の記法は$(C:name:option)．括弧の深さを追跡するため，オプション自体に括弧を含められる．
     action = action.trim();
     let parse_top = 0;
     let rv : Action[] = [];
