@@ -32,7 +32,7 @@
     "onCommand:vscode-fortex.closeEnvironment",
     "onCommand:vscode-fortex.goToCorresponding"
   ],
-  "main": "./out/extension.js",
+  "main": "./dist/extension.js",
   "contributes": {
     "configurationDefaults": {
       "[latex]": {
@@ -51,41 +51,126 @@
       }
     ],
     "views": {
-      "explorer": [{ "id": "fortex.structure", "name": "LaTeX Structure" }]
+      "explorer": [
+        {
+          "id": "fortex.structure",
+          "name": "LaTeX Structure"
+        }
+      ]
     },
     "menus": {
       "view/title": [
-        { "command": "vscode-fortex.outline.searchLabels", "when": "view == fortex.structure", "group": "navigation@2" },
-        { "command": "vscode-fortex.outline.filter", "when": "view == fortex.structure", "group": "navigation@3" },
-        { "command": "vscode-fortex.outline.toggleMode", "when": "view == fortex.structure", "group": "1_display@1" },
-        { "command": "vscode-fortex.outline.toggleLabels", "when": "view == fortex.structure", "group": "1_display@2" },
-        { "command": "vscode-fortex.outline.toggleLabeledOnly", "when": "view == fortex.structure", "group": "1_display@3" }
+        {
+          "command": "vscode-fortex.outline.searchLabels",
+          "when": "view == fortex.structure",
+          "group": "navigation@2"
+        },
+        {
+          "command": "vscode-fortex.outline.filter",
+          "when": "view == fortex.structure",
+          "group": "navigation@3"
+        },
+        {
+          "command": "vscode-fortex.outline.toggleMode",
+          "when": "view == fortex.structure",
+          "group": "1_display@1"
+        },
+        {
+          "command": "vscode-fortex.outline.toggleLabels",
+          "when": "view == fortex.structure",
+          "group": "1_display@2"
+        },
+        {
+          "command": "vscode-fortex.outline.toggleLabeledOnly",
+          "when": "view == fortex.structure",
+          "group": "1_display@3"
+        }
       ],
       "view/item/context": [
-        { "command": "vscode-fortex.outline.goToLabel", "when": "view == fortex.structure && (viewItem == fortex.structure.node.labeled || viewItem == fortex.structure.label)", "group": "navigation@1" }
+        {
+          "command": "vscode-fortex.outline.goToLabel",
+          "when": "view == fortex.structure && (viewItem == fortex.structure.node.labeled || viewItem == fortex.structure.label)",
+          "group": "navigation@1"
+        }
       ],
       "commandPalette": [
-        { "command": "vscode-fortex.outline.open", "when": "false" },
-        { "command": "vscode-fortex.outline.goToLabel", "when": "false" }
+        {
+          "command": "vscode-fortex.outline.open",
+          "when": "false"
+        },
+        {
+          "command": "vscode-fortex.outline.goToLabel",
+          "when": "false"
+        }
       ]
     },
     "commands": [
-      { "command": "vscode-fortex.outline.searchLabels", "title": "Go to LaTeX Label", "category": "fortex", "icon": "$(search)" },
-      { "command": "vscode-fortex.outline.filter", "title": "Filter LaTeX Structure", "category": "fortex", "icon": "$(filter)" },
-      { "command": "vscode-fortex.outline.toggleMode", "title": "Show Labels in Name Order", "category": "fortex", "toggled": "fortex.structure.labelMode" },
-      { "command": "vscode-fortex.outline.toggleLabels", "title": "Show Attached Label Names", "category": "fortex", "toggled": "fortex.structure.showLabels" },
-      { "command": "vscode-fortex.outline.toggleLabeledOnly", "title": "Show Only Labeled Items", "category": "fortex", "toggled": "fortex.structure.labeledOnly" },
-      { "command": "vscode-fortex.outline.open", "title": "Go to Structure Source", "category": "fortex" },
-      { "command": "vscode-fortex.outline.goToLabel", "title": "Go to Attached Label", "category": "fortex" },
+      {
+        "command": "vscode-fortex.outline.searchLabels",
+        "title": "Go to LaTeX Label",
+        "category": "fortex",
+        "icon": "$(search)"
+      },
+      {
+        "command": "vscode-fortex.outline.filter",
+        "title": "Filter LaTeX Structure",
+        "category": "fortex",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "vscode-fortex.outline.toggleMode",
+        "title": "Show Labels in Name Order",
+        "category": "fortex",
+        "toggled": "fortex.structure.labelMode"
+      },
+      {
+        "command": "vscode-fortex.outline.toggleLabels",
+        "title": "Show Attached Label Names",
+        "category": "fortex",
+        "toggled": "fortex.structure.showLabels"
+      },
+      {
+        "command": "vscode-fortex.outline.toggleLabeledOnly",
+        "title": "Show Only Labeled Items",
+        "category": "fortex",
+        "toggled": "fortex.structure.labeledOnly"
+      },
+      {
+        "command": "vscode-fortex.outline.open",
+        "title": "Go to Structure Source",
+        "category": "fortex"
+      },
+      {
+        "command": "vscode-fortex.outline.goToLabel",
+        "title": "Go to Attached Label",
+        "category": "fortex"
+      },
       {
         "command": "vscode-fortex.build",
         "title": "Build LaTeX Project",
         "enablement": "isWorkspaceTrusted"
       },
-      { "command": "vscode-fortex.buildActions", "title": "LaTeX Build Actions", "category": "fortex" },
-      { "command": "vscode-fortex.stopBuild", "title": "Stop LaTeX Build", "category": "fortex", "enablement": "fortex.buildRunning" },
-      { "command": "vscode-fortex.showBuildLog", "title": "Show LaTeX Build Output", "category": "fortex" },
-      { "command": "vscode-fortex.showBuildProblems", "title": "Show LaTeX Build Problems", "category": "fortex" },
+      {
+        "command": "vscode-fortex.buildActions",
+        "title": "LaTeX Build Actions",
+        "category": "fortex"
+      },
+      {
+        "command": "vscode-fortex.stopBuild",
+        "title": "Stop LaTeX Build",
+        "category": "fortex",
+        "enablement": "fortex.buildRunning"
+      },
+      {
+        "command": "vscode-fortex.showBuildLog",
+        "title": "Show LaTeX Build Output",
+        "category": "fortex"
+      },
+      {
+        "command": "vscode-fortex.showBuildProblems",
+        "title": "Show LaTeX Build Problems",
+        "category": "fortex"
+      },
       {
         "command": "vscode-fortex.viewPdf",
         "title": "View LaTeX PDF",
@@ -1058,33 +1143,55 @@
       "properties": {
         "vscode-fortex.completion.label.scope": {
           "type": "string",
-          "enum": ["document", "project"],
+          "enum": [
+            "document",
+            "project"
+          ],
           "default": "document",
           "scope": "resource",
-          "enumDescriptions": ["Collect labels from the current document.", "Collect labels from the main document and its recursive input/include files."],
+          "enumDescriptions": [
+            "Collect labels from the current document.",
+            "Collect labels from the main document and its recursive input/include files."
+          ],
           "description": "Source scope for label completion. Unsaved editor contents are used."
         },
         "vscode-fortex.completion.command.scope": {
           "type": "string",
-          "enum": ["document", "project"],
+          "enum": [
+            "document",
+            "project"
+          ],
           "default": "document",
           "scope": "resource",
-          "enumDescriptions": ["Collect command definitions from the current document.", "Collect command definitions from the main document and its recursive input/include files."],
+          "enumDescriptions": [
+            "Collect command definitions from the current document.",
+            "Collect command definitions from the main document and its recursive input/include files."
+          ],
           "description": "Source scope for user-defined command completion. The fixed command catalog is always available."
         },
         "vscode-fortex.completion.environment.scope": {
           "type": "string",
-          "enum": ["document", "project"],
+          "enum": [
+            "document",
+            "project"
+          ],
           "default": "document",
           "scope": "resource",
-          "enumDescriptions": ["Collect environment names from the current document.", "Collect environment names from the main document and its recursive input/include files."],
+          "enumDescriptions": [
+            "Collect environment names from the current document.",
+            "Collect environment names from the main document and its recursive input/include files."
+          ],
           "description": "Source scope for environment completion. The fixed environment catalog is always available."
         },
         "vscode-fortex.mainFileOrder": {
           "type": "array",
           "items": {
             "type": "string",
-            "enum": ["magic", "guess", "current"]
+            "enum": [
+              "magic",
+              "guess",
+              "current"
+            ]
           },
           "default": [
             "magic",
@@ -1145,7 +1252,10 @@
         },
         "vscode-fortex.compile.latex.engineSelection": {
           "type": "string",
-          "enum": ["source", "fixed"],
+          "enum": [
+            "source",
+            "fixed"
+          ],
           "enumDescriptions": [
             "Select the first matching document-class and option rule, falling back to the configured engine.",
             "Always use the configured engine."
@@ -1168,32 +1278,108 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["engine"],
+            "required": [
+              "engine"
+            ],
             "additionalProperties": false,
             "properties": {
               "classes": {
                 "type": "array",
-                "items": { "type": "string" },
+                "items": {
+                  "type": "string"
+                },
                 "description": "Match any of these literal document-class names. Omit to match any class."
               },
               "options": {
                 "type": "array",
-                "items": { "type": "string" },
+                "items": {
+                  "type": "string"
+                },
                 "description": "Require every listed document-class option. Options are compared exactly after trimming surrounding whitespace."
               },
-              "engine": { "type": "string", "minLength": 1, "pattern": "\\S" }
+              "engine": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              }
             }
           },
           "default": [
-            { "classes": ["article", "report", "book"], "engine": "pdflatex" },
-            { "classes": ["jarticle", "jreport", "jbook"], "engine": "platex" },
-            { "classes": ["ujarticle", "ujreport", "ujbook"], "engine": "uplatex" },
-            { "classes": ["jsarticle", "jsbook", "jsreport"], "options": ["uplatex"], "engine": "uplatex" },
-            { "classes": ["jsarticle", "jsbook", "jsreport"], "engine": "platex" },
-            { "classes": ["ltjsarticle", "ltjsbook", "ltjsreport"], "engine": "lualatex" },
-            { "classes": ["jlreq"], "options": ["platex"], "engine": "platex" },
-            { "classes": ["jlreq"], "options": ["lualatex"], "engine": "lualatex" },
-            { "classes": ["jlreq"], "engine": "uplatex" }
+            {
+              "classes": [
+                "article",
+                "report",
+                "book"
+              ],
+              "engine": "pdflatex"
+            },
+            {
+              "classes": [
+                "jarticle",
+                "jreport",
+                "jbook"
+              ],
+              "engine": "platex"
+            },
+            {
+              "classes": [
+                "ujarticle",
+                "ujreport",
+                "ujbook"
+              ],
+              "engine": "uplatex"
+            },
+            {
+              "classes": [
+                "jsarticle",
+                "jsbook",
+                "jsreport"
+              ],
+              "options": [
+                "uplatex"
+              ],
+              "engine": "uplatex"
+            },
+            {
+              "classes": [
+                "jsarticle",
+                "jsbook",
+                "jsreport"
+              ],
+              "engine": "platex"
+            },
+            {
+              "classes": [
+                "ltjsarticle",
+                "ltjsbook",
+                "ltjsreport"
+              ],
+              "engine": "lualatex"
+            },
+            {
+              "classes": [
+                "jlreq"
+              ],
+              "options": [
+                "platex"
+              ],
+              "engine": "platex"
+            },
+            {
+              "classes": [
+                "jlreq"
+              ],
+              "options": [
+                "lualatex"
+              ],
+              "engine": "lualatex"
+            },
+            {
+              "classes": [
+                "jlreq"
+              ],
+              "engine": "uplatex"
+            }
           ],
           "scope": "machine",
           "order": 14,
@@ -1206,15 +1392,24 @@
             "additionalProperties": false,
             "properties": {
               "command": {
-                "type": "string", "minLength": 1, "pattern": "\\S",
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S",
                 "description": "Executable name or path. Defaults to the engine name. A single-program %#! directive always executes its literal program."
               },
               "args": {
-                "type": "array", "items": { "type": "string" },
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
                 "description": "Extra arguments appended after the mandatory -interaction=nonstopmode, -halt-on-error, -synctex=1 and -file-line-error arguments. Defaults to an empty array. The %#t2dopt arguments and source filename follow."
               },
               "output": {
-                "type": "string", "enum": ["pdf", "dvi"],
+                "type": "string",
+                "enum": [
+                  "pdf",
+                  "dvi"
+                ],
                 "description": "Output format. Omit to infer from the executable name as before. The -output-format=dvi argument always selects DVI."
               }
             }
@@ -1228,10 +1423,22 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "command": { "type": "string", "minLength": 1, "pattern": "\\S" },
-            "args": { "type": "array", "items": { "type": "string" } }
+            "command": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "args": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
           },
-          "default": { "command": "upbibtex", "args": [] },
+          "default": {
+            "command": "upbibtex",
+            "args": []
+          },
           "scope": "machine",
           "order": 17,
           "markdownDescription": "Bibliography program and arguments. Missing fields use `upbibtex` and `[]`. `%#bibtex` overrides the executable. The job basename is appended to the arguments. Executable names matching biber select BCF-based detection; other names select BibTeX detection using AUX declarations and bibliography/style timestamps."
@@ -1240,10 +1447,22 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "command": { "type": "string", "minLength": 1, "pattern": "\\S" },
-            "args": { "type": "array", "items": { "type": "string" } }
+            "command": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "args": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
           },
-          "default": { "command": "upmendex", "args": [] },
+          "default": {
+            "command": "upmendex",
+            "args": []
+          },
           "scope": "machine",
           "order": 18,
           "markdownDescription": "Index program and arguments. Missing fields use `upmendex` and `[]`. `%#makeindex` overrides the executable. The job basename is appended to the arguments. Processing checks IDX content, output presence, and style/dictionary timestamps; successful processing may repeat when subsequent LaTeX passes change IDX page numbers. Failures are reported in Problems and are not retried within the same build."
@@ -1252,17 +1471,32 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "command": { "type": "string", "minLength": 1, "pattern": "\\S" },
-            "args": { "type": "array", "items": { "type": "string" } }
+            "command": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "args": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
           },
-          "default": { "command": "dvipdfmx", "args": [] },
+          "default": {
+            "command": "dvipdfmx",
+            "args": []
+          },
           "scope": "machine",
           "order": 19,
           "markdownDescription": "DVI-to-PDF program and arguments. Missing fields use `dvipdfmx` and `[]`. `%#dvipdf` overrides the executable. The DVI filename is appended to the arguments."
         },
         "vscode-fortex.pdfViewer": {
           "type": "string",
-          "enum": ["internal", "sumatra"],
+          "enum": [
+            "internal",
+            "sumatra"
+          ],
           "enumDescriptions": [
             "Open PDFs in the VS Code internal viewer.",
             "Open PDFs in SumatraPDF."
@@ -1285,8 +1519,12 @@
         },
         "vscode-fortex.sumatraPDF.args": {
           "type": "array",
-          "items": { "type": "string" },
-          "default": ["-reuse-instance"],
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "-reuse-instance"
+          ],
           "scope": "machine",
           "order": 31,
           "description": "Additional command-line arguments passed to SumatraPDF."
@@ -1313,7 +1551,10 @@
         },
         "vscode-fortex.synctex.forwardSearch.focus": {
           "type": "string",
-          "enum": ["editor", "viewer"],
+          "enum": [
+            "editor",
+            "viewer"
+          ],
           "enumDescriptions": [
             "Keep focus in the source editor after forward search.",
             "Move focus to the PDF viewer after forward search."
@@ -1341,34 +1582,74 @@
           "markdownDescription": "Indent content by one editor indentation level when fortex inserts or wraps a LaTeX environment. The indentation width and tabs/spaces follow the standard `editor.tabSize` and `editor.insertSpaces` settings."
         },
         "vscode-fortex.outline.followIncludes": {
-          "type": "boolean", "default": true, "scope": "window",
+          "type": "boolean",
+          "default": true,
+          "scope": "window",
           "markdownDescription": "Use the build's main-file detection and recursively expand literal `\\input` / `\\include` commands in the LaTeX Structure view. Disable to show only the current file. Does not change build behavior."
         },
         "vscode-fortex.outline.theoremEnvironments": {
-          "type": "object", "default": {}, "scope": "window",
-          "additionalProperties": { "type": "string" },
+          "type": "object",
+          "default": {},
+          "scope": "window",
+          "additionalProperties": {
+            "type": "string"
+          },
           "markdownDescription": "Additional theorem-like environment names and their display names, for example `{\"claim\": \"Claim\"}`. Declarations using `\\newtheorem` in parsed TeX sources are discovered automatically."
         },
         "vscode-fortex.outline.visibleKinds": {
-          "type": "array", "default": ["section", "theorem", "figure", "table", "label"], "scope": "window",
-          "items": { "type": "string", "enum": ["section", "theorem", "figure", "table", "label"] },
+          "type": "array",
+          "default": [
+            "section",
+            "theorem",
+            "figure",
+            "table",
+            "label"
+          ],
+          "scope": "window",
+          "items": {
+            "type": "string",
+            "enum": [
+              "section",
+              "theorem",
+              "figure",
+              "table",
+              "label"
+            ]
+          },
           "uniqueItems": true,
           "description": "Categories displayed in the structure tree. Equations are controlled separately. Hidden parents promote visible children."
         },
         "vscode-fortex.outline.equations": {
-          "type": "string", "enum": ["labeled", "all", "hidden"], "default": "labeled", "scope": "window",
+          "type": "string",
+          "enum": [
+            "labeled",
+            "all",
+            "hidden"
+          ],
+          "default": "labeled",
+          "scope": "window",
           "description": "Display labeled equations, all display equations, or no equations in the structure tree."
         },
         "vscode-fortex.outline.showLabels": {
-          "type": "boolean", "default": true, "scope": "window",
+          "type": "boolean",
+          "default": true,
+          "scope": "window",
           "description": "Show attached label names next to structure items."
         },
         "vscode-fortex.outline.labeledOnly": {
-          "type": "boolean", "default": false, "scope": "window",
+          "type": "boolean",
+          "default": false,
+          "scope": "window",
           "description": "Show only labeled structure items and their heading ancestors."
         },
         "vscode-fortex.outline.viewMode": {
-          "type": "string", "enum": ["structure", "labels"], "default": "structure", "scope": "window",
+          "type": "string",
+          "enum": [
+            "structure",
+            "labels"
+          ],
+          "default": "structure",
+          "scope": "window",
           "description": "Show the document hierarchy or a complete list of labels sorted by name. Label mode ignores category filters."
         },
         "vscode-fortex.mathShortcuts.enabled": {
@@ -1382,10 +1663,16 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./ && node ./scripts/copy-pdfjs.mjs",
-    "watch": "tsc -watch -p ./",
-    "pretest": "npm run compile && npm run lint",
+    "vscode:prepublish": "npm run package",
+    "compile": "npm run check-types && npm run bundle -- --sourcemap --sources-content=false && npm run copy-assets",
+    "check-types": "tsc --noEmit",
+    "bundle": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --target=es2022 --legal-comments=eof --outfile=dist/extension.js --metafile=dist/extension.meta.json",
+    "copy-assets": "node ./scripts/copy-assets.mjs",
+    "package": "npm run check-types && npm run bundle -- --minify && npm run copy-assets",
+    "compile-tests": "tsc -p ./",
+    "watch": "npm run compile && npm run bundle -- --sourcemap --sources-content=false --watch",
+    "watch:types": "tsc --noEmit --watch",
+    "pretest": "npm run compile && npm run compile-tests && npm run lint",
     "lint": "eslint src",
     "test": "vscode-test"
   },
@@ -1398,9 +1685,10 @@
     "@typescript-eslint/parser": "^8.31.1",
     "@vscode/test-cli": "^0.0.10",
     "@vscode/test-electron": "^2.5.2",
+    "esbuild": "^0.28.2",
     "eslint": "^9.25.1",
-    "typescript": "^5.8.3",
-    "pdfjs-dist": "^5.4.149"
+    "pdfjs-dist": "^5.4.149",
+    "typescript": "^5.8.3"
   },
   "dependencies": {
     "cross-spawn": "^7.0.6",

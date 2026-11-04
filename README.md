@@ -265,6 +265,14 @@ Greek input currently requires a single cursor with no selection. Moving the cur
 
 The code mapping follows [YaTeX's Greek completion table](https://github.com/hiroseyuuji/yatex/blob/master/yatexmth.el). AMS-only uppercase variants and the non-Greek `foo` entry are not included.
 
+## Development
+
+Install dependencies with `npm ci`, then run `npm run compile` to check types, bundle the extension into `dist/extension.js`, and copy the PDF.js assets and dependency licenses into `dist`. Development builds include a source map. The default VS Code build task watches both the bundle and TypeScript types; press F5 to start the extension with these watchers. From a terminal, run `npm run watch` for bundle updates and `npm run watch:types` in a second terminal for continuous type checking.
+
+`npm test` builds the extension and compiles the tests into `out/test` before running lint and the extension tests. The `out` directory is only used for test compilation.
+
+`vsce package` runs the production build automatically. The VSIX includes the minified `dist/extension.js`, PDF.js assets, dependency licenses, and extension documentation. Source maps, build metadata, `out`, and `node_modules` are excluded. The asset copy step recreates its generated directories so dependency upgrades do not retain obsolete assets.
+
 ## What is this?
 
 This is a Visual Studio Code version of "祝鳥" which is the macro package of Hidemaru for supporting LaTeX editing.

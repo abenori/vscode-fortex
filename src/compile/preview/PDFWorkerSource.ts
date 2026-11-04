@@ -19,7 +19,7 @@ export default class PDFWorkerSource {
    */
   public read(): Promise<ArrayBuffer> {
     if (!this.pending) {
-      const uri = vscode.Uri.joinPath(this.extensionUri, "out", "vendor", "pdfjs", "pdf.worker.min.mjs");
+      const uri = vscode.Uri.joinPath(this.extensionUri, "dist", "vendor", "pdfjs", "pdf.worker.min.mjs");
       this.pending = Promise.resolve(vscode.workspace.fs.readFile(uri)).then(bytes => {
         // 実際のデータ長と同じ長さのArrayBufferを返す．各バイトを数値の配列へ変換せず，VS Codeで効率よく転送できる．
         return new Uint8Array(bytes).buffer;

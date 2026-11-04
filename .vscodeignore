@@ -1,0 +1,8 @@
+**
+!package.json
+!README.md
+!CHANGELOG.md
+!LICENSE.md
+!dist/extension.js
+!dist/licenses/**
+!dist/vendor/pdfjs/**

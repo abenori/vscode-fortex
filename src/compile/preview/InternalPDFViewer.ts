@@ -57,7 +57,7 @@ export default class InternalPDFViewer implements vscode.Disposable {
       return;
     }
 
-    const pdfjsRoot = vscode.Uri.joinPath(this.context.extensionUri, "out", "vendor", "pdfjs");
+    const pdfjsRoot = vscode.Uri.joinPath(this.context.extensionUri, "dist", "vendor", "pdfjs");
     const panel = vscode.window.createWebviewPanel(
       "vscode-fortex.pdfPreview",
       `${path.basename(pdf.fsPath)} — PDF Preview`,
