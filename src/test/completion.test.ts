@@ -15,12 +15,12 @@ suite('Line-based completion', () => {
     });
   });
 
-  test('recognizes reference variants and preserves earlier keys and document offsets', () => {
-    for (const command of ['ref', 'pageref', 'eqref', 'autoref', 'nameref', 'cref', 'Cref', 'vref', 'Vref']) {
+  test('recognizes reference variants and retains whole keys and document offsets', () => {
+    for (const command of ['ref', 'pageref', 'eqref', 'autoref', 'nameref', 'vref', 'Vref']) {
       const line = `See \\${command}*{first,  sec:intro}`;
       const context = findCompletionContext(line, line.length - 1, 1000);
       assert.deepStrictEqual(context, {
-        kind: 'reference', query: 'sec:intro', queryStart: 1000 + line.indexOf('sec:intro')
+        kind: 'reference', query: 'first,  sec:intro', queryStart: 1000 + line.indexOf('first')
       });
     }
   });
@@ -105,7 +105,7 @@ suite('Line-based completion', () => {
   test('reads keys once for an ongoing context and invokes only its provider', async () => {
     const document = await vscode.workspace.openTextDocument({
       language: 'latex',
-      content: '\\label{sec:intro}\r\n\\label{eq:first}\r\n' + 'body\r\n'.repeat(5000) + '日本語 \\cref{eq:first, sec:i}'
+      content: '\\label{sec:intro}\r\n\\label{eq:first}\r\n' + 'body\r\n'.repeat(5000) + '日本語 \\ref{sec:i}'
     });
     const labels = new LabelCompletionProvider();
     const cancellation = new vscode.CancellationTokenSource();
@@ -140,6 +140,37 @@ suite('Line-based completion', () => {
       assert.deepStrictEqual(result.items.map(item => item.insertText), ['sec:intro']);
       assert.deepStrictEqual(result.items[0].range, new vscode.Range(lineNumber, line.indexOf('sec:i'), lineNumber, line.length - 1));
       assert.strictEqual(reads, 1);
+    } finally {
+      labels.dispose();
+      cancellation.dispose();
+    }
+  });
+
+  test('replaces the complete comma-containing key when a label completion is accepted', async () => {
+    const document = await vscode.workspace.openTextDocument({
+      language: 'latex', content: '\\label{sec:a,b}\r\n\\label{sec:other}\r\n日本語 \\ref{sec:a,}'
+    });
+    const labels = new LabelCompletionProvider();
+    const cancellation = new vscode.CancellationTokenSource();
+    const unexpected = () => assert.fail('A reference must only invoke the label provider');
+    const provider = new LaTeXCompletionProvider({
+      reference: labels, citation: { complete: unexpected },
+      environment: { complete: unexpected }, command: { complete: unexpected }
+    });
+    try {
+      const lineNumber = document.lineCount - 1;
+      const line = document.lineAt(lineNumber).text;
+      const result = await provider.provideCompletionItems(document, new vscode.Position(lineNumber, line.length - 1), cancellation.token);
+      assert.ok(result);
+      assert.deepStrictEqual(result.items.map(item => item.insertText), ['sec:a,b']);
+      const item = result.items[0];
+      assert.ok(item.range instanceof vscode.Range);
+      assert.ok(typeof item.insertText === 'string');
+      assert.strictEqual(document.getText(item.range), 'sec:a,');
+      const edit = new vscode.WorkspaceEdit();
+      edit.replace(document.uri, item.range, item.insertText);
+      assert.ok(await vscode.workspace.applyEdit(edit));
+      assert.strictEqual(document.lineAt(lineNumber).text, '日本語 \\ref{sec:a,b}');
     } finally {
       labels.dispose();
       cancellation.dispose();

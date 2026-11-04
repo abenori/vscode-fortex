@@ -8,7 +8,7 @@ export interface ReferenceContext {
 }
 
 /**
- * カーソル直前の参照コマンドから入力中のラベル名を求める．
+ * カーソル直前の参照コマンドから入力中のラベル名全体を求める．カンマもキーの一部として扱う．
  * @param input 解析する文字列または共有するLaTeX構文解析結果．
  * @param offset 対象文字列の先頭を0とするUTF-16位置．省略可能．
  * @returns 入力中のラベル名と開始位置．参照引数内でなければundefined．
@@ -41,7 +41,7 @@ export function findReferenceContext(input: string | LaTeXParser.LaTeXSource, of
     if (!argument || argument.complete) {
       continue;
     }
-    let fragmentStart = argument.contentStart;
+    const fragmentStart = argument.contentStart;
     let nestedCommandIndex = index + 1;
     for (let cursor = argument.contentStart; cursor < prefix.length; cursor++) {
       const nestedCommand = scanner.commands[nestedCommandIndex];
@@ -54,9 +54,6 @@ export function findReferenceContext(input: string | LaTeXParser.LaTeXSource, of
       // 入れ子の引数は参照キーの一部として扱わない．その内部では振り分け側がコマンド補完を提供できる．
       if (character === '{' || character === '}') {
         return undefined;
-      }
-      if (character === ',') {
-        fragmentStart = cursor + 1;
       }
     }
     const queryStart = scanner.skipTrivia(fragmentStart)!;

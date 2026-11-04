@@ -2,19 +2,31 @@ import * as assert from 'assert';
 import * as LaTeXParser from '../latex-parser';
 import { findReferenceContext } from '../completion/reference/LabelParser';
 
-const referenceCommands = ['ref', 'pageref', 'eqref', 'autoref', 'nameref', 'cref', 'Cref', 'vref', 'Vref'];
+const referenceCommands = ['ref', 'pageref', 'eqref', 'autoref', 'nameref', 'vref', 'Vref'];
 
 suite('LaTeX reference parser', () => {
-  test('recognizes reference commands and their stars while retaining label commas', () => {
+  test('retains each complete label or reference argument as one key, including commas', () => {
     const source = '\\label{one,two}' + referenceCommands.map(command => `\\${command}*{one, two}`).join('');
     const tokens = new LaTeXParser.ReferenceParser(source).tokens;
     assert.deepStrictEqual(tokens.map(token => [token.kind, token.command, token.key]), [
       ['label', 'label', 'one,two'],
-      ...referenceCommands.flatMap(command => [
-        ['reference', command, 'one'], ['reference', command, 'two']
-      ])
+      ...referenceCommands.map(command => ['reference', command, 'one, two'])
     ]);
     assert.ok(tokens.every(token => token.commandEnd > token.keyEnd));
+    for (const token of tokens) {
+      assert.strictEqual(source.slice(token.keyStart, token.keyEnd), token.key);
+    }
+  });
+
+  test('does not recognize cref or Cref as references or label-completion contexts', () => {
+    const source = String.raw`\cref{first,second}\Cref{third}\ref{kept}`;
+    assert.deepStrictEqual(new LaTeXParser.ReferenceParser(source).tokens.map(token => token.key), ['kept']);
+    for (const command of ['cref', 'Cref']) {
+      assert.strictEqual(LaTeXParser.ReferenceParser.isReferenceCommand(command), false);
+      for (const star of ['', '*']) {
+        assert.strictEqual(findReferenceContext(`\\${command}${star}{first, second`), undefined);
+      }
+    }
   });
 
   test('accepts an existing scanner and preserves duplicates and UTF-16 source offsets', () => {
@@ -38,7 +50,7 @@ suite('LaTeX reference parser', () => {
       String.raw`\lstinline{\ref{inline}}`,
       String.raw`\begin{minted}{tex}\label{literal}\ref{literal}\end{minted}`,
       String.raw`\\label{escaped}\\ref{escaped}\refname{other}\Crefname{other}`,
-      String.raw`\label{visible}\cref{visible}`
+      String.raw`\label{visible}\ref{visible}`
     ].join('\r\n');
     assert.deepStrictEqual(new LaTeXParser.ReferenceParser(source).tokens.map(token => token.key), [
       'visible', 'visible'
@@ -47,32 +59,37 @@ suite('LaTeX reference parser', () => {
 
   test('joins comments across CRLF while keeping ranges in the original source', () => {
     const source = '😀\\label % before\r\n { sec:in% ignored }\r\ntro % trailing\r\n }\r\n'
-      + '\\cref*{one,% ignored ,\r\n two, three}';
+      + '\\ref*{one,% ignored ,\r\ntwo,three}';
     const scanner = new LaTeXParser.SourceScanner(source);
     const tokens = new LaTeXParser.ReferenceParser(scanner).tokens;
-    assert.deepStrictEqual(tokens.map(token => token.key), ['sec:intro', 'one', 'two', 'three']);
+    assert.deepStrictEqual(tokens.map(token => token.key), ['sec:intro', 'one,two,three']);
     assert.strictEqual(tokens[0].keyStart, source.indexOf('sec:in'));
     assert.strictEqual(tokens[0].keyEnd, source.indexOf('tro %') + 3);
-    assert.strictEqual(tokens[2].keyStart, source.indexOf('two,'));
+    assert.strictEqual(tokens[1].keyStart, source.indexOf('one,'));
+    assert.strictEqual(tokens[1].keyEnd, source.indexOf('three}') + 5);
     for (const token of tokens) {
       assert.strictEqual(scanner.textWithoutComments(token.keyStart, token.keyEnd), token.key);
     }
   });
 
   test('handles nested groups and control symbols without splitting their commas or parsing nested commands', () => {
-    const source = String.raw`\cref{outer{a,b}, escaped\,comma, \label{nested}, last}\label{outside}`;
+    const source = String.raw`\ref{outer{a,b}, escaped\,comma, \label{nested}, last}\label{outside}`;
     const tokens = new LaTeXParser.ReferenceParser(source).tokens;
     assert.deepStrictEqual(tokens.map(token => [token.kind, token.key]), [
-      ['reference', 'outer{a,b}'], ['reference', String.raw`escaped\,comma`],
-      ['reference', String.raw`\label{nested}`], ['reference', 'last'], ['label', 'outside']
+      ['reference', String.raw`outer{a,b}, escaped\,comma, \label{nested}, last`], ['label', 'outside']
     ]);
   });
 
   test('skips absent, empty and unfinished arguments and recovers later complete declarations', () => {
-    const source = '\\label \\ref{}\\cref{, ,}\\ref{unfinished\r\n\\label{later}\\ref{good}';
+    const source = '\\label \\ref{}\\ref{ }\\ref{unfinished\r\n\\label{later}\\ref{good}';
     assert.deepStrictEqual(new LaTeXParser.ReferenceParser(source).tokens.map(token => [token.kind, token.key]), [
       ['label', 'later'], ['reference', 'good']
     ]);
+  });
+
+  test('keeps commas at key boundaries rather than treating them as empty list items', () => {
+    const source = String.raw`\ref{,}\eqref{,,}\pageref{a,,b}`;
+    assert.deepStrictEqual(new LaTeXParser.ReferenceParser(source).tokens.map(token => token.key), [',', ',,', 'a,,b']);
   });
 
   test('retains definition bodies as lexical source without attempting macro expansion', () => {
@@ -80,12 +97,12 @@ suite('LaTeX reference parser', () => {
     assert.deepStrictEqual(new LaTeXParser.ReferenceParser(source).tokens.map(token => token.key), ['raw', 'raw']);
   });
 
-  test('selects the nearest key at command and brace positions', () => {
-    const source = 'See \\cref{first, second}.';
+  test('selects the complete key at command, comma and brace positions', () => {
+    const source = 'See \\ref{first, second}.';
     const parser = new LaTeXParser.ReferenceParser(source);
-    assert.strictEqual(parser.tokenAt(source.indexOf('cref'))?.key, 'first');
-    assert.strictEqual(parser.tokenAt(source.indexOf('second') + 2)?.key, 'second');
-    assert.strictEqual(parser.tokenAt(source.indexOf('}'))?.key, 'second');
+    for (const position of [source.indexOf('ref'), source.indexOf('first'), source.indexOf(','), source.indexOf('second') + 2, source.indexOf('}')]) {
+      assert.strictEqual(parser.tokenAt(position)?.key, 'first, second');
+    }
     assert.strictEqual(parser.tokenAt(0), undefined);
     assert.strictEqual(parser.tokenAt(source.length), undefined);
     for (const offset of [-1, 0.5, NaN, Infinity, source.length + 1]) {
@@ -110,8 +127,8 @@ suite('LaTeX reference parser', () => {
       const source = `Text \\${command}*{first,  sec:part`;
       const context = findReferenceContext(source);
       assert.ok(context);
-      assert.strictEqual(context.query, 'sec:part');
-      assert.strictEqual(source.slice(context.queryStart), 'sec:part');
+      assert.strictEqual(context.query, 'first,  sec:part');
+      assert.strictEqual(source.slice(context.queryStart), 'first,  sec:part');
     }
     const closed = '\\ref{section}';
     const context = findReferenceContext(closed, closed.length - 1);
@@ -130,11 +147,11 @@ suite('LaTeX reference parser', () => {
     ]) {
       assert.strictEqual(findReferenceContext(source), undefined, source);
     }
-    const source = '\\cref{first,% ignored ,\r\n sec:in% continue\r\ntro';
+    const source = '\\ref{first,% ignored ,\r\nsec:in% continue\r\ntro';
     const context = findReferenceContext(source);
     assert.ok(context);
-    assert.strictEqual(context.query, 'sec:intro');
-    assert.strictEqual(context.queryStart, source.indexOf('sec:in'));
+    assert.strictEqual(context.query, 'first,sec:intro');
+    assert.strictEqual(context.queryStart, source.indexOf('first'));
     assert.strictEqual(findReferenceContext(String.raw`\ref{escaped\,comma`)?.query, String.raw`escaped\,comma`);
     assert.strictEqual(findReferenceContext('\\ref{key', -1), undefined);
     assert.strictEqual(findReferenceContext('\\ref{key', Infinity), undefined);

@@ -1,6 +1,5 @@
 import SourceScanner from './SourceScanner';
 import ArgumentScanner from './ArgumentScanner';
-import { splitclist } from './CommaList';
 
 /** 1つのラベルまたは参照キー．位置は元ソースのUTF-16単位で表す． */
 export interface ReferenceToken {
@@ -21,11 +20,11 @@ export interface ReferenceToken {
 }
 
 const referenceCommands = new Set([
-  'ref', 'pageref', 'eqref', 'autoref', 'nameref', 'cref', 'Cref', 'vref', 'Vref'
+  'ref', 'pageref', 'eqref', 'autoref', 'nameref', 'vref', 'Vref'
 ]);
 
 /**
- * マクロ展開を行わず，完全なラベル・参照宣言を読む．参照は最上位のカンマで分割し，ラベルは1つのキーとして保持する．ソース順と重複を保持する．
+ * マクロ展開を行わず，完全なラベル・参照宣言を読む．引数全体を1つのキーとし，カンマはキーの一部として保持する．ソース順と重複を保持する．
  * コメント・リテラル・エスケープされたコマンドはSourceScannerの規則に従い，マクロ定義の本文は通常のソースとして扱う．
  * 元の位置を保つため，キーの範囲には本文から除去したコメントも含める．
  */
@@ -36,7 +35,7 @@ export default class ReferenceParser {
   public readonly tokens: readonly ReferenceToken[];
 
   /**
-   * ReferenceParserの初期状態と所有するリソースを準備する．
+   * ラベル・参照の完全な引数を1つずつ読み，キーと元ソース内の範囲を収集する．
    * @param source 解析対象の本文，または同じ本文をすでに走査した字句解析器．
    * @param sharedArgumentsScanner すでに作成した引数解析器．省略時は新しく作成する．
    * @returns 新しいインスタンス．コンストラクタから明示的な値は返さない．
@@ -61,22 +60,19 @@ export default class ReferenceParser {
         continue;
       }
       consumedEnd = argument.end;
-      const segments = command.name === 'label'
-        ? [{ start: argument.contentStart, end: argument.contentEnd }]
-        : splitclist(scanner, argument.contentStart, argument.contentEnd);
-      for (const { start, end } of segments) {
-        const key = scanner.textWithoutComments(start, end)?.trim();
-        if (!key) {
-          continue;
-        }
-        const keyStart = scanner.skipTrivia(start)!;
-        const keyEnd = this.trimKeyEnd(scanner, start, end);
-        tokens.push({
-          kind: command.name === 'label' ? 'label' : 'reference',
-          command: command.name, key, commandStart: command.start,
-          commandEnd: argument.end, keyStart, keyEnd
-        });
+      const start = argument.contentStart;
+      const end = argument.contentEnd;
+      const key = scanner.textWithoutComments(start, end)?.trim();
+      if (!key) {
+        continue;
       }
+      const keyStart = scanner.skipTrivia(start)!;
+      const keyEnd = this.trimKeyEnd(scanner, start, end);
+      tokens.push({
+        kind: command.name === 'label' ? 'label' : 'reference',
+        command: command.name, key, commandStart: command.start,
+        commandEnd: argument.end, keyStart, keyEnd
+      });
     }
     this.tokens = tokens;
   }
@@ -91,9 +87,9 @@ export default class ReferenceParser {
   }
 
   /**
-   * 複数キーの参照でコマンド部分や波括弧を選ぶと，最も近いキーを返す．
+   * コマンド・波括弧・キーの位置から，そのラベルまたは参照のキーを返す．
    * @param offset 対象文字列の先頭を0とするUTF-16位置．
-   * @returns 一致するコマンド内で最も近い参照キー．対象外ならundefined．
+   * @returns 位置に対応するラベルまたは参照キー．対象外ならundefined．
    */
   public tokenAt(offset: number): ReferenceToken | undefined {
     if (!Number.isInteger(offset) || offset < 0 || offset > this.source.length) {
