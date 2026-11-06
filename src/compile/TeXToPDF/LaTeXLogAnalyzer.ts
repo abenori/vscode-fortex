@@ -1,9 +1,120 @@
+/**
+ * LaTeXLogAnalyzerの検出対象と追加情報の読み取り方．
+ * Errorは見出しの形式で検出し，種類に応じて以下の追加処理を行う．
+ * 文字列の大文字・小文字は区別する．
+ *
+ * 【Error】
+ *
+ * ■ 共通のエラー（LaTeX Error・Package Error・Class Errorなどを含む）
+ * 検出：「file:line: 本文」または行頭の「! 本文」．本文のエラー名は限定しない．
+ *       file形式はパス区切りか末尾の拡張子を持ち，先頭空白・[・(や，
+ *       ファイル名に「->」を含む候補を除く．引用符付きファイル名も扱う．
+ * 追加：file・lineがあれば位置に使い，行番号が未取得・無効なら後続の
+ *       「l.番号」から補う．本文の通常継続行は改行なしで連結する．
+ *       「(名前) 字下げ 本文」は接頭辞を除き，改行付きで追加する．
+ *       空行で本文収集を止めた後も，Errorでは文脈の収集を続ける．
+ *
+ * ■ Undefined control sequence
+ * 検出：共通Errorの本文先頭が「Undefined control sequence」．
+ * 追加：「l.番号」の行と次の文脈行をソースへ照合し，境界直前の命令を強調する．
+ *       マクロ展開中も，ソース側の呼び出し命令を特定できれば強調する．
+ *       本文がこの定型文だけなら，展開文脈またはソース文脈から取れた
+ *       未定義命令名を本文へ補う．定義された場所の逆引きは行わない．
+ *
+ * ■ Double subscript
+ * 検出：共通Errorの本文先頭が「Double subscript」．
+ * 追加：ソース文脈の照合で境界が一意に決まれば，直前の「_」を強調する．
+ *
+ * ■ Double superscript
+ * 検出：共通Errorの本文先頭が「Double superscript」．
+ * 追加：ソース文脈の照合で境界が一意に決まれば，直前の「^」を強調する．
+ *
+ * ■ Runaway argument
+ * 検出：行全体が「Runaway argument?」．これだけでは診断を作らない．
+ * 追加：その行と続きの行を，次に認識した診断の本文へ付記する．
+ *       「! File ended while scanning use of ...」自体は共通Errorとして検出する．
+ *
+ * ■ Emergency stop・ファイル不足など
+ * 検出：「! Emergency stop.」「! LaTeX Error: File ... not found.」などを
+ *       共通Errorとして検出する．これらのエラー名による専用判定はない．
+ * 追加：収集中の「***」で始まる終了説明を本文へ追加する．
+ *       ファイル不足の名前は本文に残すが，対応するソース命令は逆引きしない．
+ *
+ * ■ Luaエラー
+ * 検出：先頭が空白でない行にある「[directlua]:番号: 本文」または
+ *       「[latelua]:番号: 本文」．角括弧内の先頭に「\」がある形も許容する．
+ * 追加：file:line形式があればその位置を優先し，なければ「l.番号」で補う．
+ *       Lua形式内の番号をソース行番号としては使わない．
+ *       「stack traceback:」以降のフレームは読み飛ばし，別件の診断にしない．
+ *
+ * ■ Fatal終了要約
+ * 検出：共通Errorの本文が，先頭空白を除いて「==> Fatal error occurred」で始まる．
+ * 追加：同じログに要約以外のErrorがあれば省略し，要約しかなければ残す．
+ *
+ * 【Warning】
+ *
+ * ■ 一般の警告・フォント警告・再実行要求など
+ * 検出：行頭の「LaTeX Warning:」「LaTeX Font Warning:」「LaTeX3 Warning:」，
+ *       「Package 名前 Warning:」「Class 名前 Warning:」「Module 名前 Warning:」．
+ *       個々の警告内容による限定はしない．
+ * 追加：継続行を本文へ取り込み，本文中の最初の「at lines n--m」を優先して，
+ *       なければ最初の「on [input] line n」「at line n」から行番号を取得する．
+ *
+ * ■ 未定義の参照
+ * 検出：一般Warningとして取得した本文が，次の定型全体に一致する場合．
+ *       「LaTeX Warning: Reference `キー' on page ... undefined on input line n.」
+ *       キーの開始引用符は「`」または「'」を許容する．
+ * 追加：報告行だけをReferenceParserで解析し，キーが一致するref・eqref・pagerefの
+ *       キー部分をすべて強調する．行内のコメント・リテラルを除外し，カンマもキーに含める．
+ *       前の行から続く文脈や複数行の引数，マクロ展開は扱わず，
+ *       対応する参照がなければ報告行全体を使う．
+ *
+ * ■ 未定義の引用
+ * 検出：「LaTeX Warning: Citation ...」を一般Warningとして検出する．
+ * 追加：本文の行番号を使う．引用キーの位置を絞る専用処理はない．
+ *
+ * ■ Missing character
+ * 検出：行頭の「Missing character:」．
+ * 追加：本文に上記の行番号形式があれば使い，位置が得られなければログ行を使う．
+ *
+ * ■ 未定義参照の終了要約
+ * 検出：「LaTeX Warning: There were undefined references.」．
+ * 追加：個別のReference/Citation未定義警告（undefined on input line ...）が
+ *       同じログにあれば省略し，要約しかなければ残す．
+ *
+ * 【Information】
+ *
+ * ■ Overfull・Underfull
+ * 検出：行頭の「Overfull \hbox」「Overfull \vbox」，
+ *       「Underfull \hbox」「Underfull \vbox」．WarningではなくInformationにする．
+ * 追加：「at lines n--m」「at line n」などから行・行範囲を取得する．
+ *       ページ番号だけの出力はソース行へ変換しない．後続の組版内容は本文に含めない．
+ *
+ * 【各項目に共通する位置・文脈の扱い】
+ * - ファイル名省略時は読み込み表示の括弧から推定し，候補がなければmainを使う．
+ *   相対パスはmainの親ディレクトリ基準とし，折り返されたパスの復元も試みる．
+ * - 「\命令 -> ...」「<argument>」などの文脈と，続く字下げ行を保持する．
+ *   「->」を含む文脈があれば展開情報を本文へ追加し，ソース文脈から
+ *   境界直前の呼び出し命令を特定できれば，通常のエラーでもその命令を強調する．
+ * - 文脈の照合は報告行と「l.番号」が一致する場合だけ行う．空白差を許し，
+ *   先頭・末尾の「...」を省略表示とみなし，U+FFFFFを除いて一意な境界を探す．
+ * - ソースは開いた文書の未保存内容を優先し，実パスが同じ別名も照合する．
+ *   なければ保存済みファイルをUTF-8で読む．範囲を絞れなければ報告行全体を使う．
+ * - 有効なファイル・行番号がなければ，ログの見出し行を使う．ソースが読めない，
+ *   または報告行が文書外の場合は，報告されたソース位置を維持する．
+ * - URI・範囲・重要度・本文が同じ診断を除去する．
+ *   ファイル追跡・文脈照合は形式に基づく推定であり，未実行の条件分岐や
+ *   マクロ定義内の参照も，静的な参照照合の候補に含まれ得る．
+ */
+
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import * as Workspace from '../../workspace';
+import ReferenceParser from '../../latex-parser/ReferenceParser';
 
 type Diagnostics = [vscode.Uri, vscode.Diagnostic[]][];
+const referenceCommands = new Set(['ref', 'eqref', 'pageref']);
 
 interface SourceContext {
   line: number;
@@ -56,15 +167,18 @@ export default async function analyzeLaTeXLog(main: vscode.Uri, logfile: vscode.
     if (hasLocation && !sources.has(key)) { sources.set(key, await readSource(uri)); }
     const source = sources.get(key);
     const target = source?.uri ?? uri;
-    const range = hasLocation ? sourceRange(entry, source) : wholeLine(entry.logLine);
-    const diagnostic = new vscode.Diagnostic(range, entryMessage(entry), entry.severity);
-    const identity = JSON.stringify([Workspace.uriKey(target), range.start, range.end, diagnostic.severity, diagnostic.message]);
-    if (seen.has(identity)) { continue; }
-    seen.add(identity);
-    const targetKey = Workspace.uriKey(target);
-    let group = diagnostics.get(targetKey);
-    if (!group) { group = [target, []]; diagnostics.set(targetKey, group); }
-    group[1].push(diagnostic);
+    const ranges = hasLocation ? sourceRanges(entry, source) : [wholeLine(entry.logLine)];
+    const message = entryMessage(entry);
+    for (const range of ranges) {
+      const diagnostic = new vscode.Diagnostic(range, message, entry.severity);
+      const identity = JSON.stringify([Workspace.uriKey(target), range.start, range.end, diagnostic.severity, diagnostic.message]);
+      if (seen.has(identity)) { continue; }
+      seen.add(identity);
+      const targetKey = Workspace.uriKey(target);
+      let group = diagnostics.get(targetKey);
+      if (!group) { group = [target, []]; diagnostics.set(targetKey, group); }
+      group[1].push(diagnostic);
+    }
   }
   return [...diagnostics.values()];
 }
@@ -367,16 +481,18 @@ function wholeLine(start: number, end = start): vscode.Range {
 }
 
 /**
- * ソース文脈が示す境界とエラーの種類から，強調範囲を決める．
+ * 参照キーまたはソース文脈が示す境界から，強調する範囲をすべて求める．
  * @param entry 有効なソース行を持つ診断候補．
  * @param source 照合する文書の内容．読めなければundefined．
- * @returns トークン単位，または報告された行全体の範囲．
+ * @returns 一致する参照キー，原因トークン，または報告行全体の範囲を含む空でない配列．
  */
-function sourceRange(entry: LogEntry, source: Source | undefined): vscode.Range {
+function sourceRanges(entry: LogEntry, source: Source | undefined): vscode.Range[] {
   const line = entry.line! - 1;
   const end = validLine(entry.endLine) && entry.endLine >= entry.line! ? entry.endLine - 1 : line;
   const text = source?.lines[line];
-  if (text === undefined || end !== line) { return wholeLine(line, end); }
+  if (text === undefined || end !== line) { return [wholeLine(line, end)]; }
+  const references = referenceRanges(entry, text, line);
+  if (references.length) { return references; }
   const context = entry.context;
   if (context && context.line === entry.line) {
     const boundary = contextBoundary(text, context);
@@ -388,10 +504,29 @@ function sourceRange(entry: LogEntry, source: Source | undefined): vscode.Range 
       if (!token && (/^Undefined control sequence/.test(entry.message) || entry.frames.some(frame => frame.includes('->')))) {
         token = /(\\(?:[\p{L}\p{N}@:_]+|[^\s]))[ \t]*$/u.exec(before);
       }
-      if (token) { return new vscode.Range(line, token.index, line, token.index + token[1].length); }
+      if (token) { return [new vscode.Range(line, token.index, line, token.index + token[1].length)]; }
     }
   }
-  return new vscode.Range(line, 0, line, text.length);
+  return [new vscode.Range(line, 0, line, text.length)];
+}
+
+/**
+ * 報告行だけを解析し，未定義参照の警告に一致する参照キーの範囲をすべて求める．
+ * @param entry キーと報告行を含む警告候補．
+ * @param text 警告が報告するソース行の本文．改行を含まない．
+ * @param line 警告が報告する0始まりの行番号．
+ * @returns ref・eqref・pagerefの一致するキーの範囲．対応しない警告や一致がない場合は空配列．
+ */
+function referenceRanges(entry: LogEntry, text: string, line: number): vscode.Range[] {
+  if (entry.severity !== vscode.DiagnosticSeverity.Warning) { return []; }
+  const warning = /^LaTeX Warning: Reference [`'](.*)' on page .+ undefined on input line \d+\.$/s.exec(entry.message.trim());
+  if (!warning) { return []; }
+  const ranges: vscode.Range[] = [];
+  for (const token of new ReferenceParser(text).tokens) {
+    if (token.kind !== 'reference' || !referenceCommands.has(token.command) || token.key !== warning[1]) { continue; }
+    ranges.push(new vscode.Range(line, token.keyStart, line, token.keyEnd));
+  }
+  return ranges;
 }
 
 /**

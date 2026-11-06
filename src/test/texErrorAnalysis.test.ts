@@ -111,6 +111,16 @@ function assertTokenRange(errors: LocatedDiagnostic[], document: vscode.TextDocu
   assert.strictEqual(document.getText(range), '\\broken');
 }
 
+/**
+ * LaTeX本体と同じ形の未定義参照警告を，解析テスト用に作る．
+ * @param key 未定義として報告する参照キー．
+ * @param line 1始まりのソース行番号．省略時は1．
+ * @returns 空行で終わる警告本文．
+ */
+function referenceWarning(key: string, line = 1): string {
+  return `LaTeX Warning: Reference \`${key}' on page 1 undefined on input line ${line}.\n\n`;
+}
+
 suite('TeX log error document lookup', function () {
   this.timeout(20000);
 
@@ -437,6 +447,163 @@ suite('TeX log messages and source contexts', function () {
       assert.strictEqual(duplicates.length, 1);
       const truncated = await fixture.parse('./build.tex:1: Undefined control sequence.\nl.1 \\broken');
       assert.strictEqual(truncated.length, 1);
+    });
+  });
+});
+
+suite('Undefined LaTeX reference warning positions', function () {
+  this.timeout(20000);
+
+  test('locates the key in each supported reference command', async () => {
+    for (const command of ['ref', 'eqref', 'pageref']) {
+      const source = `Heading.\r\nSee \\${command}{missing}.`;
+      await withLogFixture({ 'build.tex': source }, async fixture => {
+        const document = await fixture.open('build.tex');
+        const diagnostics = await fixture.parse(referenceWarning('missing', 2));
+        assert.strictEqual(diagnostics.length, 1);
+        const [uri, range, message, severity] = diagnostics[0];
+        assert.strictEqual(uri.toString(), document.uri.toString());
+        assert.strictEqual(range.start.line, 1);
+        assert.strictEqual(document.getText(range), 'missing');
+        assert.ok(message.includes("Reference `missing'"));
+        assert.strictEqual(severity, vscode.DiagnosticSeverity.Warning);
+      });
+    }
+  });
+
+  test('marks every matching reference once even when the same warning is repeated', async () => {
+    const source = String.raw`\label{missing} missing \ref{missing} / \eqref{missing} / \pageref{missing} / \autoref{missing}`;
+    await withLogFixture({ 'build.tex': source }, async fixture => {
+      const document = await fixture.open('build.tex');
+      const diagnostics = await fixture.parse(referenceWarning('missing').repeat(3));
+      assert.strictEqual(diagnostics.length, 3);
+      assert.deepStrictEqual(diagnostics.map(([, range]) => document.offsetAt(range.start)),
+        ['ref', 'eqref', 'pageref'].map(command => source.indexOf(`\\${command}{missing}`) + command.length + 2));
+      for (const [, range] of diagnostics) { assert.strictEqual(document.getText(range), 'missing'); }
+    });
+  });
+
+  test('distinguishes different keys on the same line', async () => {
+    await withLogFixture({ 'build.tex': String.raw`\ref{first}, \eqref{second}, \pageref{first}` }, async fixture => {
+      const document = await fixture.open('build.tex');
+      const diagnostics = await fixture.parse(referenceWarning('first'));
+      assert.strictEqual(diagnostics.length, 2);
+      for (const [, range] of diagnostics) { assert.strictEqual(document.getText(range), 'first'); }
+    });
+  });
+
+  test('does not match the same key on other source lines', async () => {
+    const source = '\\ref{missing}\n\\wrapper{missing}\n\\pageref{missing}';
+    await withLogFixture({ 'build.tex': source }, async fixture => {
+      const document = await fixture.open('build.tex');
+      const diagnostics = await fixture.parse(referenceWarning('missing', 2));
+      assert.strictEqual(diagnostics.length, 1);
+      assert.strictEqual(diagnostics[0][1].start.line, 1);
+      assert.strictEqual(document.getText(diagnostics[0][1]), '\\wrapper{missing}');
+    });
+  });
+
+  test('ignores labels, comments, literal commands, and different control words', async () => {
+    const source = String.raw`\label{missing} \verb|\ref{missing}| \\ref{missing} \refname{missing} \ref{missing} % \eqref{missing}`;
+    await withLogFixture({ 'build.tex': source }, async fixture => {
+      const document = await fixture.open('build.tex');
+      const diagnostics = await fixture.parse(referenceWarning('missing'));
+      assert.strictEqual(diagnostics.length, 1);
+      const start = source.indexOf('\\ref{missing}', source.indexOf('\\refname')) + '\\ref{'.length;
+      assert.strictEqual(document.offsetAt(diagnostics[0][1].start), start);
+      assert.strictEqual(document.getText(diagnostics[0][1]), 'missing');
+    });
+  });
+
+  test('matches whole comma-containing keys and preserves Unicode source positions', async () => {
+    for (const key of ['sec:a,b', 'a\'b', 'sec:[x].*+?', '節:未定義']) {
+      const source = `😀日本語 \\ref{${key}}`;
+      await withLogFixture({ 'build.tex': source }, async fixture => {
+        const document = await fixture.open('build.tex');
+        const diagnostics = await fixture.parse(referenceWarning(key));
+        assert.strictEqual(diagnostics.length, 1);
+        assert.strictEqual(document.getText(diagnostics[0][1]), key);
+        assert.strictEqual(diagnostics[0][1].start.character, source.indexOf('{') + 1);
+      });
+    }
+    const source = String.raw`\ref{a,b} \eqref{a}`;
+    await withLogFixture({ 'build.tex': source }, async fixture => {
+      const document = await fixture.open('build.tex');
+      const diagnostics = await fixture.parse(referenceWarning('a'));
+      assert.strictEqual(diagnostics.length, 1);
+      assert.strictEqual(document.offsetAt(diagnostics[0][1].start), source.indexOf('\\eqref{') + '\\eqref{'.length);
+    });
+  });
+
+  test('falls back to the reported line for multiline references across LF and CRLF', async () => {
+    for (const eol of ['\n', '\r\n']) {
+      const source = ['Heading.', 'See \\ref{', '  sec:missing', '}.'].join(eol);
+      await withLogFixture({ 'build.tex': source }, async fixture => {
+        const document = await fixture.open('build.tex');
+        for (const line of [2, 4]) {
+          const diagnostics = await fixture.parse(referenceWarning('sec:missing', line));
+          assert.strictEqual(diagnostics.length, 1);
+          const range = diagnostics[0][1];
+          assert.deepStrictEqual([range.start.line, range.start.character, range.end.line], [line - 1, 0, line - 1]);
+          assert.strictEqual(document.getText(range), document.lineAt(line - 1).text);
+        }
+      });
+    }
+  });
+
+  test('falls back to the reported line when a comment continues the key onto another line', async () => {
+    const source = 'Heading.\r\nSee \\ref{sec:% join\r\nmissing}.';
+    await withLogFixture({ 'build.tex': source }, async fixture => {
+      const document = await fixture.open('build.tex');
+      const diagnostics = await fixture.parse(referenceWarning('sec:missing', 3));
+      assert.strictEqual(diagnostics.length, 1);
+      const range = diagnostics[0][1];
+      assert.deepStrictEqual([range.start.line, range.start.character, range.end.line], [2, 0, 2]);
+      assert.strictEqual(document.getText(range), 'missing}.');
+    });
+  });
+
+  test('uses current unsaved text and reports the open alias URI', async () => {
+    await withLogFixture({ 'real/source.tex': '\\ref{saved}' }, async fixture => {
+      await fixture.linkDirectory('alias', 'real');
+      const document = await fixture.open('alias/source.tex');
+      await replaceDocument(document, 'Unsaved heading.\n\\ref{missing} / \\pageref{missing}');
+      const diagnostics = await fixture.parse('(./real/source.tex\n' + referenceWarning('missing', 2) + ')');
+      assert.strictEqual(diagnostics.length, 2);
+      for (const [uri, range] of diagnostics) {
+        assert.strictEqual(uri.toString(), document.uri.toString());
+        assert.strictEqual(range.start.line, 1);
+        assert.strictEqual(document.getText(range), 'missing');
+      }
+      assert.strictEqual(await fs.readFile(fixture.uri('real/source.tex').fsPath, 'utf8'), '\\ref{saved}');
+    });
+  });
+
+  test('handles wrapped warning messages with long keys', async () => {
+    const key = 'sec:' + 'long-key-'.repeat(20);
+    await withLogFixture({ 'build.tex': `\\ref{${key}}` }, async fixture => {
+      const document = await fixture.open('build.tex');
+      const warning = referenceWarning(key).trim();
+      const diagnostics = await fixture.parse(warning.match(/.{1,61}/g)!.join('\n') + '\n\n');
+      assert.strictEqual(diagnostics.length, 1);
+      assert.strictEqual(document.getText(diagnostics[0][1]), key);
+    });
+  });
+
+  test('falls back for unsupported or incomplete references and leaves citation warnings unchanged', async () => {
+    for (const source of [String.raw`\wrapper{missing}`, String.raw`\autoref{missing}`, String.raw`\cref{missing}`, String.raw`\ref{missing`]) {
+      await withLogFixture({ 'build.tex': source }, async fixture => {
+        const document = await fixture.open('build.tex');
+        const diagnostics = await fixture.parse(referenceWarning('missing'));
+        assert.strictEqual(diagnostics.length, 1);
+        assert.strictEqual(document.getText(diagnostics[0][1]), source);
+      });
+    }
+    await withLogFixture({ 'build.tex': String.raw`\ref{missing}` }, async fixture => {
+      const document = await fixture.open('build.tex');
+      const diagnostics = await fixture.parse("LaTeX Warning: Citation `missing' on page 1 undefined on input line 1.\n\n");
+      assert.strictEqual(diagnostics.length, 1);
+      assert.strictEqual(document.getText(diagnostics[0][1]), String.raw`\ref{missing}`);
     });
   });
 });
