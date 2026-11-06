@@ -37,7 +37,7 @@ LaTeX engine selection and program overrides are user/machine settings. Commands
 - `vscode-fortex.compile.latex.engineSelection`: `source` (default) selects the first matching rule from `compile.latex.engineRules`; `fixed` uses `compile.latex.engine` directly.
 - `vscode-fortex.compile.latex.engine`: defaults to `pdflatex`. Also used when no source rule matches.
 - `vscode-fortex.compile.latex.engineRules`: an ordered array of `{ "classes": [...], "options": [...], "engine": "..." }`. A rule matches any listed class and requires every listed option. Omit `classes` to match any class, and omit `options` to accept any options. Matching uses literal class names and top-level comma-separated options with surrounding whitespace removed, without macro expansion. Setting the array replaces the default rules; `[]` always selects the fallback engine.
-- `vscode-fortex.compile.latex.engines`: an optional map of engine names to `{ "command": "...", "args": [...], "output": "pdf" }`. Defaults to `{}`. Each field is optional: `command` defaults to the selected engine name, `args` to `[]`, and `output` to the existing executable-name detection. Unregistered engines use the same defaults. Set `output` to `pdf` or `dvi` explicitly for paths or custom names whose format cannot be inferred.
+- `vscode-fortex.compile.latex.engines`: an optional map of engine names to `{ "command": "...", "args": [...], "output": "pdf" }`. Defaults to `{}`. Each field is optional: `command` defaults to the selected engine name and `args` to `[]`. When `output` is omitted, the build detects whether DVI-to-PDF conversion is needed from the generated files. Set `output` to `pdf` to skip conversion or `dvi` to run it. Unregistered engines use the same defaults.
 
 The default rules preserve the existing engine selection:
 
@@ -69,7 +69,9 @@ For example, select a fixed executable with additional arguments:
 }
 ```
 
-The standard LaTeX pipeline always supplies `-interaction=nonstopmode`, `-halt-on-error`, `-synctex=1`, and `-file-line-error`. These arguments have no setting. Engine-specific `args`, `%#t2dopt` arguments, and the source filename are appended in that order. `-output-format=dvi` selects DVI conversion even when the engine's configured output is `pdf`.
+The standard LaTeX pipeline always supplies `-interaction=nonstopmode`, `-halt-on-error`, `-synctex=1`, and `-file-line-error`. These arguments have no setting. Engine-specific `args`, `%#t2dopt` arguments, and the source filename are appended in that order.
+
+An explicit `output` setting takes precedence when deciding whether to run DVI-to-PDF conversion. It does not change the engine's arguments or select its actual output format. For example, `output: "pdf"` skips conversion even with `-output-format=dvi`; if no new PDF is produced, the build reports a warning. Without `output`, detection runs after all required LaTeX passes succeed: conversion runs only if the DVI exists and was created or updated while the PDF was not. Each file's modification time, change time, and size are compared with its own values at the start of that build request; PDF and DVI timestamps are not compared with each other. A new or updated PDF skips conversion even if DVI also changed. If neither file was created or updated, conversion is skipped and the build reports that no new PDF was produced.
 
 `compile.bibtex`, `compile.makeindex`, and `compile.dvipdf` accept optional `command` and `args` fields, defaulting to `upbibtex`, `upmendex`, and `dvipdfmx` with no extra arguments. The bibliography and index stages append the job basename; the converter appends the DVI filename.
 

@@ -16,7 +16,7 @@ import type { ChildProcess, SpawnOptions } from 'child_process';
 interface Command {
   command: string;
   args: string[];
-  output: 'pdf' | 'dvi';
+  output?: 'pdf' | 'dvi';
 }
 
 interface CommandMethods {
@@ -92,7 +92,7 @@ suite('TeXToPDF build configuration', () => {
           const command = commands(project(cls, options)).make_latex_command();
           assert.strictEqual(command.command, expected, `${cls}[${options}]`);
           assert.deepStrictEqual(command.args, commonArgs);
-          assert.strictEqual(command.output, expected === 'platex' || expected === 'uplatex' ? 'dvi' : 'pdf');
+          assert.strictEqual(command.output, undefined);
         }
       }
     }
@@ -103,7 +103,7 @@ suite('TeXToPDF build configuration', () => {
     settings['compile.latex.engine'] = 'xelatex';
     settings['compile.latex.engineRules'] = [];
     assert.deepStrictEqual(commands(project('jarticle')).make_latex_command(), {
-      command: 'xelatex', args: commonArgs, output: 'pdf'
+      command: 'xelatex', args: commonArgs, output: undefined
     });
   });
 
@@ -139,24 +139,28 @@ suite('TeXToPDF build configuration', () => {
       args: [...commonArgs, '--engine', 'another value', '--source', '--last'], output: 'pdf'
     });
     settings['compile.latex.engines'] = { custom: { command: 'lualatex' } };
-    assert.strictEqual(commands().make_latex_command().output, 'pdf');
+    assert.strictEqual(commands().make_latex_command().output, undefined);
     settings['compile.latex.engines'] = { custom: {} };
-    assert.strictEqual(commands().make_latex_command().output, 'dvi');
+    assert.strictEqual(commands().make_latex_command().output, undefined);
   });
 
-  test('retains legacy output detection and lets the DVI argument override explicit PDF', () => {
+  test('leaves output unspecified regardless of executable name and gives explicit settings priority over arguments', () => {
     settings['compile.latex.engineSelection'] = 'fixed';
-    for (const [engine, output] of [
-      ['pdftex', 'pdf'], ['luatex', 'pdf'], ['xetex', 'pdf'], ['context', 'pdf'], ['latex', 'dvi']
-    ]) {
+    for (const engine of ['pdftex', 'luatex', 'xetex', 'context', 'latex', 'C:\\TeX Programs\\pdflatex.exe']) {
       settings['compile.latex.engine'] = engine;
-      assert.strictEqual(commands().make_latex_command().output, output);
+      assert.strictEqual(commands().make_latex_command().output, undefined);
     }
     settings['compile.latex.engine'] = 'custom';
     settings['compile.latex.engines'] = { custom: { output: 'pdf' } };
-    assert.strictEqual(commands(project('article', '', { t2dopt: '-output-format=dvi' })).make_latex_command().output, 'dvi');
+    const directive = commands(project('article', '', { t2dopt: '-output-format=dvi' })).make_latex_command();
+    assert.strictEqual(directive.output, 'pdf');
+    assert.deepStrictEqual(directive.args, [...commonArgs, '-output-format=dvi']);
     settings['compile.latex.engines'] = { custom: { args: ['-output-format=dvi'], output: 'pdf' } };
+    assert.strictEqual(commands().make_latex_command().output, 'pdf');
+    settings['compile.latex.engines'] = { custom: { args: ['-output-format=pdf'], output: 'dvi' } };
     assert.strictEqual(commands().make_latex_command().output, 'dvi');
+    settings['compile.latex.engines'] = { custom: { args: ['-output-format=dvi'] } };
+    assert.strictEqual(commands().make_latex_command().output, undefined);
   });
 
   test('single-program percent-sharp overrides fixed and source selection without command remapping', () => {
@@ -165,7 +169,7 @@ suite('TeXToPDF build configuration', () => {
     for (const selection of ['source', 'fixed']) {
       settings['compile.latex.engineSelection'] = selection;
       assert.deepStrictEqual(commands(project('article', '', { '!': 'platex', t2dopt: '--source' })).make_latex_command(), {
-        command: 'platex', args: [...commonArgs, '--extra', '--source'], output: 'dvi'
+        command: 'platex', args: [...commonArgs, '--extra', '--source'], output: undefined
       });
     }
   });
@@ -199,7 +203,7 @@ suite('TeXToPDF build configuration', () => {
     settings['compile.latex.engineRules'] = null;
     settings['compile.latex.engines'] = { pdflatex: { command: '', args: ['--extra'] } };
     assert.deepStrictEqual(commands(project('article', '', { '!': 'pdflatex' })).make_latex_command(), {
-      command: 'pdflatex', args: [...commonArgs, '--extra'], output: 'pdf'
+      command: 'pdflatex', args: [...commonArgs, '--extra'], output: undefined
     });
   });
 
@@ -347,6 +351,188 @@ suite('TeXToPDF build configuration', () => {
       assert.strictEqual((await new TeXToPDF(proj, '').build()).outcome, 'failed');
       assert.strictEqual(calls.length, 2);
     });
+  });
+
+  test('automatically converts new or updated DVI when PDF is missing or unchanged', async () => {
+    for (const [existingDVI, existingPDF, engine] of [
+      [false, false, 'pdf-wrapper'], [false, true, 'custom'],
+      [true, false, 'C:\\TeX Programs\\lualatex.exe'], [true, true, 'platex']
+    ] as const) {
+      await withBuild(async (directory, calls) => {
+        settings['compile.latex.engineSelection'] = 'fixed';
+        settings['compile.latex.engine'] = engine;
+        const dvi = path.join(directory, 'main.dvi');
+        const pdf = path.join(directory, 'main.pdf');
+        if (existingDVI) { await fs.writeFile(dvi, 'old DVI'); }
+        if (existingPDF) { await fs.writeFile(pdf, 'old PDF'); }
+        const record = runProgram;
+        runProgram = async (command, args, cwd) => {
+          await record(command, args, cwd);
+          if (command === engine) { await fs.writeFile(dvi, 'new DVI output'); }
+          if (command === 'dvipdfmx') { await fs.writeFile(pdf, 'converted PDF'); }
+          return 0;
+        };
+        const mainfile = vscode.Uri.file(path.join(directory, 'main.tex'));
+        const result = await new TeXToPDF(project('article', '', {}, mainfile), '').build();
+        assert.deepStrictEqual(calls.map(call => call.command), [engine, 'dvipdfmx']);
+        assert.deepStrictEqual(calls[1].args, ['main.dvi']);
+        assert.strictEqual(result.outcome, 'succeeded');
+        assert.strictEqual(result.severity, 'info');
+        assert.strictEqual(result.pdfs?.[0].fsPath, vscode.Uri.file(pdf).fsPath);
+        assert.strictEqual(await fs.readFile(pdf, 'utf8'), 'converted PDF');
+      });
+    }
+  });
+
+  test('automatically skips conversion when PDF is new or updated even if DVI also changes', async () => {
+    for (const existingPDF of [false, true]) {
+      for (const updateDVI of [false, true]) {
+        await withBuild(async (directory, calls) => {
+          settings['compile.latex.engineSelection'] = 'fixed';
+          settings['compile.latex.engine'] = 'latex';
+          const pdf = path.join(directory, 'main.pdf');
+          const dvi = path.join(directory, 'main.dvi');
+          if (existingPDF) { await fs.writeFile(pdf, 'old PDF'); }
+          await fs.writeFile(dvi, 'old DVI');
+          const record = runProgram;
+          runProgram = async (...args) => {
+            await record(...args);
+            await fs.writeFile(pdf, 'new direct PDF output');
+            if (updateDVI) { await fs.writeFile(dvi, 'new DVI output'); }
+            return 0;
+          };
+          const mainfile = vscode.Uri.file(path.join(directory, 'main.tex'));
+          const result = await new TeXToPDF(project('article', '', {}, mainfile), '').build();
+          assert.deepStrictEqual(calls.map(call => call.command), ['latex']);
+          assert.strictEqual(result.outcome, 'succeeded');
+          assert.strictEqual(result.severity, 'info');
+          assert.strictEqual(result.pdfs?.[0].fsPath, vscode.Uri.file(pdf).fsPath);
+        });
+      }
+    }
+  });
+
+  test('does not convert missing or unchanged DVI even when an old DVI is newer than PDF', async () => {
+    for (const existingPDF of [false, true]) {
+      for (const existingDVI of [false, true]) {
+        await withBuild(async (directory, calls) => {
+          settings['compile.latex.engineSelection'] = 'fixed';
+          settings['compile.latex.engine'] = 'platex';
+          for (const [exists, name, time] of [[existingPDF, 'main.pdf', 1000], [existingDVI, 'main.dvi', 2000]] as const) {
+            if (!exists) { continue; }
+            const filename = path.join(directory, name);
+            await fs.writeFile(filename, 'old output');
+            await fs.utimes(filename, time, time);
+          }
+          const mainfile = vscode.Uri.file(path.join(directory, 'main.tex'));
+          const result = await new TeXToPDF(project('article', '', {}, mainfile), '').build();
+          assert.deepStrictEqual(calls.map(call => call.command), ['platex']);
+          assert.strictEqual(result.outcome, 'succeeded');
+          assert.strictEqual(result.severity, 'warning');
+          assert.match(result.message, /No new PDF/);
+          assert.deepStrictEqual(result.pdfs, []);
+        });
+      }
+    }
+  });
+
+  test('explicit PDF skips conversion despite a new DVI and DVI output arguments', async () => {
+    await withBuild(async (directory, calls) => {
+      settings['compile.latex.engineSelection'] = 'fixed';
+      settings['compile.latex.engine'] = 'platex';
+      settings['compile.latex.engines'] = { platex: { args: ['-output-format=dvi'], output: 'pdf' } };
+      const record = runProgram;
+      runProgram = async (...args) => {
+        await record(...args);
+        await fs.writeFile(path.join(directory, 'main.dvi'), 'DVI');
+        return 0;
+      };
+      const mainfile = vscode.Uri.file(path.join(directory, 'main.tex'));
+      const result = await new TeXToPDF(project('article', '', {}, mainfile), '').build();
+      assert.deepStrictEqual(calls, [{ command: 'platex', args: [...commonArgs, '-output-format=dvi', 'main.tex'] }]);
+      assert.strictEqual(result.outcome, 'succeeded');
+      assert.strictEqual(result.severity, 'warning');
+      assert.match(result.message, /No new PDF/);
+    });
+  });
+
+  test('explicit DVI runs conversion even when PDF was produced and DVI was unchanged', async () => {
+    await withBuild(async (directory, calls) => {
+      settings['compile.latex.engineSelection'] = 'fixed';
+      settings['compile.latex.engine'] = 'custom';
+      settings['compile.latex.engines'] = { custom: { output: 'dvi' } };
+      const dvi = path.join(directory, 'main.dvi');
+      const pdf = path.join(directory, 'main.pdf');
+      await fs.writeFile(dvi, 'existing DVI');
+      const record = runProgram;
+      runProgram = async (command, args, cwd) => {
+        await record(command, args, cwd);
+        await fs.writeFile(pdf, command === 'custom' ? 'direct PDF' : 'converted PDF');
+        return 0;
+      };
+      const mainfile = vscode.Uri.file(path.join(directory, 'main.tex'));
+      const result = await new TeXToPDF(project('article', '', {}, mainfile), '').build();
+      assert.deepStrictEqual(calls.map(call => call.command), ['custom', 'dvipdfmx']);
+      assert.strictEqual(await fs.readFile(dvi, 'utf8'), 'existing DVI');
+      assert.strictEqual(await fs.readFile(pdf, 'utf8'), 'converted PDF');
+      assert.strictEqual(result.outcome, 'succeeded');
+      assert.strictEqual(result.severity, 'info');
+    });
+  });
+
+  test('decides conversion after all LaTeX passes using the build-start snapshots', async () => {
+    for (const finalPDF of [false, true]) {
+      await withBuild(async (directory, calls) => {
+        settings['compile.latex.engineSelection'] = 'fixed';
+        settings['compile.latex.engine'] = 'custom';
+        const aux = path.join(directory, 'main.aux');
+        await fs.writeFile(aux, 'old auxiliary contents');
+        const record = runProgram;
+        let passes = 0;
+        runProgram = async (command, args, cwd) => {
+          await record(command, args, cwd);
+          if (command === 'custom') {
+            passes++;
+            await fs.writeFile(aux, 'stable auxiliary contents');
+            if (passes === 1) { await fs.writeFile(path.join(directory, 'main.dvi'), 'DVI'); }
+            else if (finalPDF) { await fs.writeFile(path.join(directory, 'main.pdf'), 'direct PDF'); }
+          } else {
+            assert.strictEqual(passes, 2);
+            await fs.writeFile(path.join(directory, 'main.pdf'), 'converted PDF');
+          }
+          return 0;
+        };
+        const mainfile = vscode.Uri.file(path.join(directory, 'main.tex'));
+        const result = await new TeXToPDF(project('article', '', {}, mainfile), '').build();
+        assert.strictEqual(passes, 2);
+        assert.deepStrictEqual(calls.map(call => call.command), finalPDF ? ['custom', 'custom'] : ['custom', 'custom', 'dvipdfmx']);
+        assert.strictEqual(result.outcome, 'succeeded');
+        assert.strictEqual(result.severity, 'info');
+      });
+    }
+  });
+
+  test('never converts a new DVI after a failed or cancelled LaTeX pass', async () => {
+    for (const cancel of [false, true]) {
+      await withBuild(async (directory, calls) => {
+        settings['compile.latex.engineSelection'] = 'fixed';
+        settings['compile.latex.engine'] = 'custom';
+        const cancellation = new vscode.CancellationTokenSource();
+        const record = runProgram;
+        runProgram = async (...args) => {
+          await record(...args);
+          await fs.writeFile(path.join(directory, 'main.dvi'), 'DVI');
+          if (cancel) { cancellation.cancel(); }
+          return cancel ? 0 : 1;
+        };
+        try {
+          const mainfile = vscode.Uri.file(path.join(directory, 'main.tex'));
+          const result = await new TeXToPDF(project('article', '', {}, mainfile), '').build({ token: cancellation.token });
+          assert.deepStrictEqual(calls.map(call => call.command), ['custom']);
+          assert.strictEqual(result.outcome, cancel ? 'cancelled' : 'failed');
+        } finally { cancellation.dispose(); }
+      });
+    }
   });
 
   test('includes final LaTeX warnings in a successful build without changing its outcome', async () => {
@@ -566,6 +752,7 @@ suite('TeXToPDF build configuration', () => {
       const record = runProgram;
       runProgram = async (command, args, cwd) => {
         await record(command, args, cwd);
+        if (command === 'platex') { await fs.writeFile(path.join(directory, 'main.dvi'), 'DVI'); }
         return command === 'dvipdfmx' ? 1 : 0;
       };
       const result = await new TeXToPDF(project('article', '', {}, vscode.Uri.file(path.join(directory, 'main.tex'))), '').build();

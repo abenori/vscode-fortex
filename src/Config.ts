@@ -20,7 +20,7 @@ export interface CompileProgramSettings {
 }
 
 export interface LaTeXEngineSettings extends CompileProgramSettings {
-  /** 生成するファイルの形式． */
+  /** PDF変換の判断に使う出力形式．未指定なら今回の生成物から判定する．エンジン引数は変更しない． */
   output?: 'pdf' | 'dvi';
 }
 
@@ -247,7 +247,7 @@ export default class Config {
    * エンジンの実行ファイル，引数，および出力形式を取得する．
    * @param engine LaTeXエンジンの名前またはパス．
    * @param commandOverride 設定より優先する実行ファイル名．省略可能．
-   * @returns 実行ファイル，追加引数，および任意の出力形式．未登録エンジンは名前を実行ファイルに使い，追加引数は空配列．
+   * @returns 実行ファイル，追加引数，および任意の出力形式．未登録エンジンは名前を実行ファイルに使い，追加引数は空配列．出力形式の未指定時は生成物から変換要否を判定する．
    */
   public static latexEngineSettings(engine: string, commandOverride?: string): LaTeXEngineSettings {
     const key = 'compile.latex.engines';

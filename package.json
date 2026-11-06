@@ -1410,14 +1410,14 @@
                   "pdf",
                   "dvi"
                 ],
-                "description": "Output format. Omit to infer from the executable name as before. The -output-format=dvi argument always selects DVI."
+                "description": "Output format used to decide DVI-to-PDF conversion. pdf skips conversion; dvi runs it. When omitted, convert only if DVI was created or updated and PDF was not, compared with the build start. Does not change engine arguments."
               }
             }
           },
           "default": {},
           "scope": "machine",
           "order": 15,
-          "markdownDescription": "Optional overrides keyed by engine name. Unregistered engines use their name as the command, no extra arguments, and the existing PDF/DVI detection. Use `output` for executable paths or custom names whose format cannot be inferred."
+          "markdownDescription": "Optional overrides keyed by engine name. Unregistered engines use their name as the command and no extra arguments. Omit `output` to detect whether conversion is needed from PDF/DVI changes during the build, or set it to `pdf` or `dvi` to override detection."
         },
         "vscode-fortex.compile.bibtex": {
           "type": "object",

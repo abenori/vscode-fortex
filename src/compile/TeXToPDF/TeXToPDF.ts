@@ -4,7 +4,7 @@ import * as vscode from 'vscode';
 import LaTeXProject from '../../project/LaTeXProject';
 import Log from '../../log';
 import Process from '../Process';
-import Config, { CompileProgram, CompileProgramSettings } from '../../Config';
+import Config, { CompileProgram, CompileProgramSettings, LaTeXEngineSettings } from '../../Config';
 import { singleProgramFromDirective } from '../BuildSecurity';
 import * as Workspace from '../../workspace';
 import { SourceScanner, splitclist } from '../../latex-parser';
@@ -65,11 +65,6 @@ export interface TeXToPDFResult {
   readonly diagnostics?: [vscode.Uri, vscode.Diagnostic[]][];
   /** 今回の実行で生成したPDFのURI． */
   readonly pdfs?: vscode.Uri[];
-}
-
-interface LaTeXCommand extends CompileProgramSettings {
-  /** 生成するファイルの形式． */
-  output: 'pdf' | 'dvi';
 }
 
 /**
@@ -164,9 +159,9 @@ export default class TeXToPDF {
 
   /**
    * 設定とソース指示をまとめ，必須引数を含むLaTeXコマンドを作る．引数はない．
-   * @returns 実行ファイル，引数，およびPDF/DVIの出力形式．
+   * @returns 実行ファイル，引数，および任意の出力形式設定．未指定時の変換要否は生成物から判定する．
    */
-  private make_latex_command(): LaTeXCommand {
+  private make_latex_command(): LaTeXEngineSettings {
     const directive = this.LaTeXProject.percent_sharp('!')?.trim();
     const explicitProgram = directive ? singleProgramFromDirective(directive) : undefined;
     const engine = explicitProgram ?? this.select_latex_engine();
@@ -174,10 +169,7 @@ export default class TeXToPDF {
     const settings = Config.latexEngineSettings(engine, explicitProgram);
     const directiveArgs = (this.LaTeXProject.percent_sharp('t2dopt') ?? '').split(' ').filter(s => s.length > 0);
     const args = [...TeXToPDF.requiredLaTeXArgs, ...settings.args, ...directiveArgs];
-    const command = settings.command;
-    const output = settings.output ?? (command.startsWith('lua') || command.startsWith('pdf')
-      || command.startsWith('xe') || command === 'context' ? 'pdf' : 'dvi');
-    return { command, args, output: args.includes('-output-format=dvi') ? 'dvi' : output };
+    return { ...settings, args };
   }
 
   /**
@@ -191,6 +183,7 @@ export default class TeXToPDF {
 
   /**
    * 補助ファイルが安定するまで各段階を実行し，要求内の結果をまとめる．
+   * PDF変換は出力形式の設定を優先し，未指定時はビルド開始時からのPDF・DVIの更新で判定する．
    * @param options キャンセルトークンと進捗通知先．省略時は通知・外部キャンセルを使わない．
    * @returns 成否，警告，診断情報，および今回生成したPDFを含む結果のPromise．
    */
@@ -198,15 +191,17 @@ export default class TeXToPDF {
     const warnings: string[] = [];
     const helperDiagnostics: PipelineDiagnostics = [];
     const pdf = vscode.Uri.file(TeXToPDF.change_extension(this.LaTeXProject.mainfile.fsPath, '.pdf'));
-    const previousPDF = this.fileStamp(pdf.fsPath);
+    const previousPDFStamp = this.fileStamp(pdf.fsPath);
+    const dvi = TeXToPDF.change_extension(this.LaTeXProject.mainfile.fsPath, '.dvi');
     const logPath = TeXToPDF.change_extension(this.LaTeXProject.mainfile.fsPath, '.log');
-    const previousLog = this.fileStamp(logPath);
+    const previousLogStamp = this.fileStamp(logPath);
     let started = false;
     try {
       this.checkCancellation(options);
       options?.onProgress?.('Preparing build…');
       // 設定は要求ごとに一度だけ取得する．途中の設定変更は次の要求へ反映する．
       const latex = this.make_latex_command();
+      const previousDVIStamp = latex.output === undefined ? this.fileStamp(dvi) : undefined;
       const bibliography = this.make_program_command('bibtex');
       const index = this.make_program_command('makeindex');
       const converter = this.make_program_command('dvipdf');
@@ -239,15 +234,24 @@ export default class TeXToPDF {
           this.forcelatex = true;
         } else { break; }
       }
-      if (latex.output === 'dvi') {
+      // 明示設定を優先し，未指定時だけ今回更新された生成物から変換の要否を判定する．
+      let convertDVI = latex.output === 'dvi';
+      if (latex.output === undefined) {
+        const PDFStamp = this.fileStamp(pdf.fsPath);
+        const DVIStamp = this.fileStamp(dvi);
+        const pdfUpdated = PDFStamp !== undefined && PDFStamp !== previousPDFStamp;
+        const dviUpdated = DVIStamp !== undefined && DVIStamp !== previousDVIStamp;
+        convertDVI = !pdfUpdated && dviUpdated;
+      }
+      if (convertDVI) {
         await this.runTool(converter, TeXToPDF.change_extension(base, '.dvi'), directory,
           'Creating PDF…', options);
       }
       this.checkCancellation(options);
-      const currentPDF = this.fileStamp(pdf.fsPath);
-      const producedPDF = currentPDF !== undefined && currentPDF !== previousPDF;
+      const currentPDFStamp = this.fileStamp(pdf.fsPath);
+      const producedPDF = currentPDFStamp !== undefined && currentPDFStamp !== previousPDFStamp;
       if (!producedPDF) { warnings.push('No new PDF was produced.'); }
-      if (this.fileStamp(logPath) !== previousLog) {
+      if (this.fileStamp(logPath) !== previousLogStamp) {
         try {
           const latexDiagnostics = await TeXToPDF.analyze_errors(this.LaTeXProject.mainfile);
           helperDiagnostics.push(...latexDiagnostics);
@@ -270,7 +274,7 @@ export default class TeXToPDF {
       Log.error(message);
       let diagnostics: PipelineDiagnostics | undefined = helperDiagnostics.length ? [...helperDiagnostics] : undefined;
       // 内容が変わっていないログは以前のビルドのもので，今回の起動失敗のログではない．
-      if (started && this.fileStamp(logPath) !== previousLog) {
+      if (started && this.fileStamp(logPath) !== previousLogStamp) {
         try {
           const latexDiagnostics = await TeXToPDF.analyze_errors(this.LaTeXProject.mainfile);
           diagnostics = [...helperDiagnostics, ...latexDiagnostics];
