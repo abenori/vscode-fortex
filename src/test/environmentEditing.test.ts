@@ -1,6 +1,7 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import { insertOrRenameEnvironment } from '../completion/environment/EnvironmentCommand';
+import { closeEnvironment } from '../completion/environment/EnvironmentCloseCommand';
 import EnvironmentRenameProvider from '../completion/environment/EnvironmentRenameProvider';
 
 interface EnvironmentItem extends vscode.QuickPickItem {
@@ -76,6 +77,16 @@ async function wrapEnvironment(source: string, startOffset: number, endOffset: n
 	}
 }
 
+async function closeEnvironmentAt(source: string, offset: number): Promise<vscode.TextEditor> {
+	const document = await vscode.workspace.openTextDocument({ language: 'latex', content: source });
+	const editor = await vscode.window.showTextDocument(document);
+	await editor.edit(edit => edit.setEndOfLine(source.includes('\r\n') ? vscode.EndOfLine.CRLF : vscode.EndOfLine.LF));
+	const position = document.positionAt(offset);
+	editor.selection = new vscode.Selection(position, position);
+	await closeEnvironment();
+	return editor;
+}
+
 suite('Environment editing', () => {
 	test('converts only the matching nested pair with [ from either end', async () => {
 		const source = '\\begin{equation}\n\\begin{equation}\nx\n\\end{equation}\n\\end{equation}';
@@ -141,6 +152,38 @@ suite('Environment editing', () => {
 
 	for (const [eolName, eol] of [['LF', '\n'], ['CRLF', '\r\n']]) {
 		for (const name of ['quote', '\\[']) {
+			test(`closes ${name} inline at the cursor with surrounding text (${eolName})`, async () => {
+				const opening = name === '\\[' ? '\\[' : '\\begin{quote}';
+				const closing = name === '\\[' ? '\\]' : '\\end{quote}';
+				const prefix = `  ${opening}${eol}`;
+				for (const [before, after] of [['', 'abcdef'], ['abc', 'def'], ['abcdef', ''], ['  ', 'abc \t'], ['abc ', ' \t'], ['abc😀', 'def']]) {
+					const source = `${prefix}${before}${after}${eol}next`;
+					const offset = prefix.length + before.length;
+					const editor = await closeEnvironmentAt(source, offset);
+					assert.strictEqual(editor.document.getText(), `${prefix}${before}${closing}${after}${eol}next`);
+					assert.ok(editor.selection.isEmpty);
+					assert.strictEqual(editor.document.offsetAt(editor.selection.active), offset + closing.length);
+				}
+				const source = `  ${opening}abcdef${eol}next`;
+				const offset = `  ${opening}abc`.length;
+				const editor = await closeEnvironmentAt(source, offset);
+				assert.strictEqual(editor.document.getText(), `  ${opening}abc${closing}def${eol}next`);
+				assert.strictEqual(editor.document.offsetAt(editor.selection.active), offset + closing.length);
+			});
+
+			test(`aligns ${name}'s closing command with its opening on a blank line (${eolName})`, async () => {
+				const opening = name === '\\[' ? '\\[' : '\\begin{quote}';
+				const closing = name === '\\[' ? '\\]' : '\\end{quote}';
+				const prefix = `  ${opening}${eol}`;
+				for (const whitespace of ['', ' \t  ']) {
+					const source = `${prefix}${whitespace}${eol}next`;
+					const editor = await closeEnvironmentAt(source, prefix.length + Math.floor(whitespace.length / 2));
+					assert.strictEqual(editor.document.getText(), `${prefix}  ${closing}${eol}next`);
+					assert.ok(editor.selection.isEmpty);
+					assert.strictEqual(editor.document.offsetAt(editor.selection.active), prefix.length + 2 + closing.length);
+				}
+			});
+
 			test(`wraps ${name} inline with text before, after, or on both sides (${eolName})`, async () => {
 				const opening = name === '\\[' ? '\\[' : '\\begin{quote}';
 				const closing = name === '\\[' ? '\\]' : '\\end{quote}';
@@ -206,6 +249,21 @@ suite('Environment editing', () => {
 				}
 			});
 		}
+
+		test(`closes the innermost unclosed environment inline (${eolName})`, async () => {
+			const source = `\\begin{center}${eol}\\begin{quote}${eol}abcdef`;
+			const offset = source.length - 3;
+			const editor = await closeEnvironmentAt(source, offset);
+			assert.strictEqual(editor.document.getText(), source.slice(0, offset) + '\\end{quote}' + source.slice(offset));
+		});
+
+		test(`keeps an environment with an existing matching closing command unchanged (${eolName})`, async () => {
+			const source = `\\begin{quote}${eol}abcdef${eol}\\end{quote}`;
+			const offset = source.indexOf('abcdef') + 3;
+			const editor = await closeEnvironmentAt(source, offset);
+			assert.strictEqual(editor.document.getText(), source);
+			assert.strictEqual(editor.document.offsetAt(editor.selection.active), offset);
+		});
 
 		test(`uses block wrapping when only whitespace surrounds the selection (${eolName})`, async () => {
 			const source = `  alpha \t${eol}next`;

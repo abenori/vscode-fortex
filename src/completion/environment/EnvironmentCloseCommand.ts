@@ -34,10 +34,9 @@ export async function closeEnvironment(): Promise<void> {
     await editor.edit((edit) => edit.replace(currentLine.range, indentation + closing));
     finalPosition = new vscode.Position(cursor.line, indentation.length + closing.length);
   } else {
-    // 本文のある行で実行した場合は次の行に終了コマンドを置き，既存の文字列を分割・上書きしない．
-    const eol = document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n';
-    await editor.edit((edit) => edit.insert(currentLine.range.end, `${eol}${indentation}${closing}`));
-    finalPosition = new vscode.Position(cursor.line + 1, indentation.length + closing.length);
+    // 同じ行の前後に本文があれば，カーソル位置に改行や字下げを追加せず挿入する．
+    await editor.edit((edit) => edit.insert(cursor, closing));
+    finalPosition = new vscode.Position(cursor.line, cursor.character + closing.length);
   }
 
   editor.selection = new vscode.Selection(finalPosition, finalPosition);
