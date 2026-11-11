@@ -55,6 +55,27 @@ async function runEnvironmentCommand(source: string, offset: number, interact: (
 	}
 }
 
+async function wrapEnvironment(source: string, startOffset: number, endOffset: number, name = 'quote', reversed = false): Promise<string> {
+	const document = await vscode.workspace.openTextDocument({ language: 'latex', content: source });
+	const editor = await vscode.window.showTextDocument(document);
+	await editor.edit(edit => edit.setEndOfLine(source.includes('\r\n') ? vscode.EndOfLine.CRLF : vscode.EndOfLine.LF));
+	const start = document.positionAt(startOffset);
+	const end = document.positionAt(endOffset);
+	editor.selection = reversed ? new vscode.Selection(end, start) : new vscode.Selection(start, end);
+	const original = vscode.window.showQuickPick;
+	vscode.window.showQuickPick = (async (items: readonly EnvironmentItem[]) => {
+		const item = items.find(candidate => candidate.name === name);
+		assert.ok(item, `Expected a candidate for ${name}`);
+		return item;
+	}) as unknown as typeof original;
+	try {
+		await insertOrRenameEnvironment();
+		return document.getText();
+	} finally {
+		vscode.window.showQuickPick = original;
+	}
+}
+
 suite('Environment editing', () => {
 	test('converts only the matching nested pair with [ from either end', async () => {
 		const source = '\\begin{equation}\n\\begin{equation}\nx\n\\end{equation}\n\\end{equation}';
@@ -117,4 +138,106 @@ suite('Environment editing', () => {
 		assert.strictEqual(result, '\\[\nx\n\\]');
 		assert.strictEqual(await runEnvironmentCommand(source, 8, (picker) => picker.hide()), source);
 	});
+
+	for (const [eolName, eol] of [['LF', '\n'], ['CRLF', '\r\n']]) {
+		for (const name of ['quote', '\\[']) {
+			test(`wraps ${name} inline with text before, after, or on both sides (${eolName})`, async () => {
+				const opening = name === '\\[' ? '\\[' : '\\begin{quote}';
+				const closing = name === '\\[' ? '\\]' : '\\end{quote}';
+				const cases = [
+					{ before: 'abc', body: 'def', after: '' },
+					{ before: '', body: 'abc', after: 'def' },
+					{ before: 'abc', body: 'def', after: 'ghi' },
+					{ before: '  abc ', body: 'def', after: ' \t' },
+					{ before: '\t ', body: 'def', after: ' ghi' },
+					{ before: 'abc', body: '\\alpha + ${value} + $0', after: 'ghi' }
+				];
+				for (const { before, body, after } of cases) {
+					const source = `${before}${body}${after}${eol}next`;
+					for (const reversed of [false, true]) {
+						const result = await wrapEnvironment(source, before.length, before.length + body.length, name, reversed);
+						assert.strictEqual(result, `${before}${opening}${body}${closing}${after}${eol}next`);
+					}
+				}
+			});
+
+			test(`preserves selected ${eolName} line breaks and indentation inside inline ${name}`, async () => {
+				const opening = name === '\\[' ? '\\[' : '\\begin{quote}';
+				const closing = name === '\\[' ? '\\]' : '\\end{quote}';
+				const body = `alpha${eol}\t beta${eol}    gamma`;
+				for (const [before, after] of [['  before ', ''], ['  ', ' after'], ['before ', ' after']]) {
+					const source = `${before}${body}${after}${eol}next`;
+					for (const reversed of [false, true]) {
+						const result = await wrapEnvironment(source, before.length, before.length + body.length, name, reversed);
+						assert.strictEqual(result, `${before}${opening}${body}${closing}${after}${eol}next`);
+					}
+				}
+			});
+
+			test(`keeps the final ${eolName} after inline ${name} whether selected or not`, async () => {
+				const before = 'before ';
+				const body = `alpha${eol}  beta`;
+				const source = `${before}${body}${eol}next`;
+				const opening = name === '\\[' ? '\\[' : '\\begin{quote}';
+				const closing = name === '\\[' ? '\\]' : '\\end{quote}';
+				for (const includeEol of [false, true]) {
+					for (const reversed of [false, true]) {
+						const result = await wrapEnvironment(source, before.length, before.length + body.length + (includeEol ? eol.length : 0), name, reversed);
+						assert.strictEqual(result, `${before}${opening}${body}${closing}${eol}next`);
+					}
+				}
+			});
+
+			test(`wraps ${name} identically with or without the selected final ${eolName}`, async () => {
+				const body = `alpha${eol}beta`;
+				const source = `${body}${eol}next`;
+				const opening = name === '\\[' ? '\\[' : '\\begin{quote}';
+				const closing = name === '\\[' ? '\\]' : '\\end{quote}';
+				const expected = `${opening}${eol}${body}${eol}${closing}${eol}next`;
+				let firstResult: string | undefined;
+				for (const includeEol of [false, true]) {
+					for (const reversed of [false, true]) {
+						const result = await wrapEnvironment(source, 0, body.length + (includeEol ? eol.length : 0), name, reversed);
+						// 字下げ幅の設定に依存せず，空行も含めて改行の配置を検証する．
+						assert.strictEqual(result.replace(/^[\t ]+/gm, ''), expected);
+						firstResult ??= result;
+						assert.strictEqual(result, firstResult);
+					}
+				}
+			});
+		}
+
+		test(`uses block wrapping when only whitespace surrounds the selection (${eolName})`, async () => {
+			const source = `  alpha \t${eol}next`;
+			const result = await wrapEnvironment(source, 2, 7);
+			assert.strictEqual(result.replace(/^[\t ]+/gm, ''), `\\begin{quote}${eol}alpha${eol}\\end{quote} \t${eol}next`);
+		});
+
+		test(`retains intentional blank lines when moving the final ${eolName} after the environment`, async () => {
+			const selected = `alpha${eol}${eol}beta${eol}${eol}`;
+			const result = await wrapEnvironment(`${selected}next`, 0, selected.length);
+			assert.strictEqual(result.replace(/^[\t ]+/gm, ''), `\\begin{quote}${eol}alpha${eol}${eol}beta${eol}${eol}\\end{quote}${eol}next`);
+		});
+
+		test(`preserves the final ${eolName} at the end of the document`, async () => {
+			const body = `alpha${eol}beta`;
+			for (const finalEol of ['', eol]) {
+				const source = body + finalEol;
+				for (const endOffset of new Set([body.length, source.length])) {
+					const result = await wrapEnvironment(source, 0, endOffset);
+					assert.strictEqual(result.replace(/^[\t ]+/gm, ''), `\\begin{quote}${eol}${body}${eol}\\end{quote}${finalEol}`);
+				}
+			}
+		});
+
+		test(`preserves surrounding indentation with either selection ending in ${eolName}`, async () => {
+			const body = `alpha${eol}  beta`;
+			const source = `  ${body}${eol}  next`;
+			const withoutEol = await wrapEnvironment(source, 2, 2 + body.length);
+			const withEol = await wrapEnvironment(source, 2, 2 + body.length + eol.length);
+			assert.strictEqual(withEol, withoutEol);
+			assert.ok(withEol.startsWith('  \\begin{quote}'));
+			assert.ok(withEol.endsWith(`${eol}  \\end{quote}${eol}  next`));
+		});
+	}
 });

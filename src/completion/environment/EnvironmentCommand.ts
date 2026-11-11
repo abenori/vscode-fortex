@@ -72,12 +72,25 @@ export async function insertOrRenameEnvironment(): Promise<void> {
     return;
   }
 
-  // TM_SELECTED_TEXTを使い，複数行の選択範囲を1回のスニペット編集で保持する．
+  // 選択末尾の改行は終了コマンドの後に残し，改行を選択しない場合と同じ結果にする．
+  const end = selection.end;
+  const wrapRange = end.character === 0 && end.line > selection.start.line
+    ? new vscode.Range(selection.start, editor.document.lineAt(end.line - 1).range.end)
+    : selection;
+  const before = editor.document.lineAt(wrapRange.start.line).text.slice(0, wrapRange.start.character);
+  const after = editor.document.lineAt(wrapRange.end.line).text.slice(wrapRange.end.character);
   const snippet = new vscode.SnippetString();
+  if (/\S/.test(before) || /\S/.test(after)) {
+    // インラインでは選択本文をそのまま囲み，スニペットによる字下げ調整も行わない．
+    snippet.appendText(`${opening}${editor.document.getText(wrapRange)}${closing}`);
+    await editor.insertSnippet(snippet, wrapRange, { undoStopBefore: true, undoStopAfter: true, keepWhitespace: true });
+    return;
+  }
+  // TM_SELECTED_TEXTを使い，複数行の選択範囲を1回のスニペット編集で保持する．
   snippet.appendText(`${opening}${eol}${environmentContentIndentation(editor.document.uri)}`);
   snippet.appendVariable('TM_SELECTED_TEXT', '');
   snippet.appendText(`${eol}${closing}`);
-  await editor.insertSnippet(snippet, selection);
+  await editor.insertSnippet(snippet, wrapRange);
 }
 
 /**
