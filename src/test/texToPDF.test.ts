@@ -24,10 +24,17 @@ interface CommandMethods {
   make_program_command(key: 'bibtex' | 'makeindex' | 'dvipdf'): Omit<Command, 'output'>;
 }
 
+interface AuxiliarySnapshot {
+  readonly latex: ReadonlyMap<string, string | null>;
+  readonly bcfText: string | null;
+  readonly idx: Buffer | null;
+}
+
 interface BibliographyMethods {
-  read_status(command: Omit<Command, 'output'>): void;
-  latex_check(): boolean;
-  bib_check(command: Omit<Command, 'output'>, options?: { token: vscode.CancellationToken }): Promise<boolean>;
+  read_auxiliary_files(bibliography: Omit<Command, 'output'>, index: Omit<Command, 'output'>): AuxiliarySnapshot;
+  bib_check(command: Omit<Command, 'output'>, start: AuxiliarySnapshot, previous: AuxiliarySnapshot | undefined,
+    current: AuxiliarySnapshot,
+    options?: { token: vscode.CancellationToken }): Promise<boolean>;
 }
 
 const commonArgs = ['-interaction=nonstopmode', '-halt-on-error', '-synctex=1', '-file-line-error'];
@@ -327,7 +334,7 @@ suite('TeXToPDF build configuration', () => {
       const mainfile = vscode.Uri.file(path.join(directory, 'main.tex'));
       assert.strictEqual((await new TeXToPDF(project('article', '', { t2dopt: '--source' }, mainfile), '').build()).outcome, 'succeeded');
       assert.deepStrictEqual(calls.map(call => call.command), [
-        'wrapper', 'wrapper', 'bib-helper', 'wrapper', 'index-helper', 'wrapper', 'pdf-helper'
+        'wrapper', 'bib-helper', 'wrapper', 'index-helper', 'wrapper', 'pdf-helper'
       ]);
       for (const call of calls.filter(call => call.command === 'wrapper')) {
         assert.deepStrictEqual(call.args, [...commonArgs, '--engine', '--source', 'main.tex']);
@@ -775,79 +782,281 @@ suite('TeXToPDF build configuration', () => {
     });
   });
 
-  test('compares bibliography declarations with the build start even after auxiliary snapshots stabilize', async () => {
+  test('prioritizes and repeats bibliography processing, succeeding when inputs stabilize at the LaTeX pass limit', async () => {
+    await withBuild(async (directory, calls) => {
+      settings['compile.latex.engineSelection'] = 'fixed';
+      settings['compile.latex.engine'] = 'custom';
+      settings['compile.latex.engines'] = { custom: { command: 'engine', output: 'pdf' } };
+      settings['compile.bibtex'] = { command: 'bib-helper' };
+      settings['compile.maxLaTeXRuns'] = 3;
+      const record = runProgram;
+      let latexRuns = 0;
+      runProgram = async (command, args, cwd) => {
+        await record(command, args, cwd);
+        if (command === 'engine') {
+          const key = ++latexRuns === 1 ? 'one' : 'two';
+          await fs.writeFile(path.join(directory, 'main.aux'), `\\citation{${key}}\n\\bibdata{refs}\n`);
+          await fs.writeFile(path.join(directory, 'main.pdf'), 'PDF');
+        } else if (command === 'bib-helper') {
+          await fs.writeFile(path.join(directory, 'main.aux'), '\\citation{two}\n\\bibdata{refs}\n');
+        }
+        return 0;
+      };
+      const result = await new TeXToPDF(project('article', '', {}, vscode.Uri.file(path.join(directory, 'main.tex'))), '').build();
+      assert.strictEqual(result.outcome, 'succeeded');
+      assert.deepStrictEqual(calls.map(call => call.command), ['engine', 'bib-helper', 'engine', 'bib-helper', 'engine']);
+    });
+  });
+
+  test('does not retry unchanged bibliography input when citations, remote sources or active requests persist', async () => {
+    for (const backend of ['bib-helper', 'biber']) {
+      await withBuild(async (directory, calls) => {
+        settings['compile.latex.engineSelection'] = 'fixed';
+        settings['compile.latex.engine'] = 'custom';
+        settings['compile.latex.engines'] = { custom: { command: 'engine', output: 'pdf' } };
+        settings['compile.bibtex'] = { command: backend };
+        const record = runProgram;
+        runProgram = async (command, args, cwd) => {
+          await record(command, args, cwd);
+          if (command === 'engine') {
+            await fs.writeFile(path.join(directory, 'main.aux'), '\\citation{missing}\n\\bibdata{refs}\n');
+            await fs.writeFile(path.join(directory, 'main.bcf'),
+              '<bcf:controlfile xmlns:bcf="urn:test"><bcf:datasource>https://example.invalid/refs.bib</bcf:datasource></bcf:controlfile>');
+            await fs.writeFile(path.join(directory, 'main.run.xml'), '<requests><external active="1"><generic>biber</generic></external></requests>');
+            await fs.writeFile(path.join(directory, 'main.pdf'), 'PDF');
+          }
+          return 0;
+        };
+        const result = await new TeXToPDF(project('article', '', {}, vscode.Uri.file(path.join(directory, 'main.tex'))), '').build();
+        assert.strictEqual(result.outcome, 'succeeded');
+        assert.deepStrictEqual(calls.map(call => call.command), ['engine', backend, 'engine']);
+        await assert.rejects(fs.stat(path.join(directory, 'main.bbl')), { code: 'ENOENT' });
+      });
+    }
+  });
+
+  test('detects a database update on a later LaTeX pass after an earlier negative bibliography check', async () => {
+    await withBuild(async (directory, calls) => {
+      settings['compile.latex.engineSelection'] = 'fixed';
+      settings['compile.latex.engine'] = 'custom';
+      settings['compile.latex.engines'] = { custom: { command: 'engine', output: 'pdf' } };
+      settings['compile.bibtex'] = { command: 'bib-helper' };
+      const declarations = '\\citation{one}\n\\bibcite{one}{1}\n\\bibdata{refs}\n\\bibstyle{plain}\n';
+      await fs.writeFile(path.join(directory, 'main.aux'), declarations + '\\newlabel{body}{{1}{1}}\n');
+      for (const name of ['refs.bib', 'plain.bst', 'main.bbl']) {
+        await fs.writeFile(path.join(directory, name), 'data');
+        await fs.utimes(path.join(directory, name), 1000, name === 'main.bbl' ? 2000 : 1000);
+      }
+      const record = runProgram;
+      let latexRuns = 0;
+      runProgram = async (command, args, cwd) => {
+        await record(command, args, cwd);
+        if (command === 'engine') {
+          await fs.writeFile(path.join(directory, 'main.aux'), declarations + '\\newlabel{body}{{1}{2}}\n');
+          await fs.writeFile(path.join(directory, 'main.pdf'), 'PDF');
+          if (++latexRuns === 2) { await fs.utimes(path.join(directory, 'refs.bib'), 3000, 3000); }
+        }
+        return 0;
+      };
+      const result = await new TeXToPDF(project('article', '', {}, vscode.Uri.file(path.join(directory, 'main.tex'))), '').build();
+      assert.strictEqual(result.outcome, 'succeeded');
+      assert.deepStrictEqual(calls.map(call => call.command), ['engine', 'engine', 'bib-helper', 'engine']);
+    });
+  });
+
+  test('suppresses a failed bibliography tool even when a later LaTeX pass changes its input', async () => {
+    await withBuild(async (directory, calls) => {
+      settings['compile.latex.engineSelection'] = 'fixed';
+      settings['compile.latex.engine'] = 'custom';
+      settings['compile.latex.engines'] = { custom: { command: 'engine', output: 'pdf' } };
+      settings['compile.bibtex'] = { command: 'bib-helper' };
+      const record = runProgram;
+      let latexRuns = 0;
+      runProgram = async (command, args, cwd) => {
+        await record(command, args, cwd);
+        if (command === 'engine') {
+          const key = ++latexRuns === 1 ? 'one' : 'two';
+          await fs.writeFile(path.join(directory, 'main.aux'), `\\citation{${key}}\n\\bibdata{refs}\n`);
+          await fs.writeFile(path.join(directory, 'main.pdf'), 'PDF');
+        }
+        return command === 'bib-helper' ? 1 : 0;
+      };
+      const result = await new TeXToPDF(project('article', '', {}, vscode.Uri.file(path.join(directory, 'main.tex'))), '').build();
+      assert.strictEqual(result.outcome, 'succeeded');
+      assert.strictEqual(result.severity, 'warning');
+      assert.deepStrictEqual(calls.map(call => call.command), ['engine', 'bib-helper', 'engine', 'engine']);
+      assert.deepStrictEqual(result.diagnostics?.flatMap(([, entries]) => entries.map(entry => entry.code)), ['bibliography-failed']);
+    });
+  });
+
+  test('does not start a bibliography tool when the LaTeX pass limit leaves no pass to consume its result', async () => {
+    await withBuild(async (directory, calls) => {
+      settings['compile.latex.engineSelection'] = 'fixed';
+      settings['compile.latex.engine'] = 'custom';
+      settings['compile.latex.engines'] = { custom: { command: 'engine', output: 'pdf' } };
+      settings['compile.bibtex'] = { command: 'bib-helper' };
+      settings['compile.maxLaTeXRuns'] = 1;
+      const record = runProgram;
+      runProgram = async (command, args, cwd) => {
+        await record(command, args, cwd);
+        await fs.writeFile(path.join(directory, 'main.aux'), '\\citation{one}\n\\bibdata{refs}\n');
+        return 0;
+      };
+      const result = await new TeXToPDF(project('article', '', {}, vscode.Uri.file(path.join(directory, 'main.tex'))), '').build();
+      assert.strictEqual(result.outcome, 'failed');
+      assert.match(result.message, /Maximum number of LaTeX runs \(1\) exceeded/);
+      assert.deepStrictEqual(calls.map(call => call.command), ['engine']);
+    });
+  });
+
+  test('allows repeated bibliography control changes beyond the default pass limit when the limit is zero', async () => {
+    await withBuild(async (directory, calls) => {
+      settings['compile.latex.engineSelection'] = 'fixed';
+      settings['compile.latex.engine'] = 'custom';
+      settings['compile.latex.engines'] = { custom: { command: 'engine', output: 'pdf' } };
+      settings['compile.bibtex'] = { command: 'bib-helper' };
+      settings['compile.maxLaTeXRuns'] = 0;
+      const record = runProgram;
+      let latexRuns = 0;
+      runProgram = async (command, args, cwd) => {
+        await record(command, args, cwd);
+        if (command === 'engine') {
+          const key = Math.min(++latexRuns, 8);
+          await fs.writeFile(path.join(directory, 'main.aux'), `\\citation{key${key}}\n\\bibdata{refs}\n`);
+          await fs.writeFile(path.join(directory, 'main.pdf'), 'PDF');
+        }
+        return 0;
+      };
+      const result = await new TeXToPDF(project('article', '', {}, vscode.Uri.file(path.join(directory, 'main.tex'))), '').build();
+      assert.strictEqual(result.outcome, 'succeeded');
+      assert.strictEqual(calls.filter(call => call.command === 'engine').length, 9);
+      assert.strictEqual(calls.filter(call => call.command === 'bib-helper').length, 8);
+    });
+  });
+
+  /**
+   * テスト用の文献判定インターフェースを持つ新しいパイプラインを作る．
+   * @param directory メインファイルを置く一時ディレクトリ．
+   * @returns 新しいパイプラインの補助ファイル読込・文献判定メソッド．
+   */
+  function bibliographyMethods(directory: string): BibliographyMethods {
+    return new TeXToPDF(project('article', '', {}, vscode.Uri.file(path.join(directory, 'main.tex'))), '') as unknown as BibliographyMethods;
+  }
+
+  /**
+   * 文献判定に使用する現在の補助ファイルをまとめて読む．
+   * @param methods 読み込みを行うパイプライン．
+   * @param command 文献処理に使用するコマンド．
+   * @returns 呼び出した時点の補助ファイルのスナップショット．
+   */
+  function bibliographySnapshot(methods: BibliographyMethods, command: Omit<Command, 'output'>): AuxiliarySnapshot {
+    return methods.read_auxiliary_files(command, { command: 'upmendex', args: [] });
+  }
+
+  test('compares bibliography declarations with the executed snapshot without changing captured auxiliary files', async () => {
     await withBuild(async directory => {
       const aux = path.join(directory, 'main.aux');
       const before = '\\citation{one}\n\\bibcite{one}{1}\n\\bibdata{old}\n\\bibstyle{plain}\n';
       await fs.writeFile(aux, before);
+      await fs.writeFile(path.join(directory, 'main.idx'), Buffer.from([0x61, 0xff]));
       for (const name of ['old.bib', 'plain.bst', 'main.bbl']) {
         await fs.writeFile(path.join(directory, name), 'data');
         await fs.utimes(path.join(directory, name), 1000, name === 'main.bbl' ? 2000 : 1000);
       }
-      const methods = new TeXToPDF(project('article', '', {}, vscode.Uri.file(path.join(directory, 'main.tex'))), '') as unknown as BibliographyMethods;
+      const methods = bibliographyMethods(directory);
       const command = { command: 'upbibtex', args: [] };
-      methods.read_status(command);
+      const start = bibliographySnapshot(methods, command);
+      const originalLatex = [...start.latex.entries()];
+      const originalIndex = Buffer.from(start.idx!);
       await fs.writeFile(aux, before.replace('{old}', '{new}'));
-      assert.strictEqual(methods.latex_check(), true);
-      assert.strictEqual(methods.latex_check(), false);
-      assert.strictEqual(await methods.bib_check(command), true);
+      await fs.writeFile(path.join(directory, 'main.idx'), 'changed index');
+      const changed = bibliographySnapshot(methods, command);
+      assert.notStrictEqual(changed, start);
+      assert.deepStrictEqual([...start.latex.entries()], originalLatex);
+      assert.deepStrictEqual(start.idx, originalIndex);
+      assert.strictEqual(await methods.bib_check(command, start, undefined, start), false,
+        'A captured snapshot must not reread the changed AUX');
+      assert.strictEqual(await methods.bib_check(command, start, undefined, changed), true);
+      assert.strictEqual(await methods.bib_check(command, start, undefined, changed), true,
+        'Checking alone must not mark the declarations as processed');
+      assert.strictEqual(await methods.bib_check(command, start, changed, changed), false);
       await fs.writeFile(aux, before);
-      methods.latex_check();
-      assert.strictEqual(await methods.bib_check(command), false, 'Returning to the original declarations needs no extra run');
+      assert.strictEqual(await methods.bib_check(command, start, changed, bibliographySnapshot(methods, command)), true,
+        'Returning to older declarations still changes the input since the previous execution');
+      await fs.writeFile(aux, before.replace('{one}{1}', '{one}{2}') + '\\newlabel{label}{{1}{2}}\n');
+      assert.strictEqual(await methods.bib_check(command, start, start, bibliographySnapshot(methods, command)), false,
+        'Bibcite and labels are LaTeX output, not bibliography control input');
       await fs.writeFile(aux, before.replace('{plain}', '{another}'));
-      methods.latex_check();
-      assert.strictEqual(await methods.bib_check(command), true);
+      assert.strictEqual(await methods.bib_check(command, start, start, bibliographySnapshot(methods, command)), true);
     });
   });
 
-  test('checks both database and style timestamps using the configured BibTeX program context', async () => {
+  test('checks BibTeX database and style freshness until execution using the configured program context', async () => {
     await withBuild(async directory => {
       await fs.writeFile(path.join(directory, 'main.aux'), '\\citation{one,two}\n\\bibcite{one}{1}\n\\bibcite{two}{2}\n\\bibdata{refs}\n\\bibstyle{plain}');
       for (const name of ['refs.bib', 'plain.bst', 'main.bbl']) {
         await fs.writeFile(path.join(directory, name), 'data');
         await fs.utimes(path.join(directory, name), 1000, name === 'main.bbl' ? 2000 : 1000);
       }
-      const methods = new TeXToPDF(project('article', '', {}, vscode.Uri.file(path.join(directory, 'main.tex'))), '') as unknown as BibliographyMethods;
+      const methods = bibliographyMethods(directory);
       const command = { command: 'upbibtex', args: [] };
       KpsewhichResolver.resolve = async (main, names, program) => {
         assert.strictEqual(program, 'upbibtex');
         assert.deepStrictEqual(names, ['refs.bib', 'plain.bst']);
         return names.map(name => vscode.Uri.file(path.join(directory, name)));
       };
-      methods.read_status(command);
-      assert.strictEqual(await methods.bib_check(command), false);
+      const start = bibliographySnapshot(methods, command);
+      assert.strictEqual(await methods.bib_check(command, start, undefined, start), false);
       for (const name of ['refs.bib', 'plain.bst']) {
         await fs.utimes(path.join(directory, name), 3000, 3000);
-        assert.strictEqual(await methods.bib_check(command), true, name);
+        const current = bibliographySnapshot(methods, command);
+        assert.strictEqual(await methods.bib_check(command, start, undefined, current), true,
+          `${name}: an earlier negative check must not consume the freshness check`);
+        assert.strictEqual(await methods.bib_check(command, start, undefined, current), true, name);
+        assert.strictEqual(await methods.bib_check(command, start, current, current), false,
+          `${name}: unchanged control runs only once after execution`);
         await fs.utimes(path.join(directory, name), 1000, 1000);
       }
       await fs.unlink(path.join(directory, 'main.bbl'));
-      assert.strictEqual(await methods.bib_check(command), true);
+      const missingOutput = bibliographySnapshot(methods, command);
+      assert.strictEqual(await methods.bib_check(command, start, undefined, missingOutput), true);
+      assert.strictEqual(await methods.bib_check(command, start, undefined, missingOutput), true);
+      assert.strictEqual(await methods.bib_check(command, start, missingOutput, missingOutput), false,
+        'A missing BBL must not cause repeated runs after execution');
     });
   });
 
-  test('uses BCF content rather than its timestamp and detects Biber datasource edits', async () => {
+  test('checks Biber datasource and configuration freshness until execution, then compares BCF content', async () => {
     await withBuild(async directory => {
       const control = path.join(directory, 'main.bcf');
       const text = '<bcf:controlfile xmlns:bcf="urn:test"><bcf:bibdata><bcf:datasource type="file" glob="false">refs&amp;data.bib</bcf:datasource></bcf:bibdata></bcf:controlfile>';
       await fs.writeFile(control, text);
-      const data = path.join(directory, 'refs&data.bib');
-      await fs.writeFile(data, 'data'); await fs.utimes(data, 1000, 1000);
+      await fs.utimes(control, 1000, 1000);
+      for (const name of ['refs&data.bib', 'biber.conf']) {
+        await fs.writeFile(path.join(directory, name), 'data');
+        await fs.utimes(path.join(directory, name), 1000, 1000);
+      }
       await fs.writeFile(path.join(directory, 'main.bbl'), 'data');
       await fs.utimes(path.join(directory, 'main.bbl'), 2000, 2000);
-      const methods = new TeXToPDF(project('article', '', {}, vscode.Uri.file(path.join(directory, 'main.tex'))), '') as unknown as BibliographyMethods;
-      const command = { command: 'C:\\TeX Programs\\BIBER.EXE', args: [] };
-      methods.read_status(command);
+      const methods = bibliographyMethods(directory);
+      const command = { command: 'C:\\TeX Programs\\BIBER.EXE', args: ['--configfile', 'biber.conf'] };
+      const start = bibliographySnapshot(methods, command);
       await fs.utimes(control, 3000, 3000);
-      assert.strictEqual(await methods.bib_check(command), false, 'Rewriting an identical BCF must not rerun Biber');
-      await fs.utimes(data, 4000, 4000);
-      assert.strictEqual(await methods.bib_check(command), true);
-      await fs.utimes(data, 1000, 1000);
+      assert.strictEqual(await methods.bib_check(command, start, undefined, bibliographySnapshot(methods, command)), false,
+        'Rewriting an identical BCF must not rerun Biber');
+      for (const name of ['refs&data.bib', 'biber.conf']) {
+        await fs.utimes(path.join(directory, name), 4000, 4000);
+        const current = bibliographySnapshot(methods, command);
+        assert.strictEqual(await methods.bib_check(command, start, undefined, current), true, name);
+        assert.strictEqual(await methods.bib_check(command, start, undefined, current), true, name);
+        assert.strictEqual(await methods.bib_check(command, start, current, current), false, name);
+        await fs.utimes(path.join(directory, name), 1000, 1000);
+      }
       await fs.writeFile(control, text.replace('glob="false"', 'glob="true"'));
-      assert.strictEqual(await methods.bib_check(command), true);
-      methods.read_status(command);
-      await fs.utimes(control, 5000, 5000);
-      assert.strictEqual(await methods.bib_check(command), true, 'Glob inputs conservatively run once');
+      const glob = bibliographySnapshot(methods, command);
+      assert.strictEqual(await methods.bib_check(command, start, undefined, glob), true);
+      assert.strictEqual(await methods.bib_check(command, start, glob, glob), false,
+        'Glob inputs must not cause repeated runs after execution');
     });
   });
 
@@ -856,14 +1065,39 @@ suite('TeXToPDF build configuration', () => {
       const control = path.join(directory, 'main.bcf');
       const requests = path.join(directory, 'main.run.xml');
       await fs.writeFile(control, '<controlfile/>');
-      const methods = new TeXToPDF(project('article', '', {}, vscode.Uri.file(path.join(directory, 'main.tex'))), '') as unknown as BibliographyMethods;
+      const methods = bibliographyMethods(directory);
       const command = { command: 'biber', args: [] };
-      methods.read_status(command);
-      assert.strictEqual(await methods.bib_check(command), false);
+      const start = bibliographySnapshot(methods, command);
+      assert.strictEqual(await methods.bib_check(command, start, undefined, start), false);
       await fs.writeFile(requests, '<requests><external active="1"><generic>biber</generic></external></requests>');
-      assert.strictEqual(await methods.bib_check(command), true);
-      methods.read_status(command);
-      assert.strictEqual(await methods.bib_check(command), false);
+      const requested = bibliographySnapshot(methods, command);
+      assert.strictEqual(await methods.bib_check(command, start, undefined, requested), true,
+        'A late logreq request must be honored before the first execution');
+      assert.strictEqual(await methods.bib_check(command, start, undefined, requested), true);
+      assert.strictEqual(await methods.bib_check(command, start, requested, requested), false,
+        'A persistent active request runs only once after execution');
+      const staleBuild = bibliographyMethods(directory);
+      const stale = bibliographySnapshot(staleBuild, command);
+      assert.strictEqual(await staleBuild.bib_check(command, stale, undefined, stale), false);
+    });
+  });
+
+  test('distinguishes an executed missing BCF from an unexecuted request', async () => {
+    await withBuild(async directory => {
+      const methods = bibliographyMethods(directory);
+      const command = { command: 'biber', args: [] };
+      const start = bibliographySnapshot(methods, command);
+      assert.strictEqual(start.bcfText, null);
+      assert.strictEqual(await methods.bib_check(command, start, undefined, start), false);
+      await fs.writeFile(path.join(directory, 'main.run.xml'), '<requests><external active="1"><generic>biber</generic></external></requests>');
+      const requested = bibliographySnapshot(methods, command);
+      assert.strictEqual(await methods.bib_check(command, start, undefined, requested), true);
+      assert.strictEqual(await methods.bib_check(command, start, requested, requested), false,
+        'A snapshot with null BCF must not be confused with an unexecuted request');
+      await fs.writeFile(path.join(directory, 'main.bcf'), '<controlfile/>');
+      const current = bibliographySnapshot(methods, command);
+      assert.strictEqual(await methods.bib_check(command, start, requested, current), true);
+      assert.strictEqual(await methods.bib_check(command, start, current, current), false);
     });
   });
 
@@ -896,10 +1130,10 @@ suite('TeXToPDF build configuration', () => {
       await fs.writeFile(path.join(directory, 'main.bbl'), 'old bibliography');
       const cancellation = new vscode.CancellationTokenSource();
       KpsewhichResolver.resolve = async () => { cancellation.cancel(); return []; };
-      const methods = new TeXToPDF(project('article', '', {}, vscode.Uri.file(path.join(directory, 'main.tex'))), '') as unknown as BibliographyMethods;
+      const methods = bibliographyMethods(directory);
       const command = { command: 'upbibtex', args: [] };
-      methods.read_status(command);
-      try { await assert.rejects(methods.bib_check(command, { token: cancellation.token }), vscode.CancellationError); }
+      const start = bibliographySnapshot(methods, command);
+      try { await assert.rejects(methods.bib_check(command, start, undefined, start, { token: cancellation.token }), vscode.CancellationError); }
       finally { cancellation.dispose(); }
     });
   });
@@ -942,11 +1176,13 @@ suite('TeXToPDF build configuration', () => {
   test('regenerates an index after its insertion shifts body pages and stops when IDX content stabilizes', async () => {
     await withBuild(async (directory, calls) => {
       configureIndex();
+      await fs.writeFile(path.join(directory, 'main.aux'), '\\newlabel{body}{{1}{1}}\n');
       const record = runProgram;
       let indexed = false;
       runProgram = async (command, args, cwd) => {
         if (command === 'engine') {
           await fs.writeFile(path.join(directory, 'main.idx'), `\\indexentry{word}{${indexed ? 2 : 1}}\n`);
+          await fs.writeFile(path.join(directory, 'main.aux'), `\\newlabel{body}{{1}{${indexed ? 2 : 1}}}\n`);
           await fs.writeFile(path.join(directory, 'main.pdf'), 'PDF');
         } else if (command === 'index-helper') {
           await fs.copyFile(path.join(directory, 'main.idx'), path.join(directory, 'main.ind'));
@@ -955,7 +1191,8 @@ suite('TeXToPDF build configuration', () => {
         return record(command, args, cwd);
       };
       assert.strictEqual((await buildIndex(directory)).severity, 'info');
-      assert.deepStrictEqual(calls.map(call => call.command), ['engine', 'index-helper', 'engine', 'index-helper', 'engine']);
+      assert.deepStrictEqual(calls.map(call => call.command), ['engine', 'index-helper', 'engine', 'engine', 'index-helper', 'engine'],
+        'An extra LaTeX pass must not hide IDX changes since the previous index execution');
       assert.match(await fs.readFile(path.join(directory, 'main.ind'), 'utf8'), /\{2\}/);
       calls.length = 0;
       await buildIndex(directory);

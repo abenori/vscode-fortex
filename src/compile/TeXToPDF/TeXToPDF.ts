@@ -41,6 +41,30 @@ interface BibliographyInfo {
   readonly signature: string;
 }
 
+/** 1つの段階で読み取った補助ファイル．取得後は内容や比較基準を書き換えない． */
+interface AuxiliaryFiles {
+  /** LaTeXの再実行判定に使う，ファイルパスと本文の対応．欠落はnull． */
+  readonly latex: ReadonlyMap<string, string | null>;
+  /** AUXから収集した引用・文献DB・スタイルの宣言． */
+  readonly bibliography: BibliographyInfo;
+  /** Biberが参照するBCFのパス． */
+  readonly bcfPath: string;
+  /** BCF本文．欠落または読み取り失敗はnull． */
+  readonly bcfText: string | null;
+  /** BCFの更新状態．取得できなければundefined． */
+  readonly bcfStamp: string | undefined;
+  /** run.xmlの本文．欠落または読み取り失敗はnull． */
+  readonly runXMLText: string | null;
+  /** run.xmlの更新状態．取得できなければundefined． */
+  readonly runXMLStamp: string | undefined;
+  /** 選択された文献処理のBBL出力情報．欠落はundefined． */
+  readonly bbl: fs.BigIntStats | undefined;
+  /** IDXのバイト列．欠落または読み取り失敗はnull． */
+  readonly idx: Buffer | null;
+  /** 選択された索引出力の情報．欠落はundefined． */
+  readonly ind: fs.BigIntStats | undefined;
+}
+
 /** LaTeXCompileが渡すビルド処理専用の入力．ビルド管理側からは直接渡さない． */
 export interface TeXToPDFOptions {
   /** 処理のキャンセル状態を確認するトークン． */
@@ -77,21 +101,6 @@ export default class TeXToPDF {
   ];
   /** ビルド対象のメインファイルと関連ファイルの情報． */
   LaTeXProject: LaTeXProject;
-  // 現在状態によらず必ずLaTeXを実行するフラグ
-  /** 補助ファイルの変更に関係なくLaTeXを再実行する場合はtrue． */
-  forcelatex = false;
-  // 文献処理は要求ごとに一度だけ実行する．
-  /** 今回の要求で文献処理を実行済みであればtrue． */
-  bib = false;
-  // status["file"][".aux"]に.auxファイルの中身を保存
-  /** 補助ファイルのパスと拡張子ごとに保持する比較用の本文．未取得または欠落はnull． */
-  status: {
-    /** 名前またはファイルパスをキーとして保持する値． */
-    [key: string]: {
-    /** 名前またはファイルパスをキーとして保持する値． */
-    [key: string]: string | null
-  }
-  } = {};
   /** メインと読み込み先のTeXファイルのパス．対応する補助ファイルの比較に使用する． */
   file_list: string[] = [];
   /** 再実行の判定に使用する補助ファイルの拡張子． */
@@ -101,18 +110,6 @@ export default class TeXToPDF {
     /** TeXToPDFオプションの名前から指定された文字列値への対応． */
     [key: string]: string
   } = {};
-  /** 前回比較した文献入力の署名． */
-  private previousBibliography = '';
-  /** 前回比較したBiber制御ファイルの本文．未取得ならnull． */
-  private previousBCF: string | null = null;
-  /** Biber制御ファイルの更新状態を識別する値． */
-  private previousBCFStamp?: string;
-  /** run.xmlの更新状態を識別する値． */
-  private previousRunXMLStamp?: string;
-  /** 今回の要求内で最後に索引処理へ渡した入力．未取得ならnull． */
-  private indexInput: Buffer | null = null;
-  /** 今回の索引処理が未実行・成功・失敗のどの状態かを表す． */
-  private indexState: 'pending' | 'succeeded' | 'failed' = 'pending';
 
   /**
    * プロジェクトと指定オプションから，要求内だけで使用するパイプラインを構築する．
@@ -183,20 +180,22 @@ export default class TeXToPDF {
 
   /**
    * 補助ファイルが安定するまで各段階を実行し，要求内の結果をまとめる．
+   * 文献処理を優先し，文献・索引処理の後には必ずLaTeXを実行する．
+   * 比較基準は要求内で保持し，各プログラムの実行後に実行前のスナップショットで更新する．
    * PDF変換は出力形式の設定を優先し，未指定時はビルド開始時からのPDF・DVIの更新で判定する．
    * @param options キャンセルトークンと進捗通知先．省略時は通知・外部キャンセルを使わない．
    * @returns 成否，警告，診断情報，および今回生成したPDFを含む結果のPromise．
    */
   async build(options?: TeXToPDFOptions): Promise<TeXToPDFResult> {
-    const warnings: string[] = [];
     const helperDiagnostics: PipelineDiagnostics = [];
-    const pdf = vscode.Uri.file(TeXToPDF.change_extension(this.LaTeXProject.mainfile.fsPath, '.pdf'));
-    const previousPDFStamp = this.fileStamp(pdf.fsPath);
-    const dvi = TeXToPDF.change_extension(this.LaTeXProject.mainfile.fsPath, '.dvi');
     const logPath = TeXToPDF.change_extension(this.LaTeXProject.mainfile.fsPath, '.log');
     const previousLogStamp = this.fileStamp(logPath);
     let started = false;
     try {
+      const warnings: string[] = [];
+      const pdf = vscode.Uri.file(TeXToPDF.change_extension(this.LaTeXProject.mainfile.fsPath, '.pdf'));
+      const previousPDFStamp = this.fileStamp(pdf.fsPath);
+      const dvi = TeXToPDF.change_extension(this.LaTeXProject.mainfile.fsPath, '.dvi');
       this.checkCancellation(options);
       options?.onProgress?.('Preparing build…');
       // 設定は要求ごとに一度だけ取得する．途中の設定変更は次の要求へ反映する．
@@ -205,34 +204,53 @@ export default class TeXToPDF {
       const bibliography = this.make_program_command('bibtex');
       const index = this.make_program_command('makeindex');
       const converter = this.make_program_command('dvipdf');
-      this.read_status(bibliography);
       const directory = path.dirname(this.LaTeXProject.mainfile.fsPath);
       const base = path.basename(this.LaTeXProject.mainfile.fsPath);
-      let latexRuns = 1;
-      started = true;
-      await this.runTool(latex, TeXToPDF.change_extension(base, '.tex'), directory,
-        `Running LaTeX (pass ${latexRuns})…`, options);
+      const maximum = Config.maxLaTeXRuns();
+      const start = this.read_auxiliary_files(bibliography, index);
+      let previousLaTeX = start;
+      let previousBib: AuxiliaryFiles | undefined;
+      let previousIndex: AuxiliaryFiles | undefined;
+      let current = start;
+      let latexRuns = 0;
+      let forcelatex = true;
+      let bibFailed = false;
+      let indexFailed = false;
+
+      /**
+       * 次のLaTeXと，その前提となる補助処理を開始できるか確認する．引数はない．
+       * @returns なし．キャンセル時または実行回数上限に達した場合は例外．
+       */
+      const checkLaTeXLimit = (): void => {
+        this.checkCancellation(options);
+        if (maximum > 0 && latexRuns >= maximum) {
+          throw new Error(`Maximum number of LaTeX runs (${maximum}) exceeded.`);
+        }
+      };
+
       while (true) {
         this.checkCancellation(options);
-        if (this.latex_check()) {
-          const maximum = Config.maxLaTeXRuns();
-          if (maximum > 0 && latexRuns >= maximum) {
-            throw new Error(`Maximum number of LaTeX runs (${maximum}) exceeded.`);
-          }
-          latexRuns++;
-          await this.runTool(latex, TeXToPDF.change_extension(base, '.tex'), directory,
-            `Running LaTeX (pass ${latexRuns})…`, options);
-        } else if (!this.bib && await this.bib_check(bibliography, options)) {
-          this.bib = true;
-          this.forcelatex = true;
-          await this.runOptionalTool(bibliography, TeXToPDF.remove_extension(base), directory,
+        started = true;
+        if (!forcelatex && !bibFailed && await this.bib_check(bibliography, start, previousBib, current, options)) {
+          checkLaTeXLimit();
+          bibFailed = !await this.runOptionalTool(bibliography, TeXToPDF.remove_extension(base), directory,
             'bibliography', warnings, helperDiagnostics, options);
-        } else if (this.indexState !== 'failed' && await this.makeindex_check(index, options)) {
-          const succeeded = await this.runOptionalTool(index, TeXToPDF.remove_extension(base), directory,
+          previousBib = current;
+          forcelatex = true;
+        } else if (forcelatex || this.latex_check(previousLaTeX, current)) {
+          checkLaTeXLimit();
+          await this.runTool(latex, TeXToPDF.change_extension(base, '.tex'), directory,
+            `Running LaTeX (pass ${++latexRuns})…`, options);
+          previousLaTeX = current;
+          forcelatex = false;
+        } else if (!indexFailed && await this.makeindex_check(index, start, previousIndex, current, options)) {
+          checkLaTeXLimit();
+          indexFailed = !await this.runOptionalTool(index, TeXToPDF.remove_extension(base), directory,
             'index', warnings, helperDiagnostics, options);
-          this.indexState = succeeded ? 'succeeded' : 'failed';
-          this.forcelatex = true;
+          previousIndex = current;
+          forcelatex = true;
         } else { break; }
+        current = this.read_auxiliary_files(bibliography, index);
       }
       // 明示設定を優先し，未指定時だけ今回更新された生成物から変換の要否を判定する．
       let convertDVI = latex.output === 'dvi';
@@ -374,95 +392,98 @@ export default class TeXToPDF {
   }
 
   /**
-   * 最初のLaTeX実行前に，今回の要求で比較するauxファイルの内容を取得する．
-   * @param bibliography 今回使用する文献処理コマンド．Biberの入力場所の取得にも使用する．
-   * @returns なし．各比較用スナップショットと要求内の索引状態を初期化する．
+   * 現在の補助ファイルを新しいスナップショットへ読み取る．比較基準や失敗状態は変更しない．
+   * @param bibliography BCFの入力先とBBLの出力先を選ぶ文献処理コマンド．
+   * @param index INDの出力先を選ぶ索引処理コマンド．
+   * @returns 現在の本文・バイト列・出力情報．以前のスナップショットとは共有して書き換えない．
    */
-  private read_status(bibliography: CompileProgramSettings): void {
-    // 初回の実行前に補助ファイルの本文を保存する．欠落はnullとして記録し，ファイルの作成・削除も変更として検出する．
+  private read_auxiliary_files(bibliography: CompileProgramSettings, index: CompileProgramSettings): AuxiliaryFiles {
+    const latex = new Map<string, string | null>();
     for (const file of this.file_list) {
-      if (this.status[file] === undefined) {
-        this.status[file] = {};
-      }
-      for (const ext of this.extensions) {
-        let f = TeXToPDF.change_extension(file, ext);
-        try {
-          this.status[file][ext] = fs.readFileSync(f, "utf8");
-          //デバッグ用: 読み取った補助ファイルの現在の本文を確認する．
-        }
-        catch {
-          this.status[file][ext] = null;
-          //デバッグ用: 対象ファイルの補助ファイルが存在しないことを確認する．
-        }
+      for (const extension of this.extensions) {
+        const filename = TeXToPDF.change_extension(file, extension);
+        if (!latex.has(filename)) { latex.set(filename, this.read_optional(filename)); }
       }
     }
-    this.previousBibliography = this.bibliography_info().signature;
-    const control = this.biber_control_file(bibliography);
-    this.previousBCF = this.read_optional(control);
-    this.previousBCFStamp = this.fileStamp(control);
-    this.previousRunXMLStamp = this.fileStamp(TeXToPDF.change_extension(this.LaTeXProject.mainfile.fsPath, '.run.xml'));
-    this.indexInput = this.read_index_input();
-    this.indexState = 'pending';
+    const main = this.LaTeXProject.mainfile.fsPath;
+    const directory = path.dirname(main);
+    const biber = programName(bibliography.command) === 'biber';
+    let bcfPath = TeXToPDF.change_extension(main, '.bcf');
+    if (biber) {
+      // BCFは指定ディレクトリ，メインファイルのディレクトリの順に探す．
+      const input = this.command_option(bibliography, '--input-directory')
+        ?? this.command_option(bibliography, '--output-directory');
+      const name = path.basename(bcfPath);
+      const candidates = [...new Set([path.resolve(directory, input ?? '.', name), path.join(directory, name)])];
+      bcfPath = candidates.find(filename => fs.existsSync(filename)) ?? candidates[0];
+    }
+    const runXMLPath = TeXToPDF.change_extension(main, '.run.xml');
+    const output = biber ? path.resolve(directory, this.command_option(bibliography, '--output-directory') ?? '.') : directory;
+    // IDXは文字コード変換せずバイト列として読み，欠落・読み取り失敗はnullにする．
+    let idx: Buffer | null;
+    try { idx = fs.readFileSync(TeXToPDF.change_extension(main, '.idx')); }
+    catch { idx = null; }
+    return {
+      latex, bibliography: this.bibliography_info(latex), bcfPath,
+      bcfText: biber ? this.read_optional(bcfPath) : null,
+      bcfStamp: biber ? this.fileStamp(bcfPath) : undefined,
+      runXMLText: biber ? this.read_optional(runXMLPath) : null,
+      runXMLStamp: biber ? this.fileStamp(runXMLPath) : undefined,
+      bbl: this.read_file_info(path.join(output, path.basename(TeXToPDF.change_extension(main, '.bbl')))),
+      idx, ind: this.read_file_info(this.index_files(index).output)
+    };
   }
 
   /**
-   * 直前のLaTeX実行による補助ファイルの変化と強制実行指定を確認する．引数はない．
-   * @returns LaTeXの再実行が必要ならtrue．比較用スナップショットも現在の内容へ更新する．
+   * ローカルファイルの更新時刻とサイズなどを取得する．
+   * @param filename 情報を取得するファイルのパス．
+   * @returns ファイルの情報．欠落・読み取り失敗・ディレクトリならundefined．
    */
-  private latex_check(): boolean {
-    // 比較と同時に保存済みの本文を更新し，次回は直前のTeX実行との差分を比較する．
-    let rv: boolean = false;
-    if (this.forcelatex) {
-      rv = true;
-      this.forcelatex = false;
-    }
-    //デバッグ用: LaTeX補助ファイルの変更判定を確認する．
-    for (const file of this.file_list) {
-      for (const ext of this.extensions) {
-        let f = TeXToPDF.change_extension(file, ext);
-        //デバッグ用: 比較対象のファイルと拡張子を確認する．
-        try {
-          let txt = fs.readFileSync(f, "utf8");
-          if (!rv) {
-            if (this.status[file][ext] !== txt) { rv = true; }
-          }
-          //デバッグ用: 補助ファイルの保存済みの本文と現在の本文を比較する．
-          this.status[file][ext] = txt;
-        }
-        catch {
-          //デバッグ用: 補助ファイルが削除された場合の保存済みの本文を確認する．
-          if (this.status[file][ext] !== null) { rv = true; }
-          this.status[file][ext] = null;
-        }
-      }
-    }
-    return rv;
+  private read_file_info(filename: string): fs.BigIntStats | undefined {
+    try {
+      const info = fs.statSync(filename, { bigint: true });
+      return info.isFile() ? info : undefined;
+    } catch { return undefined; }
   }
 
   /**
-   * 実行ファイル名に応じてBibTeX系またはBiberの必要性を判定する．
+   * 直前のLaTeX実行前と現在の補助ファイルを，本文で比較する．
+   * @param previous 直前のLaTeX実行へ渡したスナップショット．初回実行前は要求開始時の情報．
+   * @param current 現在の段階で読み取ったスナップショット．
+   * @returns 本文または存在状態に変化があればtrue．比較基準は変更しない．
+   */
+  private latex_check(previous: AuxiliaryFiles, current: AuxiliaryFiles): boolean {
+    return previous.latex.size !== current.latex.size
+      || [...current.latex].some(([filename, text]) => previous.latex.get(filename) !== text);
+  }
+
+  /**
+   * 実行ファイル名に応じてBibTeX系またはBiberのチェックへ振り分ける．
    * @param command 今回使用する文献処理コマンド．
+   * @param start 最初のLaTeX実行前のスナップショット．
+   * @param previous 前回の文献処理へ渡したスナップショット．未実行ならundefined．
+   * @param current 現在の段階で読み取ったスナップショット．
    * @param options 判定の前後に確認するキャンセルトークンを含むオプション．
-   * @returns 文献処理が必要ならtrueとなるPromise．実行回数の管理は行わない．
+   * @returns 選択したバックエンドの必要性判定のPromise．
    */
-  private async bib_check(command: CompileProgramSettings, options?: TeXToPDFOptions): Promise<boolean> {
-    this.checkCancellation(options);
-    const needed = programName(command.command) === 'biber'
-      ? await this.biber_check(command) : await this.bibtex_check(command);
-    this.checkCancellation(options);
-    return needed;
+  private bib_check(command: CompileProgramSettings, start: AuxiliaryFiles, previous: AuxiliaryFiles | undefined,
+    current: AuxiliaryFiles, options?: TeXToPDFOptions): Promise<boolean> {
+    return programName(command.command) === 'biber'
+      ? this.biber_check(command, start, previous, current, options)
+      : this.bibtex_check(command, start, previous, current, options);
   }
 
   /**
-   * 現在のAUXスナップショットから，引用と文献・スタイル指定を収集する．引数はない．
+   * 読み取り済みAUXから，引用と文献・スタイル指定を収集する．
+   * @param files LaTeX補助ファイルのパスと本文の対応．
    * @returns 引用キー，解決済みキー，文献名，スタイル名，指定内容の比較用文字列．
    */
-  private bibliography_info(): BibliographyInfo {
+  private bibliography_info(files: ReadonlyMap<string, string | null>): BibliographyInfo {
     const citations: string[] = [], databases: string[] = [], styles: string[] = [];
     const entries = new Set<string>();
     const directives: string[] = [];
     for (const file of this.file_list) {
-      const text = this.status[file]?.['.aux'] ?? '';
+      const text = files.get(TeXToPDF.change_extension(file, '.aux')) ?? '';
       for (const match of text.matchAll(/\\(citation|bibdata|bibstyle)\{([^}]*)\}/g)) {
         const values = match[2].split(',').map(value => value.trim()).filter(Boolean);
         directives.push(JSON.stringify([file, match[1], values]));
@@ -476,22 +497,37 @@ export default class TeXToPDF {
   }
 
   /**
-   * BibTeX系について，要求開始時の指定と現在の入力・出力を比較する．
+   * BibTeX系の実行前は鮮度も確認し，実行後は前回実行へ渡した宣言と比較する．
    * @param command BibTeX系の実行ファイルと引数．検索時のプログラム名にも使用する．
-   * @returns 文献指定の変化，出力の欠落，未解決引用，新しい入力などがあればtrueとなるPromise．
+   * @param start 最初のLaTeX実行前のスナップショット．
+   * @param previous 前回の文献処理へ渡したスナップショット．未実行ならundefined．
+   * @param current 現在の段階で読み取ったスナップショット．
+   * @param options 依存ファイルの検索前後に確認するキャンセルトークンを含むオプション．
+   * @returns 実行が必要ならtrueとなるPromise．比較基準は変更しない．
    */
-  private async bibtex_check(command: CompileProgramSettings): Promise<boolean> {
-    const info = this.bibliography_info();
-    if (!info.databases.length) { return false; }
-    const bbl = TeXToPDF.change_extension(this.LaTeXProject.mainfile.fsPath, '.bbl');
-    if (!fs.existsSync(bbl) || info.signature !== this.previousBibliography) { return true; }
-    if (!info.citations.includes('*') && info.citations.some(key => !info.entries.has(key))) { return true; }
-    const references = [...new Set([
-      ...info.databases.map(name => /\.bib$/i.test(name) ? name : `${name}.bib`),
-      ...info.styles.map(name => /\.bst$/i.test(name) ? name : `${name}.bst`)
-    ])];
-    const resolved = await KpsewhichResolver.resolve(this.LaTeXProject.mainfile, references, command.command);
-    return this.inputs_newer_than_output(resolved.map(uri => uri?.fsPath), bbl);
+  private async bibtex_check(command: CompileProgramSettings, start: AuxiliaryFiles, previous: AuxiliaryFiles | undefined,
+    current: AuxiliaryFiles, options?: TeXToPDFOptions): Promise<boolean> {
+    this.checkCancellation(options);
+    const info = current.bibliography;
+    let needed = false;
+    if (info.databases.length) {
+      if (previous !== undefined) {
+        needed = info.signature !== previous.bibliography.signature;
+      } else {
+        needed = !current.bbl || info.signature !== start.bibliography.signature
+          || (!info.citations.includes('*') && info.citations.some(key => !info.entries.has(key)));
+        if (!needed) {
+          const references = [...new Set([
+            ...info.databases.map(name => /\.bib$/i.test(name) ? name : `${name}.bib`),
+            ...info.styles.map(name => /\.bst$/i.test(name) ? name : `${name}.bst`)
+          ])];
+          const resolved = await KpsewhichResolver.resolve(this.LaTeXProject.mainfile, references, command.command);
+          needed = this.inputs_newer_than_output(resolved.map(uri => uri?.fsPath), current.bbl);
+        }
+      }
+    }
+    this.checkCancellation(options);
+    return needed;
   }
 
   /**
@@ -504,19 +540,6 @@ export default class TeXToPDF {
     const index = command.args.findIndex(arg => arg === name || arg.startsWith(`${name}=`));
     if (index < 0) { return undefined; }
     return command.args[index] === name ? command.args[index + 1] : command.args[index].slice(name.length + 1);
-  }
-
-  /**
-   * Biberの指定ディレクトリと作業ディレクトリから制御ファイルの場所を求める．
-   * @param command 入力・出力ディレクトリを指定する可能性のあるBiberコマンド．
-   * @returns 存在するBCFのパス．見つからなければ最優先の候補パス．
-   */
-  private biber_control_file(command: CompileProgramSettings): string {
-    const directory = path.dirname(this.LaTeXProject.mainfile.fsPath);
-    const input = this.command_option(command, '--input-directory') ?? this.command_option(command, '--output-directory');
-    const name = path.basename(TeXToPDF.change_extension(this.LaTeXProject.mainfile.fsPath, '.bcf'));
-    const candidates = [...new Set([path.resolve(directory, input ?? '.', name), path.join(directory, name)])];
-    return candidates.find(filename => fs.existsSync(filename)) ?? candidates[0];
   }
 
   /**
@@ -562,13 +585,14 @@ export default class TeXToPDF {
   }
 
   /**
-   * 今回更新されたrun.xmlから，有効なBiber実行要求を確認する．引数はない．
+   * 今回更新されたrun.xmlから，有効なBiber実行要求を確認する．
+   * @param start 要求開始時に読み取った補助ファイル．
+   * @param current 現在の補助ファイル．
    * @returns Biberのactive=1の要求があればtrue．未更新・欠落・解析失敗ならfalse．
    */
-  private biber_requested(): boolean {
-    const filename = TeXToPDF.change_extension(this.LaTeXProject.mainfile.fsPath, '.run.xml');
-    if (this.fileStamp(filename) === this.previousRunXMLStamp) { return false; }
-    const text = this.read_optional(filename);
+  private biber_requested(start: AuxiliaryFiles, current: AuxiliaryFiles): boolean {
+    if (current.runXMLStamp === start.runXMLStamp) { return false; }
+    const text = current.runXMLText;
     if (text === null) { return false; }
     try {
       return this.xml_elements(this.parse_xml(text), 'external').some(element => typeof element !== 'string'
@@ -577,23 +601,43 @@ export default class TeXToPDF {
   }
 
   /**
-   * Biberの制御内容，実行要求，およびデータソースの更新を確認する．
+   * Biber実行前は実行要求と鮮度を確認し，実行後は前回実行へ渡したBCF本文と比較する．
    * @param command 入出力ディレクトリや設定ファイルの指定を含むBiberコマンド．
-   * @returns Biberによる文献生成が必要ならtrueとなるPromise．
+   * @param start 要求開始時に読み取った補助ファイル．
+   * @param previous 前回の文献処理へ渡したスナップショット．未実行ならundefined．
+   * @param current 現在の補助ファイル．
+   * @param options キャンセルトークンを含むオプション．
+   * @returns 文献生成が必要ならtrueとなるPromise．比較基準は変更しない．
    */
-  private async biber_check(command: CompileProgramSettings): Promise<boolean> {
-    const control = this.biber_control_file(command);
-    const requested = this.biber_requested();
-    const text = this.read_optional(control);
-    if (text === null) { return requested; }
-    // biblatexの使用をやめた後に残った古い制御ファイルは，現在の入力として扱わない．
-    if (!requested && this.fileStamp(control) === this.previousBCFStamp) { return false; }
+  private async biber_check(command: CompileProgramSettings, start: AuxiliaryFiles, previous: AuxiliaryFiles | undefined,
+    current: AuxiliaryFiles, options?: TeXToPDFOptions): Promise<boolean> {
+    this.checkCancellation(options);
+    const input = current.bcfText;
+    const requested = this.biber_requested(start, current);
+    let needed = false;
+    if (input !== null || requested) {
+      if (previous !== undefined) {
+        needed = input !== previous.bcfText;
+      } else if (requested || current.bcfStamp !== start.bcfStamp) {
+        // biblatexを使用しなくなった後に残った，未更新のBCFは無視する．
+        needed = requested || !current.bbl || input !== start.bcfText;
+        if (!needed && input !== null) { needed = await this.biber_inputs_newer(command, current); }
+      }
+    }
+    this.checkCancellation(options);
+    return needed;
+  }
+
+  /**
+   * BCFのデータソースと明示された設定ファイルの鮮度を確認する．
+   * @param command 入力先や設定ファイルの指定を含むBiberコマンド．
+   * @param current BCF本文と文献出力の更新情報を含む現在の補助ファイル．
+   * @returns 新しい入力，未解決の入力，または安全に判定できない入力があればtrueとなるPromise．
+   */
+  private async biber_inputs_newer(command: CompileProgramSettings, current: AuxiliaryFiles): Promise<boolean> {
     const directory = path.dirname(this.LaTeXProject.mainfile.fsPath);
-    const output = path.resolve(directory, this.command_option(command, '--output-directory') ?? '.');
-    const bbl = path.join(output, path.basename(TeXToPDF.change_extension(this.LaTeXProject.mainfile.fsPath, '.bbl')));
-    if (requested || !fs.existsSync(bbl) || text !== this.previousBCF) { return true; }
     let xml: XMLValue;
-    try { xml = this.parse_xml(text); } catch { return true; }
+    try { xml = this.parse_xml(current.bcfText ?? ''); } catch { return true; }
     const names: string[] = [];
     for (const source of this.xml_elements(xml, 'datasource')) {
       const name = this.xml_text(source);
@@ -603,7 +647,8 @@ export default class TeXToPDF {
       names.push(name);
     }
     const input = this.command_option(command, '--input-directory') ?? this.command_option(command, '--output-directory');
-    const directories = [...new Set([...(input ? [path.resolve(directory, input)] : []), directory, path.dirname(control)])];
+    const directories = [...new Set([...(input ? [path.resolve(directory, input)] : []), directory,
+      path.dirname(current.bcfPath)])];
     const paths = names.map(name => {
       const candidates = path.isAbsolute(name) ? [name] : directories.map(dir => path.resolve(dir, name));
       return candidates.find(candidate => { try { return fs.statSync(candidate).isFile(); } catch { return false; } });
@@ -616,19 +661,19 @@ export default class TeXToPDF {
     }
     const config = this.command_option(command, '--configfile') ?? this.command_option(command, '-g');
     if (config) { paths.push(path.resolve(directory, config)); }
-    return this.inputs_newer_than_output(paths, bbl);
+    return this.inputs_newer_than_output(paths, current.bbl);
   }
 
   /**
    * 入力の更新時刻を，文献または索引の出力と比較する．
    * @param inputs 解決済みの入力パス．未解決の入力はundefinedで表す．
-   * @param output 比較対象の出力ファイルのパス．
+   * @param output 読み込み済みの出力ファイル情報．欠落・読み取り失敗時はundefined．
    * @returns 新しい入力，未解決の入力，または取得できない更新情報があればtrue．
    */
-  private inputs_newer_than_output(inputs: readonly (string | undefined)[], output: string): boolean {
+  private inputs_newer_than_output(inputs: readonly (string | undefined)[], output: fs.BigIntStats | undefined): boolean {
+    if (!output) { return true; }
     try {
-      const outputTime = fs.statSync(output, { bigint: true }).mtimeNs;
-      return inputs.some(filename => !filename || fs.statSync(filename, { bigint: true }).mtimeNs > outputTime);
+      return inputs.some(filename => !filename || fs.statSync(filename, { bigint: true }).mtimeNs > output.mtimeNs);
     } catch { return true; }
   }
 
@@ -676,47 +721,39 @@ export default class TeXToPDF {
   }
 
   /**
-   * 文字コードに依存した変換をせず，IDXをバイト列で読み取る．引数はない．
-   * @returns 現在のIDXの内容．存在しない場合や読み取れない場合はnull．
-   */
-  private read_index_input(): Buffer | null {
-    try { return fs.readFileSync(TeXToPDF.change_extension(this.LaTeXProject.mainfile.fsPath, '.idx')); }
-    catch { return null; }
-  }
-
-  /**
-   * 索引入力が空，またはASCIIの空白・改行・タブだけかを確認する．
-   * @param input 調べるIDXのバイト列．
-   * @returns 空の索引入力として扱える場合はtrue．
-   */
-  private empty_index(input: Buffer): boolean {
-    return input.every(byte => byte === 9 || byte === 10 || byte === 13 || byte === 32);
-  }
-
-  /**
-   * 要求開始時または前回実行を決めた時点のIDXと，現在の索引入力を比較する．
+   * 索引実行前は要求開始時のIDXと出力の鮮度を確認し，実行後は前回実行へ渡したIDXと比較する．
    * @param command スタイル・辞書・出力先の取得に使用する索引コマンド．
+   * @param start 要求開始時に読み取った補助ファイル．
+   * @param previous 前回の索引処理へ渡したスナップショット．未実行ならundefined．
+   * @param current 現在の補助ファイル．
    * @param options 検索後に確認するキャンセルトークンを含むオプション．
-   * @returns 索引処理が必要ならtrueとなるPromise．その場合，読んだIDXを次の比較基準として保存する．
+   * @returns 索引処理が必要ならtrueとなるPromise．比較基準は変更しない．
    */
-  private async makeindex_check(command: CompileProgramSettings, options?: TeXToPDFOptions): Promise<boolean> {
-    const input = this.read_index_input();
-    if (input === null) { return false; }
-    const files = this.index_files(command);
-    let needed = this.indexInput === null || !input.equals(this.indexInput);
-    if (this.indexState === 'pending' && !needed) {
-      if (!fs.existsSync(files.output)) { needed = true; }
-      else if (this.empty_index(input)) {
-        try { needed = fs.readFileSync(files.output).length > 0; } catch { needed = true; }
+  private async makeindex_check(command: CompileProgramSettings, start: AuxiliaryFiles, previous: AuxiliaryFiles | undefined,
+    current: AuxiliaryFiles, options?: TeXToPDFOptions): Promise<boolean> {
+    this.checkCancellation(options);
+    const input = current.idx;
+    let needed = false;
+    if (input !== null) {
+      if (previous !== undefined) {
+        needed = previous.idx === null || !input.equals(previous.idx);
       } else {
-        const styles = await KpsewhichResolver.resolve(this.LaTeXProject.mainfile, files.styles, command.command);
-        const dictionaries = await KpsewhichResolver.resolve(this.LaTeXProject.mainfile, files.dictionaries,
-          command.command, process.env.INDEXDICTIONARY ?? '$INDEXDICTIONARY');
-        needed = this.inputs_newer_than_output([...styles, ...dictionaries].map(uri => uri?.fsPath), files.output);
+        needed = start.idx === null || !input.equals(start.idx) || !current.ind;
+        if (!needed) {
+          // スペース・タブ・CR・LFだけのIDXは空の入力として扱う．
+          if (input.every(byte => byte === 9 || byte === 10 || byte === 13 || byte === 32)) {
+            needed = current.ind!.size > 0n;
+          } else {
+            const files = this.index_files(command);
+            const styles = await KpsewhichResolver.resolve(this.LaTeXProject.mainfile, files.styles, command.command);
+            const dictionaries = await KpsewhichResolver.resolve(this.LaTeXProject.mainfile, files.dictionaries,
+              command.command, process.env.INDEXDICTIONARY ?? '$INDEXDICTIONARY');
+            needed = this.inputs_newer_than_output([...styles, ...dictionaries].map(uri => uri?.fsPath), current.ind);
+          }
+        }
       }
     }
     this.checkCancellation(options);
-    if (needed) { this.indexInput = input; }
     return needed;
   }
 

@@ -1248,7 +1248,7 @@
           "minimum": 0,
           "scope": "machine",
           "order": 11,
-          "markdownDescription": "Maximum number of LaTeX runs allowed for a single build, including passes required after bibliography or index processing. Set to `0` to allow unlimited runs. The limit counts LaTeX passes rather than helper executions and bounds repeated index pagination updates."
+          "markdownDescription": "Maximum number of LaTeX runs allowed for a single build, including passes required after bibliography or index processing. Set to `0` to allow unlimited runs. The limit counts LaTeX passes rather than helper executions and bounds repeated bibliography and index processing because each helper run is followed by LaTeX."
         },
         "vscode-fortex.compile.latex.engineSelection": {
           "type": "string",
@@ -1441,7 +1441,7 @@
           },
           "scope": "machine",
           "order": 17,
-          "markdownDescription": "Bibliography program and arguments. Missing fields use `upbibtex` and `[]`. `%#bibtex` overrides the executable. The job basename is appended to the arguments. Executable names matching biber select BCF-based detection; other names select BibTeX detection using AUX declarations and bibliography/style timestamps."
+          "markdownDescription": "Bibliography program and arguments. Missing fields use `upbibtex` and `[]`. `%#bibtex` overrides the executable. The job basename is appended to the arguments. Executable names matching biber select BCF-based detection; other names select BibTeX detection using AUX declarations and bibliography/style timestamps. Until the first execution, checks also consider output freshness and execution requests, even after an earlier negative check. After execution, processing repeats only when AUX bibliography declarations or BCF contents differ from the last run's input. Every helper run is followed by LaTeX; a failure is reported in Problems and is not retried within the same build."
         },
         "vscode-fortex.compile.makeindex": {
           "type": "object",
